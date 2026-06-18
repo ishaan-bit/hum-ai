@@ -331,10 +331,19 @@
           <code>packages/*</code> in this monorepo.
         </p>
         <p class="arch-note">
-          The web client (this surface) is <strong>intentionally not built in
-          this pass</strong>. Wiring capture → pipeline → display requires the
-          packages to stabilize first. This placeholder exists so the Vercel
-          project can be linked and previewed without fabricating a product page.
+          The hum-only <strong>voice core is now real and runnable locally</strong>:
+          a pure-TypeScript DSP feature extractor feeds the quality gate, domain
+          classifier, experts, fusion, personalization and safety-language layers
+          end to end. Run <code>npm run demo:voice</code> to drive synthetic hums
+          through the whole pipeline (no microphone, no camera). It is still
+          research-stage and non-clinical — deterministic signal processing, not a
+          trained or validated model.
+        </p>
+        <p class="arch-note">
+          The browser client (this surface) is <strong>intentionally not built in
+          this pass</strong>. Wiring a real capture surface → pipeline → display is
+          a later step. This placeholder exists so the Vercel project can be linked
+          and previewed without fabricating a product page.
         </p>
       </section>
 
