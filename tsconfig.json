@@ -26,6 +26,7 @@
       "@hum-ai/audio-features": ["packages/audio-features/src/index.ts"],
       "@hum-ai/quality-gate": ["packages/quality-gate/src/index.ts"],
       "@hum-ai/dataset-registry": ["packages/dataset-registry/src/index.ts"],
+      "@hum-ai/dataset-harness": ["packages/dataset-harness/src/index.ts"],
       "@hum-ai/domain-classifier": ["packages/domain-classifier/src/index.ts"],
       "@hum-ai/affect-model-contracts": ["packages/affect-model-contracts/src/index.ts"],
       "@hum-ai/expert-ser": ["packages/expert-ser/src/index.ts"],

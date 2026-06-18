@@ -15,7 +15,9 @@
     "test": "node --import tsx --test \"packages/**/test/**/*.test.ts\"",
     "test:watch": "node --import tsx --test --watch \"packages/**/test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "data:manifest": "node --import tsx packages/dataset-harness/src/cli.ts manifest",
+    "data:validate": "node --import tsx packages/dataset-harness/src/cli.ts validate"
   },
   "devDependencies": {
     "@types/node": "^22.19.21",

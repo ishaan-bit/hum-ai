@@ -55,9 +55,19 @@ docs/source/**/*.docx
 
 # --- Datasets / raw audio / recordings (never committed) ---
 datasets/
+data/
 data/raw/
+raw_data/
+processed_data/
+features/
+models/
 **/raw_audio/
 **/recordings/
+# Dataset harness: external data dir (../hum-ai-data) and any in-repo manifest
+# fallback. Manifests + raw audio MUST stay outside git (see docs/research-datasets.md).
+hum-ai-data/
+**/.manifests/
+*.manifest.json
 *.wav
 *.mp3
 *.m4a
