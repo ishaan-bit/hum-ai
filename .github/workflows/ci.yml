@@ -37,6 +37,12 @@ jobs:
       - name: Test
         run: npm test --if-present
 
+      # QA gates: clinical-leak, camera-deps, confidence-copy, forbidden-files.
+      # Mirrors privacy-check.yml (bash-based) but runs as a Node gate so it is
+      # enforced even on platforms where the bash workflow is skipped.
+      - name: QA gates
+        run: npm run qa
+
       # No build script exists for the foundation yet; `--if-present` makes this a
       # no-op until one is added (e.g. when the web client is built).
       - name: Build (if defined)
