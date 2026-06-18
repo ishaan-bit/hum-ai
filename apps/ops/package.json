@@ -1,0 +1,7 @@
+{
+  "name": "@hum-ai/app-ops",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Placeholder for Hum ops/admin tooling (derived-data dashboards, consent audits). Not built in this pass.",
+  "type": "module"
+}

@@ -1,0 +1,25 @@
+{
+  "name": "hum-ai",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hum AI — a domain-aware, personalized, multimodal voice biomarker and affective modeling platform built around a standardized 12-second hum.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "node --import tsx --test \"packages/**/test/**/*.test.ts\"",
+    "test:watch": "node --import tsx --test --watch \"packages/**/test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

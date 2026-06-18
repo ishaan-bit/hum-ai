@@ -1,0 +1,44 @@
+﻿{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "declaration": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@hum-ai/shared-types": ["packages/shared-types/src/index.ts"],
+      "@hum-ai/audio-features": ["packages/audio-features/src/index.ts"],
+      "@hum-ai/quality-gate": ["packages/quality-gate/src/index.ts"],
+      "@hum-ai/dataset-registry": ["packages/dataset-registry/src/index.ts"],
+      "@hum-ai/domain-classifier": ["packages/domain-classifier/src/index.ts"],
+      "@hum-ai/affect-model-contracts": ["packages/affect-model-contracts/src/index.ts"],
+      "@hum-ai/expert-ser": ["packages/expert-ser/src/index.ts"],
+      "@hum-ai/expert-fer": ["packages/expert-fer/src/index.ts"],
+      "@hum-ai/expert-ter": ["packages/expert-ter/src/index.ts"],
+      "@hum-ai/fusion-engine": ["packages/fusion-engine/src/index.ts"],
+      "@hum-ai/personalization-engine": ["packages/personalization-engine/src/index.ts"],
+      "@hum-ai/relapse-engine": ["packages/relapse-engine/src/index.ts"],
+      "@hum-ai/intervention-engine": ["packages/intervention-engine/src/index.ts"],
+      "@hum-ai/safety-language": ["packages/safety-language/src/index.ts"],
+      "@hum-ai/naming-check": ["packages/naming-check/src/index.ts"]
+    }
+  },
+  "include": ["packages/**/*.ts"],
+  "exclude": ["node_modules", "**/dist", "**/*.d.ts"]
+}

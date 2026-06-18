@@ -1,0 +1,14 @@
+{
+  "name": "@hum-ai/personalization-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hum-ai/shared-types": "*",
+    "@hum-ai/affect-model-contracts": "*"
+  }
+}

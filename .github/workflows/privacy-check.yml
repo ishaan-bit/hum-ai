@@ -1,0 +1,84 @@
+name: privacy-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: privacy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  privacy-check:
+    name: privacy-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan tracked files for forbidden content
+        shell: bash
+        run: |
+          set -uo pipefail
+          fail=0
+
+          # Scan TRACKED files only (git ls-files); ignored files can't leak.
+          tracked="$(git ls-files)"
+
+          report() {
+            # $1 = human label, $2 = matched paths (may be empty)
+            if [ -n "$2" ]; then
+              echo "::error::BLOCK ($1):"
+              echo "$2" | sed 's/^/    /'
+              fail=1
+            else
+              echo "ok: no $1"
+            fi
+          }
+
+          # 1. Source materials / binaries / model weights / audio by extension.
+          m=$(echo "$tracked" | grep -E '\.(pdf|docx|doc|pptx|wav|mp3|m4a|flac|ogg|aac|webm|opus|ckpt|pt|pth|onnx|safetensors|h5|pb|tflite|gguf|bin)$' || true)
+          report "source docs / model weights / audio binaries" "$m"
+
+          # 2. .env files (allow only .env.example).
+          m=$(echo "$tracked" | grep -E '(^|/)\.env($|\.)' | grep -vE '(^|/)\.env\.example$' || true)
+          report ".env / dotenv secret files" "$m"
+
+          # 3. Service-account / cloud credential JSON. Anchored to .json (the
+          #    secret-bearing artifact) so legit code/docs like serviceAccountHelper.ts
+          #    or service-account-setup.md do not false-positive.
+          m=$(echo "$tracked" | grep -E '(serviceAccount|service-account|firebase-adminsdk|google-credentials)[^/]*\.json$|(^|/)gcp-[^/]*\.json$' || true)
+          report "service-account / cloud credential files" "$m"
+
+          # 4. Vercel local metadata.
+          m=$(echo "$tracked" | grep -E '(^|/)\.vercel(/|$)' || true)
+          report "vercel local metadata (.vercel)" "$m"
+
+          # 5. Private keys / tokens.
+          m=$(echo "$tracked" | grep -E '\.(pem|key|p12|pfx)$|(^|/)[^/]*\.token$' || true)
+          report "private keys / tokens" "$m"
+
+          # 6. Datasets / raw recordings directories.
+          m=$(echo "$tracked" | grep -E '(^|/)(datasets|recordings|raw_audio)/' | grep -vE '/README\.md$' || true)
+          report "dataset / raw-recording payloads" "$m"
+
+          # 7. Clinical labels / PHQ-GAD user data files. Token sits at a name
+          #    boundary and is followed only by a separator/digit or the extension
+          #    (portable ERE — no PCRE), so 'gadget.json' / 'badge.csv' do not
+          #    false-positive while 'phq9.csv', 'gad-7.csv', 'clinical_labels.parquet'
+          #    and 'phq.csv' still trip.
+          m=$(echo "$tracked" | grep -iE '(^|/|[-_])(phq|gad|ces-dc|clinical[-_]labels?)([-_0-9][^/]*)?\.(csv|json|parquet|xlsx|tsv)$' || true)
+          report "clinical-label / PHQ-GAD data files" "$m"
+
+          # 8. Explicit: source binaries under docs/source must never be tracked.
+          m=$(echo "$tracked" | grep -E '^docs/source/.*\.(pdf|docx|doc|pptx)$' || true)
+          report "docs/source binary materials" "$m"
+
+          echo "-----------------------------------------------"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Privacy check FAILED — forbidden content is tracked. See blocks above."
+            exit 1
+          fi
+          echo "Privacy check passed: no forbidden content tracked."

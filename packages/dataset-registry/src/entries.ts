@@ -1,0 +1,171 @@
+import type { DatasetRegistryEntry } from "./schema";
+
+/**
+ * Sample registry entries for this first pass — one per primary source.
+ * These are mostly `reference` entries (architecture/protocol/review docs)
+ * rather than raw datasets, because Hum has no native hum corpus yet. As real
+ * datasets are added, they follow the same schema and the same domain rules.
+ *
+ * Every entry is validated by `assertValidRegistry` in the test suite.
+ */
+export const REGISTRY: readonly DatasetRegistryEntry[] = [
+  {
+    id: "trisense_meld_architecture",
+    name: "TriSense (MELD) — multimodal emotion architecture reference",
+    kind: "reference",
+    role: "architecture_source",
+    source_path_or_url: "docs/source/IJERTCONV14IS040031.pdf",
+    domain: "multimodal_conversation",
+    task_type: "architecture_reference",
+    label_type: "categorical_emotion",
+    recording_context: "TV dialogue (Friends), in-the-wild; multi-party, noisy",
+    population: "actors / general adult conversation",
+    clinical_status: "non_clinical",
+    language: "en",
+    modality: ["audio", "face", "text"],
+    domain_gap_to_hum: "far",
+    allowed_model_use: ["pretraining", "evaluation", "affect_prior"],
+    prohibited_model_use: ["clinical_prior", "hum_finetune", "personalization", "relapse_tracking"],
+    consent_notes: "Public research dataset (MELD); used as architecture reference, not retrained here.",
+    validation_notes:
+      "MELD stream accuracies (Visual 18.4%, Audio 38.0%, Text 54.0%, Fusion 66.0%) are ARCHITECTURE-REFERENCE numbers on TV dialogue — NOT Hum metrics. Late-fusion + LogReg meta-learner is the design we adapt.",
+  },
+  {
+    id: "hum_legacy_spec",
+    name: "Hum Academic Review Technical Specification (legacy spec)",
+    kind: "reference",
+    role: "hum_protocol_source",
+    source_path_or_url: "docs/source/Hum_Academic_Review_Technical_Specification.docx",
+    domain: "native_hum",
+    task_type: "protocol_reference",
+    label_type: "none",
+    recording_context: "12-second hum, browser MediaRecorder, local-first, raw-ish capture",
+    population: "general self-tracking users (non-clinical)",
+    clinical_status: "non_clinical",
+    language: "any",
+    modality: ["audio"],
+    domain_gap_to_hum: "none",
+    allowed_model_use: ["hum_finetune", "personalization", "relapse_tracking", "evaluation", "affect_prior"],
+    prohibited_model_use: ["clinical_prior", "market_research_only"],
+    consent_notes: "Local-first; derived-data-only sync; raw audio blocked by default. Source of the privacy posture.",
+    validation_notes:
+      "Defines the 12s protocol, acoustic feature dictionary, quality gate, robust rolling baseline, and confidence caps. Heuristic and explicitly NOT clinically validated.",
+  },
+  {
+    id: "voice_depression_systematic_review",
+    name: "Speech & Voice Quality as Digital Biomarkers in Depression (systematic review)",
+    kind: "reference",
+    role: "clinical_voice_biomarker_review",
+    source_path_or_url: "docs/source/1-s2.0-S0892199725001870-main.pdf",
+    domain: "clinical_speech",
+    task_type: "systematic_review",
+    label_type: "clinical_scale",
+    recording_context: "Clinical & mobile speech (read + spontaneous), 12 studies",
+    population: "MDD (n=1535), BD (111), schizophrenia (35), anxiety (224); 16,872 total",
+    clinical_status: "clinical",
+    language: "multi",
+    modality: ["audio"],
+    domain_gap_to_hum: "far",
+    allowed_model_use: ["clinical_prior", "affect_prior", "evaluation"],
+    prohibited_model_use: ["hum_finetune", "personalization", "relapse_tracking", "recommendation", "market_research_only"],
+    consent_notes: "Aggregate review; no raw data. Clinical labels require explicit research consent to ever capture in-app.",
+    validation_notes:
+      "Voice features distinguished depression AUC 0.71–0.93, accuracy 78–96.5%, but 6/12 studies high methodological-bias risk; generalizability unproven. Use as clinical PRIOR only — never hum truth (domain gap: read clinical speech ≠ hum).",
+  },
+  {
+    id: "vocal_biomarkers_singing_perspective",
+    name: "Listening to the Mind — vocal biomarkers & singing protocol (perspective)",
+    kind: "reference",
+    role: "vocal_biomarker_and_singing_protocol_support",
+    source_path_or_url: "docs/source/brainsci-15-00762.pdf",
+    domain: "singing_or_sustained_phonation",
+    task_type: "voice_biomarker",
+    label_type: "none",
+    recording_context: "Proposes singing / simple melodic structures as the voice-biomarker source",
+    population: "general; populations with linguistic/cognitive impairment highlighted",
+    clinical_status: "mixed",
+    language: "multi",
+    modality: ["audio"],
+    domain_gap_to_hum: "near",
+    allowed_model_use: ["affect_prior", "hum_finetune", "evaluation", "pretraining"],
+    prohibited_model_use: ["clinical_prior", "personalization", "relapse_tracking", "recommendation", "market_research_only"],
+    consent_notes: "Perspective article; no dataset. Scientific basis for sung-tone / hum protocol.",
+    validation_notes:
+      "Argues singing can substitute for speech; acoustic features (F0/jitter/shimmer/spectral) are language-independent and highly transferable. CLOSEST public bridge to native hum. Perspective, not a validation study → not a clinical_prior.",
+  },
+  {
+    id: "ser_mental_health_systematic_review",
+    name: "Speech Emotion Recognition in Mental Health (systematic review)",
+    kind: "reference",
+    role: "ser_mental_health_review",
+    source_path_or_url: "docs/source/mental-2025-1-e74260.pdf",
+    domain: "clinical_speech",
+    task_type: "systematic_review",
+    label_type: "categorical_emotion",
+    recording_context: "SER applied to clinical speech; 14 studies",
+    population: "suicide risk (3 studies), depression (8), psychotic disorders (3)",
+    clinical_status: "clinical",
+    language: "multi",
+    modality: ["audio"],
+    domain_gap_to_hum: "far",
+    allowed_model_use: ["affect_prior", "clinical_prior", "evaluation", "pretraining"],
+    prohibited_model_use: ["hum_finetune", "personalization", "relapse_tracking", "recommendation"],
+    consent_notes: "Aggregate review; no raw data.",
+    validation_notes:
+      "SER mostly used indirectly; architecture/dataset/pathology diversity makes direct assessment hard. Dimensional V-A models under-explored vs categorical → justifies Hum's multi-head dimensional+categorical contract and abstention discipline.",
+  },
+  {
+    id: "adolescent_mdd_dvdsa_longitudinal",
+    name: "DNN voice biomarkers for treatment response in adolescent MDD (DVDSA)",
+    kind: "reference",
+    role: "longitudinal_voice_treatment_response_source",
+    source_path_or_url: "docs/source/s43856-025-01326-3.pdf",
+    domain: "clinical_speech",
+    task_type: "longitudinal_treatment_response",
+    label_type: "change_class",
+    recording_context: "Paired pre/post-treatment voice (Stroop color-naming task), ~107-day interval",
+    population: "48 adolescent MDD patients (15M/33F, mean age 15.5)",
+    clinical_status: "clinical",
+    language: "ko",
+    modality: ["audio"],
+    domain_gap_to_hum: "far",
+    allowed_model_use: ["clinical_prior", "affect_prior", "evaluation"],
+    prohibited_model_use: ["hum_finetune", "personalization", "relapse_tracking", "recommendation", "market_research_only"],
+    consent_notes: "Clinical study with written informed consent; no raw data here.",
+    validation_notes:
+      "Methodological BASIS for Hum's relapse engine: within-patient paired comparison (DVDSA → recovery/worsening/unchanged), WavLM F1 78.05% binary / 70.58% DVDSA; only F0 changed significantly per-feature. The METHOD inspires us; the clinical-speech DATA cannot be used as hum truth or for relapse_tracking on hums.",
+  },
+  {
+    id: "music_interventions_stress_metaanalysis",
+    name: "Music interventions on stress-related outcomes (review + two meta-analyses)",
+    kind: "reference",
+    role: "intervention_support_source",
+    source_path_or_url:
+      "docs/source/Effects_of_music_interventions_on_stress_related_outcomes_a_systematic_review_and_two_meta_analyses.pdf",
+    domain: "music_emotion",
+    task_type: "intervention_meta_analysis",
+    label_type: "none",
+    recording_context: "RCTs of music listening / music making in clinical, medical, work settings",
+    population: "9,617 participants across 104 RCTs (327 effect sizes)",
+    clinical_status: "mixed",
+    language: "multi",
+    modality: ["audio"],
+    domain_gap_to_hum: "far",
+    allowed_model_use: ["recommendation", "evaluation", "market_research_only", "pretraining"],
+    prohibited_model_use: ["clinical_prior", "affect_prior", "hum_finetune", "personalization", "relapse_tracking"],
+    consent_notes: "Aggregate meta-analysis; no raw data.",
+    validation_notes:
+      "Music interventions reduce physiological stress (d=.380) and psychological stress (d=.545). INTERVENTION SUPPORT ONLY — never diagnostic evidence and never a prior over user state (ADR-0005 prohibited rule).",
+  },
+];
+
+const byId = new Map(REGISTRY.map((e) => [e.id, e]));
+const byRole = new Map(REGISTRY.map((e) => [e.role, e]));
+
+export function getEntry(id: string): DatasetRegistryEntry | undefined {
+  return byId.get(id);
+}
+
+export function getEntryByRole(role: DatasetRegistryEntry["role"]): DatasetRegistryEntry | undefined {
+  return byRole.get(role);
+}

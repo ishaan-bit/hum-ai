@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+
+      # Detected package manager: npm (package-lock.json present).
+      # `npm ci` installs dev-deps only (tsx, typescript, @types/node) — no heavy
+      # ML dependencies are declared anywhere in the workspaces.
+      - name: Install (npm ci)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+      - name: Test
+        run: npm test --if-present
+
+      # No build script exists for the foundation yet; `--if-present` makes this a
+      # no-op until one is added (e.g. when the web client is built).
+      - name: Build (if defined)
+        run: npm run build --if-present

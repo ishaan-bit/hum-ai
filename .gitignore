@@ -1,0 +1,111 @@
+# =============================================================================
+# Hum AI — .gitignore
+# This repo MAY become public. The blocks below are privacy/safety gates, not
+# conveniences. See docs/privacy/PUBLIC_REPO_PRIVACY_CHECKLIST.md and
+# .github/workflows/privacy-check.yml (CI enforces a subset of these).
+# =============================================================================
+
+# --- Dependencies ---
+node_modules/
+.pnp.*
+
+# --- Build output ---
+dist/
+build/
+*.tsbuildinfo
+
+# --- Extraction scratch (local source-text caches; never committed) ---
+.extract/
+
+# --- Logs ---
+*.log
+npm-debug.log*
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.token
+secrets.json
+secrets.*.json
+
+# --- Firebase / cloud service-account credentials ---
+*serviceAccount*.json
+*service-account*.json
+firebase-adminsdk*.json
+*firebase*credentials*.json
+gcp-*.json
+google-credentials*.json
+
+# --- Vercel (local/project-sensitive metadata) ---
+.vercel
+.vercel/
+
+# --- Source materials (PRIVATE — never commit to a public repo) ---
+# Primary academic sources live locally under docs/source/. Markdown manifests
+# (INDEX.md, README.md) ARE tracked; the binary documents are NOT.
+docs/source/*.pdf
+docs/source/*.docx
+docs/source/*.doc
+docs/source/*.pptx
+docs/source/**/*.pdf
+docs/source/**/*.docx
+
+# --- Datasets / raw audio / recordings (never committed) ---
+datasets/
+data/raw/
+**/raw_audio/
+**/recordings/
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.aac
+*.webm
+*.opus
+
+# --- Model weights / checkpoints (never committed) ---
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.h5
+*.pb
+*.tflite
+*.gguf
+*.bin
+checkpoints/
+**/model_weights/
+
+# --- Clinical labels / PHQ-GAD / user data (never committed) ---
+*phq*.csv
+*gad*.csv
+*ces-dc*.csv
+*clinical_labels*.csv
+**/clinical-labels/
+**/user-data/
+
+# --- Python research scaffolds ---
+research/**/__pycache__/
+research/**/.venv/
+research/**/*.pyc
+.ipynb_checkpoints/
+**/*.nbconvert.ipynb
+
+# --- Claude Code local config (machine-specific; never committed) ---
+.claude/settings.local.json
+.claude/*.lock
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# --- Coverage ---
+coverage/
