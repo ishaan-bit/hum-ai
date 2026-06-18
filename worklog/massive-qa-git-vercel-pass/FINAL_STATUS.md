@@ -50,15 +50,30 @@
 
 ## 8. Remaining blockers
 
-**None.** Carry-over items (non-blocking, deferred), all gated behind the future public flip:
+**One environmental blocker (owner action), outside the code:**
+
+- **GitHub Actions cannot start runs on this private repo.** Every push — including a
+  deliberately-trivial `echo hello` test workflow — fails with a generic
+  `startup_failure` (`name: ""`, `path: BuildFailed`, 0s, no jobs created), while
+  repo-level Actions show `enabled: true, allowed_actions: all` and both real workflows
+  register `active`. Because *even a minimal workflow* fails identically, the workflow
+  **files are not the cause** — this is the classic account-level **Actions
+  billing / spending-limit** symptom for **private** repositories (private-repo Actions
+  consume billed minutes; with no payment method or a $0 spending limit once free
+  minutes are gone, runs fail to start). The token lacks the `user` scope to read
+  billing directly, so this is confirmed by elimination, not by the billing API.
+  - **Fix (owner):** github.com/settings/billing → enable Actions / set a spending
+    limit / add a payment method. **Or** flip the repo to public (Actions are free for
+    public repos) as part of the deferred public step. The committed `ci.yml` +
+    `privacy-check.yml` are valid and will run once Actions can start.
+
+Carry-over items (non-blocking, deferred, gated behind the future public flip):
 
 1. Scrub absolute path / Windows username from pre-existing note packs.
 2. Remove "Prof. Arvind Sahay" / private-draft framing from `docs/source/INDEX.md`.
 3. Replace "Hum v2" + stale `packages/@hum/…` in `parallel-*` notes (or archive).
 4. Add a `LICENSE`; review full history before going public.
-5. (Optional) Link Vercel project; apply branch protection.
-
-CI note: the very first push produced a generic phantom `BuildFailed` startup entry (a known GitHub artifact on initial repo creation, tied to a `deleted` placeholder workflow, **not** `ci.yml`/`privacy-check.yml` — both registered `active`). The real workflows are validated locally and verified on the follow-up push.
+5. (Optional) Link Vercel project; apply branch protection (needs the checks to run once).
 
 ## 9. Path to next prompt
 

@@ -31,6 +31,20 @@ The CI auditor verified **all 8 regexes match zero tracked files today** (no fal
 
 A nit (extension-only `.key`/`.bin`/`.pt` breadth) was left as-is: for a privacy gate, erring toward blocking unknown binaries is the intended fail-closed direction.
 
+## ⚠️ Runtime status: Actions can't start on this private repo (owner action)
+
+Both workflows are valid and registered `active`, but **no run ever starts** —
+every push yields a generic `startup_failure` (`path: BuildFailed`, 0s, no jobs).
+An **isolation test** (a trivial `name: hello / run: echo hello` workflow) failed
+**identically**, proving the workflow files are not the cause. Repo-level Actions are
+`enabled: true, allowed_actions: all`. This is the account-level **Actions
+billing / spending-limit** symptom for **private** repos.
+
+**Resolution (owner):** set an Actions spending limit / add a payment method at
+github.com/settings/billing, **or** make the repo public (Actions free for public
+repos). The workflows will then run unchanged. Validated locally instead this pass:
+`npm run check` green; privacy `git ls-files` scan clean on all 8 gates.
+
 ## Branch protection
 
 `docs/devops/BRANCH_PROTECTION.md` documents requiring `build-and-test` + `privacy-check` as status checks, blocking force-push/deletion. Applied **after** the first push (the check contexts must exist first); UI + `gh api` procedures both provided.
