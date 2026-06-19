@@ -35,10 +35,13 @@ fusion-engine (calibrated, capped confidence, abstention) → personalization-en
 safety-language`.
 
 - Single modality: **audio**. Experts are the SER-family audio experts; FER/TER are present as contracts/stubs but supply no signal in the default path.
+- **Real DSP feature extractor (overnight voice-core pass).** `@hum-ai/audio-features` now ships `HumDspExtractor` / `computeFeatures` — a deterministic, dependency-free, pure-TypeScript DSP pipeline (mono normalization, 80 ms RMS framing, noise-floor/SNR proxy, autocorrelation pitch tracking, a small local radix-2 FFT for the spectral group, and voicing/continuity/expression proxies) that turns a raw PCM buffer into the derived `AcousticFeatures`. It replaces `NotImplementedExtractor` for local use. It is **honest signal processing, not a trained or clinically validated model**; the embedding experts (WavLM / HuBERT / Wav2Vec2) remain Phase-2 future work behind the existing `AffectExpert` contract — no fake inference is shipped.
+- **Audio-buffer entry point.** `@hum-ai/orchestrator` `orchestrateHumAudio(buffer)` runs the full read from raw PCM; `buildHumSyncPayload` runs `assertNoRawAudioFields` at the sync boundary so the raw buffer can never ride along. The raw audio is consumed by extraction on-device and never stored, synced, or returned.
 - Two-head output separation and the consent-gated clinical-risk head (ADR-0006).
 - Dual baseline: rolling short-term + anchored long-term (ADR-0007).
 - User-facing confidence as qualitative language, never a raw number (ADR-0008).
 - **No camera packages. No visual feature extraction. No FER model.**
+- Try it: `npm run demo:voice` drives synthetic hums through the whole pipeline (no microphone, no camera).
 
 ### Phase 2 — Longitudinal voice personalization
 

@@ -1,9 +1,25 @@
-# apps/web (placeholder)
+# apps/web (placeholder + local demo)
 
-The Hum web client (capture → quality gate → read → song). **Not built in this
-pass** — the foundation is the contracts and engines in `packages/*`.
+The Hum web client (capture → quality gate → read → song). **The browser UI is
+not built in this pass** — the foundation is the contracts and engines in
+`packages/*`. `index.html` is a static preview placeholder.
 
-When implemented, this app wires the local-first pipeline:
+## Local voice-core demo (no microphone, no camera)
+
+The hum-only voice core is now real and runnable locally. From the repo root:
+
+```
+npm run demo:voice
+```
+
+`demo/voice-core-demo.ts` synthesizes a few test hums **in code** (a clean hum, a
+noisy hum, and near-silence — no recording, no capture surface), runs each through
+the full pipeline via `orchestrateHumAudio`, and prints only the safe user-facing
+read plus a short internal summary. It also builds the derived sync payload through
+`buildHumSyncPayload`, which runs `assertNoRawAudioFields` before returning. This is
+a developer demo, not a product, and is non-clinical / not validated.
+
+When implemented, the browser app will wire the same local-first pipeline:
 
 1. Record a 12-second hum (`Recorder`, raw-ish constraints — see `hum_spec` §4.1).
 2. Extract features on-device (`@hum-ai/audio-features`).

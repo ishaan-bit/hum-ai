@@ -1,12 +1,13 @@
 import {
+  assertNoRawAudioFields,
   clamp01,
   hasConsent,
   type ConsentState,
   type IsoTimestamp,
   type ModelVersion,
 } from "@hum-ai/shared-types";
-import { metricsFromFeatures } from "@hum-ai/audio-features";
-import type { AcousticFeatures } from "@hum-ai/audio-features";
+import { computeFeatures, metricsFromFeatures } from "@hum-ai/audio-features";
+import type { AcousticFeatures, AudioInput } from "@hum-ai/audio-features";
 import { evaluateQuality } from "@hum-ai/quality-gate";
 import type { QualityResult } from "@hum-ai/quality-gate";
 import { HeuristicDomainClassifier, HumDomainAdapter } from "@hum-ai/domain-classifier";
@@ -105,6 +106,8 @@ export interface UserFacingRead {
 
 /** Internal, NEVER-rendered detail (logging, eval, consent-gated risk surfacing). */
 export interface InternalRead {
+  /** The DERIVED features this read was computed from (never raw audio). */
+  readonly features: AcousticFeatures;
   readonly inference: MultiHeadAffectInference;
   /** Two heads; the clinical head is consent-gated (withheld by default). */
   readonly twoHead: TwoHeadAffectOutput;
@@ -282,6 +285,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     userFacing,
     recommendationView,
     internal: {
+      features,
       inference,
       twoHead,
       relapse,
@@ -293,4 +297,93 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       eligibleHumCount,
     },
   };
+}
+
+/** Audio-buffer entry: raw PCM in, full orchestrated read out. */
+export interface AudioOrchestratorInput {
+  /** Raw, EPHEMERAL audio. Used only to extract derived features; never stored/returned. */
+  readonly audio: AudioInput;
+  readonly consent: ConsentState;
+  readonly modelVersion: ModelVersion;
+  readonly now: IsoTimestamp;
+  readonly history?: HumHistory;
+}
+
+/**
+ * Run the full read from a raw audio buffer. Feature extraction happens HERE,
+ * on-device; the raw buffer is consumed by `computeFeatures` and then dropped —
+ * it is never persisted, synced, or placed in the returned object (which carries
+ * only the derived `AcousticFeatures`). This is the typed-audio entry point that
+ * mirrors what a real capture surface would call.
+ */
+export async function orchestrateHumAudio(input: AudioOrchestratorInput): Promise<OrchestratedRead> {
+  const features = computeFeatures(input.audio);
+  return orchestrateHumRead({
+    features,
+    consent: input.consent,
+    modelVersion: input.modelVersion,
+    now: input.now,
+    history: input.history,
+  });
+}
+
+/**
+ * The derived, sync-safe projection of a read. Carries ONLY derived features and
+ * qualitative/abstracted summaries — never raw audio, never a clinical-risk label,
+ * never the raw numeric confidence.
+ */
+export interface HumSyncPayload {
+  readonly featureMode: string;
+  readonly capturedAt: IsoTimestamp;
+  readonly modelVersion: ModelVersion;
+  /** Derived features only — the single representation the privacy posture allows to sync. */
+  readonly derivedFeatures: AcousticFeatures;
+  readonly quality: {
+    readonly decision: QualityResult["decision"];
+    readonly captureQuality: QualityResult["captureQuality"];
+    readonly captureQualityScore: number;
+    readonly baselineEligible: boolean;
+  };
+  readonly domain: {
+    readonly predicted: DomainClassification["predicted"];
+    readonly confidence: number;
+  };
+  /** Qualitative evidence level (High/Medium/Low/Early baseline) — never a raw number. */
+  readonly evidenceLevel: UserFacingConfidence["evidenceLevel"];
+  readonly eligibleHumCount: number;
+  readonly abstained: boolean;
+}
+
+/**
+ * Build the derived sync payload from a read and run the privacy guards BEFORE
+ * returning it. `assertNoRawAudioFields` is the last line of defense against a
+ * raw-audio-like field reaching a sync payload; `assertNoClinicalLeak` keeps any
+ * clinical-risk label out of it (ADR-0006). Either guard throws rather than
+ * letting an unsafe payload through.
+ */
+export function buildHumSyncPayload(
+  read: OrchestratedRead,
+  meta: { readonly capturedAt: IsoTimestamp; readonly modelVersion: ModelVersion },
+): HumSyncPayload {
+  const q = read.internal.quality;
+  const payload: HumSyncPayload = {
+    featureMode: read.internal.features.featureMode,
+    capturedAt: meta.capturedAt,
+    modelVersion: meta.modelVersion,
+    derivedFeatures: read.internal.features,
+    quality: {
+      decision: q.decision,
+      captureQuality: q.captureQuality,
+      captureQualityScore: q.captureQualityScore,
+      baselineEligible: q.baselineEligible,
+    },
+    domain: { predicted: read.internal.domain.predicted, confidence: read.internal.domain.confidence },
+    evidenceLevel: read.userFacing.confidence.evidenceLevel,
+    eligibleHumCount: read.internal.eligibleHumCount,
+    abstained: read.userFacing.abstained,
+  };
+
+  assertNoRawAudioFields(payload); // privacy guard — no raw-audio-like field may sync
+  assertNoClinicalLeak(payload); // ADR-0006 — no clinical-risk label may sync
+  return payload;
 }

@@ -19,7 +19,8 @@
     "qa": "node --import tsx packages/qa-gates/src/cli.ts",
     "qa:all": "npm run check && npm run qa",
     "data:manifest": "node --import tsx packages/dataset-harness/src/cli.ts manifest",
-    "data:validate": "node --import tsx packages/dataset-harness/src/cli.ts validate"
+    "data:validate": "node --import tsx packages/dataset-harness/src/cli.ts validate",
+    "demo:voice": "node --import tsx apps/web/demo/voice-core-demo.ts"
   },
   "devDependencies": {
     "@types/node": "^22.19.21",
