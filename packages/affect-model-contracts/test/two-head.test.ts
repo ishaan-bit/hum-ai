@@ -84,3 +84,12 @@ test("abstaining inference still yields an abstained view with no clinical leak"
   assert.equal(view.abstained, true);
   assert.doesNotThrow(() => assertNoClinicalLeak(view));
 });
+
+test("assertNoClinicalLeak throws when a forbidden id leaks as a string VALUE, not just a key", () => {
+  // relapse_drift is a forbidden head id AND a live RelapseClass value — the exact
+  // way a refactor could surface a clinical label without using a forbidden key.
+  assert.throws(() => assertNoClinicalLeak({ headline: "relapse_drift" }), ClinicalLeakError);
+  assert.throws(() => assertNoClinicalLeak({ tags: ["worsening", "depressive_affect_markers"] }), ClinicalLeakError);
+  // benign string values are fine
+  assert.doesNotThrow(() => assertNoClinicalLeak({ headline: "a pattern in your hum", tags: ["calm"] }));
+});

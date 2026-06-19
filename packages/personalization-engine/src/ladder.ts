@@ -1,4 +1,5 @@
 ﻿import type { UnitInterval } from "@hum-ai/shared-types";
+import { ANCHOR_MIN_HUMS } from "./dual-baseline";
 
 /**
  * The personalization ladder (project brief), with confidence caps from
@@ -62,7 +63,10 @@ export function stagePolicy(eligibleHumCount: number): StagePolicy {
       relapseModelActive: false,
     };
   }
-  if (n <= 19) {
+  // Relapse model activates exactly when the anchored baseline does
+  // (`ANCHOR_MIN_HUMS`); derive the boundary from that constant so the two
+  // cannot silently desync (invariant 8).
+  if (n < ANCHOR_MIN_HUMS) {
     return {
       stage: "personalized_fusion",
       confidenceCap: 0.88,

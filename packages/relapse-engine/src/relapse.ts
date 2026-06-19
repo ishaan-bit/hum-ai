@@ -131,7 +131,10 @@ export function assessRelapse(
   let rationale: string;
   if ((counts.relapse_drift ?? 0) >= 2 || ((counts.relapse_drift ?? 0) >= 1 && drift >= 0.5)) {
     cls = "relapse_drift";
-    rationale = "multiple references show sustained drift toward a high-risk signature";
+    rationale =
+      (counts.relapse_drift ?? 0) >= 2
+        ? "multiple references show sustained drift toward a high-risk signature"
+        : "a reference shows strong drift (≥ 0.5) toward a high-risk signature";
   } else if (worseningVotes > recoveryVotes && worseningVotes > stableVotes) {
     cls = "worsening";
     rationale = "more references indicate worsening than recovery/stability";

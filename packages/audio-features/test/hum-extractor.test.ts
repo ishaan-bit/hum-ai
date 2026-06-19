@@ -169,3 +169,44 @@ test("degenerate inputs are handled safely", () => {
   // An invalid sample rate is a programming error and is rejected loudly.
   assert.throws(() => computeFeatures({ sampleRate: 0, samples: [0.1, -0.1] }));
 });
+
+test("clipping is detected on the raw rail-pinned samples even under a DC bias (F1)", () => {
+  const base = synthClippedHum();
+  const src = base.samples as Float32Array;
+  // Add a positive DC bias and re-clip at full scale: the positive rail stays
+  // pinned at +1.0 (a genuinely clipped raw sample), but DC removal would shift
+  // it below clipSampleLevel. Measuring clipping on the raw samples must still
+  // flag it; measuring on the DC-removed signal would (wrongly) report ~0.
+  const biased = Float32Array.from(src, (v) => Math.max(-1, Math.min(1, v + 0.12)));
+  const f = computeFeatures({ sampleRate: base.sampleRate, samples: biased });
+  // 0.08 is quality-gate's maxClippedFrameRatio; clipping must stay well above it.
+  assert.ok(
+    f.clippedFrameRatio > 0.08,
+    `a DC-biased clipped capture must still exceed the clip gate, got ${f.clippedFrameRatio}`,
+  );
+});
+
+test("a sub-70Hz tone is reported as out-of-band, not a confident ~500Hz F0 (F12)", () => {
+  const sr = 48000;
+  const n = sr * 2;
+  const samples = new Float32Array(n);
+  for (let i = 0; i < n; i++) samples[i] = 0.5 * Math.sin((2 * Math.PI * 55 * i) / sr); // 55 Hz, below minPitchHz=70
+  const f = computeFeatures({ sampleRate: sr, samples });
+  // The true F0 (55 Hz) cannot be reached in the search band; the tracker must
+  // NOT lock the descending shoulder at minLag into a confident ~maxPitchHz F0.
+  if (f.pitchMeanHz !== null) {
+    assert.ok(f.pitchMeanHz < 450, `out-of-band tone misreported as ~${f.pitchMeanHz}Hz`);
+  }
+});
+
+test("spectral features use the raw-RMS activity floor (soft-but-clean frames still count) (F13)", () => {
+  const sr = 48000;
+  const n = sr * 2;
+  const samples = new Float32Array(n);
+  // Amplitude 0.0212 → RMS ~0.015: above the raw quietFrameRms (0.012) but below
+  // the windowed-RMS-equivalent floor (~0.020). Gating on windowed RMS would drop
+  // every frame and collapse the spectrum to SAFE_DEFAULT (centroid 0).
+  for (let i = 0; i < n; i++) samples[i] = 0.0212 * Math.sin((2 * Math.PI * 160 * i) / sr);
+  const f = computeFeatures({ sampleRate: sr, samples });
+  assert.ok(f.spectralCentroidHz > 0, `soft-but-clean tone must yield a real spectrum, got ${f.spectralCentroidHz}`);
+});

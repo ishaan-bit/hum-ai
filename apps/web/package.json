@@ -3,5 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "description": "Placeholder for the Hum web app (capture → read → song). UI is intentionally not built in this pass.",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@hum-ai/audio-features": "*",
+    "@hum-ai/orchestrator": "*",
+    "@hum-ai/shared-types": "*",
+    "firebase": "^12.15.0"
+  }
 }

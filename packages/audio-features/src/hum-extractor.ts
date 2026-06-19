@@ -189,7 +189,10 @@ export function computeFeatures(input: AudioInput): AcousticFeatures {
     const end = Math.min(start + frameLen, n);
     let clipped = 0;
     for (let i = start; i < end; i++) {
-      if (Math.abs(x[i] as number) >= DSP_PARAMS.clipSampleLevel) clipped++;
+      // Clipping is a property of the RAW rail-pinned samples (x0), NOT the
+      // DC-removed signal (x): removing a DC bias shifts rail-pinned samples
+      // below clipSampleLevel and would hide an asymmetrically-clipped capture.
+      if (Math.abs(x0[i] as number) >= DSP_PARAMS.clipSampleLevel) clipped++;
     }
     if (clipped >= clipMinSamples) clippedFrames++;
   }

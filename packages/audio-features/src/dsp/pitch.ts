@@ -88,6 +88,14 @@ function frameF0(
     return { f0: null, strength: Math.max(0, bestVal) };
   }
 
+  // Reject an out-of-band alias: a peak pinned at minLag (the highest searchable
+  // frequency) with only moderate strength is the descending shoulder of a tone
+  // whose true F0 is below `minPitchHz`, NOT a real ~`maxPitchHz` pitch. A genuine
+  // tone at the edge produces a near-unity peak, so gate on `edgePitchMinStrength`.
+  if (bestLag === minLag && bestVal < DSP_PARAMS.edgePitchMinStrength) {
+    return { f0: null, strength: Math.max(0, bestVal) };
+  }
+
   // Parabolic interpolation around the peak for a sub-sample lag estimate.
   let refined = bestLag;
   if (bestLag > minLag && bestLag < maxLag) {

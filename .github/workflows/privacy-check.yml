@@ -38,30 +38,32 @@ jobs:
             fi
           }
 
-          # 1. Source materials / binaries / model weights / audio by extension.
-          m=$(echo "$tracked" | grep -E '\.(pdf|docx|doc|pptx|wav|mp3|m4a|flac|ogg|aac|webm|opus|ckpt|pt|pth|onnx|safetensors|h5|pb|tflite|gguf|bin)$' || true)
-          report "source docs / model weights / audio binaries" "$m"
+          # 1. Source materials / binaries / model weights / audio / dataset
+          #    archives by extension. Case-insensitive (-iE) so an uppercase
+          #    extension like .ONNX/.WAV/.ZIP cannot bypass the scan.
+          m=$(echo "$tracked" | grep -iE '\.(pdf|docx|doc|pptx|wav|mp3|m4a|flac|ogg|aac|webm|opus|zip|tar|tgz|gz|ckpt|pt|pth|onnx|safetensors|h5|pb|tflite|gguf|bin)$' || true)
+          report "source docs / model weights / audio / archive binaries" "$m"
 
           # 2. .env files (allow only .env.example).
-          m=$(echo "$tracked" | grep -E '(^|/)\.env($|\.)' | grep -vE '(^|/)\.env\.example$' || true)
+          m=$(echo "$tracked" | grep -iE '(^|/)\.env($|\.)' | grep -ivE '(^|/)\.env\.example$' || true)
           report ".env / dotenv secret files" "$m"
 
           # 3. Service-account / cloud credential JSON. Anchored to .json (the
           #    secret-bearing artifact) so legit code/docs like serviceAccountHelper.ts
           #    or service-account-setup.md do not false-positive.
-          m=$(echo "$tracked" | grep -E '(serviceAccount|service-account|firebase-adminsdk|google-credentials)[^/]*\.json$|(^|/)gcp-[^/]*\.json$' || true)
+          m=$(echo "$tracked" | grep -iE '(serviceAccount|service-account|firebase-adminsdk|google-credentials)[^/]*\.json$|(^|/)gcp-[^/]*\.json$' || true)
           report "service-account / cloud credential files" "$m"
 
           # 4. Vercel local metadata.
-          m=$(echo "$tracked" | grep -E '(^|/)\.vercel(/|$)' || true)
+          m=$(echo "$tracked" | grep -iE '(^|/)\.vercel(/|$)' || true)
           report "vercel local metadata (.vercel)" "$m"
 
           # 5. Private keys / tokens.
-          m=$(echo "$tracked" | grep -E '\.(pem|key|p12|pfx)$|(^|/)[^/]*\.token$' || true)
+          m=$(echo "$tracked" | grep -iE '\.(pem|key|p12|pfx)$|(^|/)[^/]*\.token$' || true)
           report "private keys / tokens" "$m"
 
           # 6. Datasets / raw recordings directories.
-          m=$(echo "$tracked" | grep -E '(^|/)(datasets|recordings|raw_audio)/' | grep -vE '/README\.md$' || true)
+          m=$(echo "$tracked" | grep -iE '(^|/)(datasets|recordings|raw_audio)/' | grep -ivE '/README\.md$' || true)
           report "dataset / raw-recording payloads" "$m"
 
           # 7. Clinical labels / PHQ-GAD user data files. Token sits at a name
@@ -73,7 +75,7 @@ jobs:
           report "clinical-label / PHQ-GAD data files" "$m"
 
           # 8. Explicit: source binaries under docs/source must never be tracked.
-          m=$(echo "$tracked" | grep -E '^docs/source/.*\.(pdf|docx|doc|pptx)$' || true)
+          m=$(echo "$tracked" | grep -iE '^docs/source/.*\.(pdf|docx|doc|pptx)$' || true)
           report "docs/source binary materials" "$m"
 
           echo "-----------------------------------------------"

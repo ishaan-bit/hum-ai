@@ -12,7 +12,7 @@ A free-speech sample is confounded by language, content, and privacy exposure. A
 
 ## Architecture at a glance
 
-Expert-based **late fusion** with a Logistic-Regression meta-learner over per-expert probability vectors, adapted from the TriSense FER+SER+TER design [trisense_architecture]. Hum's online path runs SER-family experts on the hum; FER/TER experts exist as optional, off-domain inputs.
+Expert-based **late fusion** with a deterministic reliability-weighted meta-learner (`StubWeightedMetaLearner`, the v1 default) over per-expert probability vectors, adapted from the TriSense FER+SER+TER design [trisense_architecture]. The `LogisticRegressionMetaLearner` is the drop-in target once weights are fit — its `combine` throws until then, so **no model is trained today**. Hum's online path runs SER-family experts on the hum; FER/TER experts exist as optional, off-domain inputs.
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,7 @@ flowchart LR
   B --> C[quality-gate<br/>clean/borderline/rejected<br/>+ capture cap]
   C --> D[domain-classifier<br/>HeuristicDomainClassifier<br/>+ HumDomainAdapter]
   D --> E[experts<br/>SER ensemble +/- FER/TER]
-  E --> F[fusion-engine<br/>LogReg meta-learner<br/>calibrated, capped confidence]
+  E --> F[fusion-engine<br/>reliability-weighted meta-learner<br/>calibrated, capped confidence]
   F --> G[personalization-engine<br/>rolling baseline, z-deltas, stage cap]
   G --> H[relapse-engine<br/>within-user paired comparison]
   H --> I[intervention-engine<br/>VA-mapped suggestion]
@@ -51,6 +51,10 @@ npm workspaces; one concern per package. All packages are `@hum-ai/*`.
 | `relapse-engine` | `RelapseSample`, `RELAPSE_CLASSES`, `classifyComparison`, `assessRelapse` → `RelapseVerdict`. |
 | `intervention-engine` | `selectIntervention`, `InterventionContext` → `InterventionSuggestion`. |
 | `safety-language` | `FORBIDDEN_PHRASES`, `validateUserFacingText`, `assertSafeUserFacingText`, `INTERNAL_TO_USER_FACING`, `userFacingLabel`. |
+| `orchestrator` | End-to-end read path: `orchestrateHumRead`/`orchestrateHumAudio` — two-head split + consent gate, dual baseline, qualitative confidence, raw-audio/clinical-leak guards on the sync payload. |
+| `qa-gates` | The `npm run qa` gates: `no-clinical-leak`, `no-camera-deps`, `no-raw-confidence-copy`, `forbidden-files`. |
+| `dataset-harness` | Local-only dataset manifest/validate CLI (`data:manifest`, `data:validate`); no audio ever written into the repo. |
+| `naming-check` | Enforces the Hum AI / `@hum-ai` naming constitution (ADR-0000). |
 
 Plus **`apps/`** (`web`, `mobile`, `ops` — placeholder shells wiring the pipeline; no UI built this pass) and **`research/`** (Python-only dataset/training/evaluation/model-card scaffolds; no models trained, no heavy ML deps installed).
 

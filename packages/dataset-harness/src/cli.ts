@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { resolveDataDir, manifestOutputDir, RAW_DATASET_DIRS, type RawDatasetDir } from "./paths";
 import { buildAndWriteManifest, countByEmotion } from "./manifest";
 import { validateDataset, formatValidationReport } from "./validate";
@@ -95,13 +97,24 @@ export function runCli(argv: readonly string[], env: NodeJS.ProcessEnv = process
   return { exitCode: 0, output: lines.join("\n") };
 }
 
-/** Detect whether this module is the entrypoint (works under tsx ESM). */
+/**
+ * Detect whether this module is the entrypoint (works under tsx ESM). Compares
+ * the RESOLVED absolute entry path to this module's own path — exactly, not by a
+ * loose `endsWith("cli.ts")` (which falsely fired for any other package whose
+ * entrypoint is also named `cli.ts`, e.g. `@hum-ai/signal-lab`, running this CLI
+ * as an import side effect). The drive-letter case may differ on Windows, so a
+ * case-insensitive fallback is included.
+ */
 function isMain(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
-  const here = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
-  const entryPath = entry.replace(/\\/g, "/");
-  return here.endsWith(entryPath) || entryPath.endsWith("cli.ts");
+  try {
+    const a = resolve(entry);
+    const b = fileURLToPath(import.meta.url);
+    return a === b || a.toLowerCase() === b.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 if (isMain()) {

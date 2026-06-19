@@ -194,6 +194,12 @@ export function assertNoClinicalLeak(view: object): void {
   }
   const offenders: string[] = [];
   const visit = (value: unknown): void => {
+    // A forbidden head id / internal label can leak as a string VALUE
+    // (e.g. relapse.class === "relapse_drift"), not just as a field name.
+    if (typeof value === "string") {
+      if (forbidden.has(value)) offenders.push(value);
+      return;
+    }
     if (value === null || typeof value !== "object") return;
     if (Array.isArray(value)) {
       for (const item of value) visit(item);

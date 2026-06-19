@@ -4,10 +4,12 @@ import type { GateResult, GateViolation } from "./types";
 /**
  * GATE: no tracked forbidden files (Node port of `.github/workflows/privacy-check.yml`).
  *
- * This is a 1:1 port of the bash `git ls-files | grep -E ...` privacy scan into
+ * This is a 1:1 port of the bash `git ls-files | grep -iE ...` privacy scan into
  * pure Node + JS regex so it runs locally and on Windows CI (the YAML is bash /
  * ubuntu-only). The regexes are deliberately the SAME carefully-anchored ERE
- * patterns as the YAML, so this stays false-positive-free: e.g. `gadget.json`
+ * patterns as the YAML, applied case-insensitively (the `i` flag here mirrors the
+ * YAML's `grep -iE`) so an uppercase extension like `.PEM`/`.ONNX` cannot bypass
+ * the scan, while staying false-positive-free: e.g. `gadget.json`
  * must NOT trip the PHQ/GAD rule, `serviceAccountHelper.ts` must NOT trip the
  * credential rule, `.env.example` is allowed, `datasets/README.md` is allowed.
  *
@@ -20,11 +22,11 @@ export interface ForbiddenFileRule {
   readonly id: string;
   /** Human label (matches the YAML "report" label). */
   readonly label: string;
-  /** A path matches the rule when `test(path)` is true ... */
+  /** A path matches the rule when `test(path)` is true (all rules use the `i` flag). */
   readonly test: RegExp;
   /** ... UNLESS it also matches `allow` (the YAML `grep -v` exclusions). */
   readonly allow?: RegExp;
-  /** Whether `test` is applied case-insensitively (the PHQ/GAD rule uses -i). */
+  /** Suggested remediation surfaced in the violation. */
   readonly fix: string;
 }
 
@@ -36,45 +38,45 @@ export const FORBIDDEN_FILE_RULES: readonly ForbiddenFileRule[] = [
   {
     // YAML rule 1 + 8 (docs/source binaries are a subset of this extension set).
     id: "binary-or-weights-or-audio",
-    label: "source docs / model weights / audio binaries",
-    test: /\.(pdf|docx|doc|pptx|wav|mp3|m4a|flac|ogg|aac|webm|opus|ckpt|pt|pth|onnx|safetensors|h5|pb|tflite|gguf|bin)$/,
-    fix: "Keep binaries/audio/weights out of git. Track a text pointer/checksum or a README in docs/source instead; store the artifact in private object storage.",
+    label: "source docs / model weights / audio / archive binaries",
+    test: /\.(pdf|docx|doc|pptx|wav|mp3|m4a|flac|ogg|aac|webm|opus|zip|tar|tgz|gz|ckpt|pt|pth|onnx|safetensors|h5|pb|tflite|gguf|bin)$/i,
+    fix: "Keep binaries/audio/weights/dataset-archives out of git. Track a text pointer/checksum or a README in docs/source instead; store the artifact in private object storage.",
   },
   {
     // YAML rule 2: .env files (allow only .env.example).
     id: "dotenv-secret",
     label: ".env / dotenv secret files",
-    test: /(^|\/)\.env($|\.)/,
-    allow: /(^|\/)\.env\.example$/,
+    test: /(^|\/)\.env($|\.)/i,
+    allow: /(^|\/)\.env\.example$/i,
     fix: "Never commit real .env files. Commit only .env.example with placeholder values; load real secrets from the environment.",
   },
   {
     // YAML rule 3: service-account / cloud credential JSON, anchored to .json.
     id: "cloud-credential-json",
     label: "service-account / cloud credential files",
-    test: /(serviceAccount|service-account|firebase-adminsdk|google-credentials)[^/]*\.json$|(^|\/)gcp-[^/]*\.json$/,
+    test: /(serviceAccount|service-account|firebase-adminsdk|google-credentials)[^/]*\.json$|(^|\/)gcp-[^/]*\.json$/i,
     fix: "Do not commit credential JSON. Use workload identity / env-injected secrets; add the file to .gitignore.",
   },
   {
     // YAML rule 4: vercel local metadata.
     id: "vercel-local-metadata",
     label: "vercel local metadata (.vercel)",
-    test: /(^|\/)\.vercel(\/|$)/,
+    test: /(^|\/)\.vercel(\/|$)/i,
     fix: "Remove the .vercel directory from git (it holds local project linkage). It is auto-generated and should be .gitignore'd.",
   },
   {
     // YAML rule 5: private keys / tokens.
     id: "private-key-or-token",
     label: "private keys / tokens",
-    test: /\.(pem|key|p12|pfx)$|(^|\/)[^/]*\.token$/,
+    test: /\.(pem|key|p12|pfx)$|(^|\/)[^/]*\.token$/i,
     fix: "Never commit private keys/tokens. Rotate the secret if it was committed, then store it in a secret manager / env var.",
   },
   {
     // YAML rule 6: dataset / raw-recording directories (allow READMEs).
     id: "dataset-or-recording-payload",
     label: "dataset / raw-recording payloads",
-    test: /(^|\/)(datasets|recordings|raw_audio)\//,
-    allow: /\/README\.md$/,
+    test: /(^|\/)(datasets|recordings|raw_audio)\//i,
+    allow: /\/README\.md$/i,
     fix: "Datasets/recordings must stay out of git (privacy + size). Keep only a README describing provenance; store data in private storage referenced by the dataset-registry.",
   },
   {

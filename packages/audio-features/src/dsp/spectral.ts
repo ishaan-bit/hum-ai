@@ -59,16 +59,20 @@ export function spectralFeatures(x: Float64Array, sampleRate: number): SpectralR
   const framed = new Float64Array(win);
   const lastStart = x.length - win;
   for (let start = 0; start <= lastStart; start += hop) {
-    // Window the frame and gate on energy.
-    let energy = 0;
+    // Window the frame (for the FFT) but gate on the RAW (un-windowed) RMS so the
+    // spectral "active" floor matches the time-domain energy definition exactly.
+    // Gating on the windowed RMS (~0.61× raw, from the Hann mean-square ~0.375)
+    // would make the spectral floor ~1.6× stricter and silently drop soft-but-
+    // clean frames from the centroid/bandwidth/flatness averages.
+    let rawEnergy = 0;
     for (let i = 0; i < win; i++) {
-      const v = (x[start + i] as number) * (window[i] as number);
-      framed[i] = v;
-      energy += v * v;
+      const raw = x[start + i] as number;
+      framed[i] = raw * (window[i] as number);
+      rawEnergy += raw * raw;
     }
-    const frameRms = Math.sqrt(energy / win);
+    const frameRms = Math.sqrt(rawEnergy / win);
     if (frameRms < DSP_PARAMS.quietFrameRms) {
-      prevMag = null; // a silent frame breaks the flux continuity
+      prevMag = null; // a below-activity-floor frame breaks the flux continuity
       continue;
     }
 

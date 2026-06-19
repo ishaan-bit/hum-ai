@@ -49,6 +49,23 @@ test("the safety guard catches a leaked confidence percentage", () => {
   assert.equal(isConfidenceCopySafe("Signal clarity: High evidence · Based on 12 clean hums"), true);
 });
 
+test("the safety guard also catches raw probabilities, percent words and unicode percent signs", () => {
+  for (const bad of [
+    "I'm 0.87 confidence in this",
+    "We're 0.87 sure",
+    "Confidence: 0.92",
+    "87 percent sure",
+    "92％ confident", // fullwidth percent U+FF05
+    "probability 0.95",
+  ]) {
+    assert.equal(isConfidenceCopySafe(bad), false, `should reject raw confidence number: ${bad}`);
+  }
+  // Legitimate digit-bearing copy (integer hum counts, breath counts) stays safe.
+  for (const ok of ["Based on 12 clean hums", "Based on your first clean hum", "Take 3 slow breaths"]) {
+    assert.equal(isConfidenceCopySafe(ok), true, `should allow: ${ok}`);
+  }
+});
+
 test("signal clarity labels are the sanctioned vocabulary", () => {
   assert.equal(signalClarityLabel("high"), "High evidence");
   assert.equal(signalClarityLabel("medium"), "Medium evidence");

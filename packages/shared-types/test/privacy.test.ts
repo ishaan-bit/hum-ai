@@ -30,6 +30,15 @@ test("derived feature names are allowed", () => {
   }
 });
 
+test("raw-PCM/sample carriers are blocked while benign sample-rate metadata is allowed", () => {
+  for (const f of ["pcmData", "pcmBuffer", "linearPcm", "pcmSamples", "floatSamples", "sampleArray", "sampleData"]) {
+    assert.equal(isRawAudioFieldName(f), true, `${f} should be blocked`);
+  }
+  for (const f of ["sampleRate", "sampleCount", "sampleSize"]) {
+    assert.equal(isRawAudioFieldName(f), false, `${f} is benign metadata, not raw audio`);
+  }
+});
+
 test("assertNoRawAudioFields throws on a forbidden top-level field", () => {
   assert.throws(() => assertNoRawAudioFields({ humId: "h1", audioBlob: "..." }), RawAudioFieldError);
 });

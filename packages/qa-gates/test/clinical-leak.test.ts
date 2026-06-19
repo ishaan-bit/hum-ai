@@ -38,6 +38,11 @@ test("findClinicalLeakKeys catches a nested leaky internal label", () => {
   assert.deepEqual(offenders, ["depressive_affect_marker"]);
 });
 
+test("findClinicalLeakKeys catches a forbidden id leaking as a string value", () => {
+  assert.deepEqual(findClinicalLeakKeys({ headline: "relapse_drift" }), ["relapse_drift"]);
+  assert.deepEqual(findClinicalLeakKeys({ tags: ["depressive_affect_markers"] }), ["depressive_affect_markers"]);
+});
+
 test("findClinicalLeakKeys passes a clean abstracted view", () => {
   const clean = {
     abstained: false,

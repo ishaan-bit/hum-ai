@@ -10,6 +10,7 @@
 } from "@hum-ai/shared-types";
 import type { DomainClass } from "@hum-ai/shared-types";
 import type { InterventionType } from "@hum-ai/affect-model-contracts";
+import { ROLLING_WINDOW } from "./dual-baseline";
 import { stagePolicy } from "./ladder";
 
 /** Per-feature robust baseline: feature name → robust stats over eligible hums. */
@@ -55,7 +56,7 @@ export interface UserModelProfile {
  */
 export function buildBaselineVector(
   samplesByFeature: Record<string, readonly number[]>,
-  rollingWindow = 24,
+  rollingWindow = ROLLING_WINDOW,
 ): BaselineVector {
   const out: BaselineVector = {};
   for (const [feature, values] of Object.entries(samplesByFeature)) {

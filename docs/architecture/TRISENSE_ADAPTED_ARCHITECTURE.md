@@ -160,8 +160,11 @@ are useful [ser_mental_health_review]:
 ## 8. Valence-Arousal recommendation handoff
 
 `fuse` leaves `recommendedIntervention: null`; the [intervention engine](../../packages/intervention-engine/)
-fills it. `selectIntervention` reads the fused `dimensional` V-A point plus the
-state scores and returns an `InterventionSuggestion` with a `vaTarget` that gently
+fills it. `selectIntervention` sanitizes the fused inference into a `RecommendationView`
+(via `toRecommendationView`) and delegates to `selectInterventionFromView`, which reads
+only the benign `dimensional` V-A point plus abstracted regulation/mood/energy bands —
+never the raw state scores or clinical-risk labels (ADR-0006) — and returns an
+`InterventionSuggestion` with a `vaTarget` that gently
 steers toward a more regulated point — the TriSense recommendation philosophy,
 re-cast as support not treatment. It never acts on an abstained read, and
 `escalation_suggestion` is double-gated on a persistent risk pattern and a safety

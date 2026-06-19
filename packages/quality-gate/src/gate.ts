@@ -4,7 +4,7 @@ import { HUM_THRESHOLDS as T, CAPTURE_QUALITY_CONFIDENCE_CAP } from "./threshold
 
 /** Gate verdict (`hum_spec` §8). */
 export type QualityDecision = "clean" | "borderline" | "rejected";
-export type CaptureQuality = "good" | "usable" | "soft_usable" | "poor" | "rejected";
+export type CaptureQuality = "good" | "usable" | "soft_usable" | "rejected";
 
 export interface QualityResult {
   readonly decision: QualityDecision;
@@ -17,12 +17,6 @@ export interface QualityResult {
   readonly baselineEligible: boolean;
   readonly reasons: readonly string[];
 }
-
-const decisionFor = (q: CaptureQuality): QualityDecision => {
-  if (q === "rejected" || q === "poor") return "rejected";
-  if (q === "soft_usable") return "borderline";
-  return "clean";
-};
 
 /**
  * Continuous capture-quality score, blending the spec's "Capture quality"

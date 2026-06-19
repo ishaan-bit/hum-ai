@@ -98,12 +98,25 @@ export function userFacingConfidence(c: ConfidenceLike, eligibleHumCount: number
 }
 
 /**
- * Guard: a user-facing confidence string must not embed a raw confidence
- * percentage (e.g. "87%", "0.87 confidence"). Returns true if it looks safe.
- * Use to catch a regression that pipes the internal number into copy.
+ * Guard: a user-facing confidence string must not embed a raw confidence number
+ * (ADR-0008 forbids surfacing raw percentages OR probabilities). Returns true if
+ * it looks safe. Use to catch a regression that pipes the internal number into copy.
+ *
+ * Rejects:
+ *  - a percent figure in any common form — ASCII `%`, fullwidth `％` (U+FF05),
+ *    small `﹪` (U+FE6A), or the word `percent`/`pct` (e.g. "87%", "87 percent");
+ *  - a decimal probability adjacent to confidence wording, in either order
+ *    (e.g. "0.87 confidence", "confidence: 0.92", "we're 0.87 sure").
+ *
+ * A bare decimal NOT next to confidence wording (e.g. "version 1.5") is allowed,
+ * so this does not false-positive on legitimate digit-bearing copy like
+ * "Based on 12 clean hums".
  */
 export function isConfidenceCopySafe(text: string): boolean {
-  // A percentage adjacent to confidence/sure/certain wording, or a bare 2-digit %.
-  const percentNearConfidence = /\b\d{1,3}\s?%/.test(text);
-  return !percentNearConfidence;
+  const CONFIDENCE_WORDS = "confidence|confident|sure|certain|probability|probable|likely";
+  const percentFigure = /\d{1,3}\s?(?:%|％|﹪|\s?(?:percent|pct)\b)/i.test(text);
+  const decimalNearConfidence =
+    new RegExp(`\\b0?\\.\\d+\\s*(?:${CONFIDENCE_WORDS})\\b`, "i").test(text) ||
+    new RegExp(`\\b(?:${CONFIDENCE_WORDS})\\b\\D{0,8}0?\\.\\d+`, "i").test(text);
+  return !percentFigure && !decimalNearConfidence;
 }

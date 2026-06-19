@@ -56,7 +56,7 @@ export interface ConfidenceReport {
   readonly rawConfidence: UnitInterval;
   /** Final calibrated confidence after caps [0,1]. */
   readonly confidence: UnitInterval;
-  /** Percent form, rounded, 0..100 (never exceeds the cap × 100). */
+  /** Percent form, floored, 0..100 (provably never exceeds the cap × 100). */
   readonly confidencePercent: number;
   /** The cap that actually bound the result [0,1]. */
   readonly appliedCap: UnitInterval;

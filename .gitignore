@@ -39,6 +39,15 @@ firebase-adminsdk*.json
 gcp-*.json
 google-credentials*.json
 
+# --- Firebase CLI artifacts (deploy cache, emulator logs) ---
+.firebase/
+firebase-debug.log
+firestore-debug.log
+database-debug.log
+pubsub-debug.log
+ui-debug.log
+auth-export/
+
 # --- Vercel (local/project-sensitive metadata) ---
 .vercel
 .vercel/

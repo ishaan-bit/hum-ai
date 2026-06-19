@@ -1,0 +1,24 @@
+{
+  "name": "@hum-ai/signal-lab",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hum-ai/shared-types": "*",
+    "@hum-ai/audio-features": "*",
+    "@hum-ai/dataset-registry": "*",
+    "@hum-ai/dataset-harness": "*",
+    "@hum-ai/domain-classifier": "*",
+    "@hum-ai/quality-gate": "*",
+    "@hum-ai/affect-model-contracts": "*",
+    "@hum-ai/expert-ser": "*",
+    "@hum-ai/fusion-engine": "*",
+    "@hum-ai/personalization-engine": "*",
+    "@hum-ai/intervention-engine": "*",
+    "@hum-ai/safety-language": "*"
+  }
+}

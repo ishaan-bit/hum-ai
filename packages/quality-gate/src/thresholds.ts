@@ -33,6 +33,11 @@ export const HUM_THRESHOLDS = {
   minSnrProxy: 2.5,
   goodSnrProxy: 5,
 
+  // Spec-transcription only (NOT enforced by this gate). The OPERATIVE values
+  // live in @hum-ai/personalization-engine: the personal-baseline stage activates
+  // at this count via the ladder boundary in `ladder.ts` (`stagePolicy`), and the
+  // rolling window is `ROLLING_WINDOW` in `dual-baseline.ts`. Kept here for
+  // auditable spec provenance (`hum_spec` §4.6); they must match those sources.
   baselineActivationCount: 5,
   rollingBaselineSize: 24,
 } as const;
@@ -46,6 +51,5 @@ export const CAPTURE_QUALITY_CONFIDENCE_CAP = {
   good: 0.95,
   usable: 0.9,
   soft_usable: 0.7,
-  poor: 0.5,
   rejected: 0.3,
 } as const;

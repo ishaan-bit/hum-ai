@@ -1,4 +1,4 @@
-﻿import { clamp01, mean, round, type UnitInterval } from "@hum-ai/shared-types";
+﻿import { clamp01, mean, type UnitInterval } from "@hum-ai/shared-types";
 import type {
   AbstainReason,
   ConfidenceCaps,
@@ -34,7 +34,10 @@ export class ConfidenceModelV1 implements ConfidenceModel {
     return {
       rawConfidence,
       confidence,
-      confidencePercent: round(confidence * 100),
+      // Floor, not round: a fractional binding cap (e.g. 0.715) must never
+      // round UP past appliedCap × 100 — the percent form provably cannot
+      // exceed the cap (ADR-0004).
+      confidencePercent: Math.floor(confidence * 100),
       appliedCap: caps.cap,
       capReason: caps.capReason,
       abstained,
@@ -51,7 +54,11 @@ function chooseAbstainReason(inputs: ConfidenceInputs, caps: ConfidenceCaps): Ab
   if (inputs.modalityAgreement < 0.4) return "modality_conflict";
   if (inputs.topClassMargin < 0.1) return "low_margin";
   if (inputs.calibrationMaturity < 0.3) return "insufficient_baseline";
-  return "none";
+  // This function is only called on the abstained path, so it must never return
+  // the not-abstained sentinel "none". When no single signal tripped its
+  // threshold but the AGGREGATE confidence still fell below the floor, report the
+  // generic low-evidence reason rather than a self-contradictory "none".
+  return "low_margin";
 }
 
 /**

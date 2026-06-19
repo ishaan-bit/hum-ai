@@ -59,18 +59,27 @@ export const FORBIDDEN_RAW_AUDIO_FIELDS: readonly string[] = [
   "blob",
   "waveformRaw",
   "microphoneData",
-  // defensive additions (substring matcher also covers variants):
+  // Exact-match defensive entries (matched by full, case-insensitive field name).
+  // Broad variant coverage (pcmData, pcmBuffer, linearPcm, …) comes from the
+  // RAW_AUDIO_TOKENS substring matcher below — raw-audio STEMS belong there, not
+  // here. `sampleArray`/`sampleData`/`floatSamples` are listed exactly because a
+  // bare `sample` token would false-positive on `sampleRate`/`sampleCount`.
   "pcm",
   "samples",
   "waveform",
+  "sampleArray",
+  "sampleData",
+  "floatSamples",
 ];
 
 /**
  * Substring tokens that, if found in a field name (case-insensitive), indicate
  * a likely raw-audio carrier. Catches `audioChunk`, `rawWaveform`, `micBlob`,
- * etc. that an exact list would miss.
+ * `pcmData`, `pcmBuffer`, `linearPcm`, etc. that an exact list would miss.
+ * `pcm` is safe as a token — no benign field name contains it — and subsumes the
+ * earlier `rawpcm` entry.
  */
-const RAW_AUDIO_TOKENS = ["audio", "waveform", "rawpcm", "microphone", "micblob", "blob"];
+const RAW_AUDIO_TOKENS = ["audio", "waveform", "pcm", "microphone", "micblob", "blob"];
 
 export function isRawAudioFieldName(name: string): boolean {
   const lower = name.toLowerCase();

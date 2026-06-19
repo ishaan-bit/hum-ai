@@ -38,9 +38,11 @@ Requires **Node ≥ 22.6** (built-in test runner via `tsx`). No third-party test
 
 ```bash
 npm install        # workspaces, dev-deps only (tsx, typescript, @types/node)
-npm run check      # typecheck + tests (run before every PR)
+npm run qa:all     # typecheck + tests + safety/privacy gates (run before every PR)
+npm run check      # typecheck + tests only
 npm test           # node --import tsx --test "packages/**/test/**/*.test.ts"
 npm run typecheck  # tsc --noEmit -p tsconfig.json
+npm run qa         # clinical-leak / camera-deps / confidence-copy / forbidden-files gates
 ```
 
 - TypeScript, ESM, strict mode (`noUncheckedIndexedAccess`, `verbatimModuleSyntax`).
@@ -55,8 +57,9 @@ npm run typecheck  # tsc --noEmit -p tsconfig.json
 3. Add or update tests. **Do not weaken or skip tests to make a build pass.**
 4. For an architectural decision, add an ADR under `docs/adr/` (next number, follow
    the existing format and cite sources by their `id`).
-5. Run `npm run check`. Run the privacy scan if you touched ignore rules, configs, or
-   anything near `docs/source/`.
+5. Run `npm run qa:all` (typecheck + tests + the clinical-leak / camera-deps /
+   confidence-copy / forbidden-files gates CI enforces). Run the privacy scan if you
+   touched ignore rules, configs, or anything near `docs/source/`.
 6. Open a PR. CI (`ci.yml` + `privacy-check.yml`) must be green.
 
 ## Commit messages

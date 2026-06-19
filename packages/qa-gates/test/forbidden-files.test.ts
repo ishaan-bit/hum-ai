@@ -52,6 +52,38 @@ test("forbidden-files gate flags synthetic violations (binaries/weights/audio/en
   }
 });
 
+test("forbidden-files gate is case-insensitive and catches dataset archives (F5/F6)", () => {
+  const leaky = [
+    "models/affect.ONNX", // uppercase weights extension
+    "weights/model.SafeTensors",
+    "samples/HUM.WAV", // uppercase audio extension
+    "keys/private.PEM", // uppercase key extension
+    "auth/api.TOKEN",
+    "config/.ENV", // uppercase dotenv
+    "Datasets/ravdess/train.csv", // uppercase dataset dir
+    "datasets/ravdess.zip", // dataset archive extensions
+    "data/crema-d.tar.gz",
+    "archive/corpus.tgz",
+  ];
+  const violations = scanForbiddenPaths(leaky);
+  for (const p of leaky) {
+    assert.ok(violations.some((v) => v.where === p), `expected a violation for "${p}"`);
+  }
+});
+
+test("archive/case rules do not false-positive on legitimate look-alikes", () => {
+  const safe = [
+    "docs/tarball-format.md", // 'tar' only inside a .md name
+    "src/Zipper.ts", // 'zip' only inside a .ts name
+    "config/.env.example", // still allowed, case-insensitively
+  ];
+  assert.deepEqual(
+    scanForbiddenPaths(safe),
+    [],
+    `False positives:\n${scanForbiddenPaths(safe).map((v) => `  ${v.where} (${v.gate})`).join("\n")}`,
+  );
+});
+
 test("forbidden-files gate does NOT false-positive on legitimate look-alikes", () => {
   const safe = [
     ".env.example",

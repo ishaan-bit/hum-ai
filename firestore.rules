@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users can only read and write their own documents and sub-collections.
+    // HumSyncPayload documents are derived-features only — raw audio and
+    // clinical labels are stripped before any write reaches Firestore
+    // (enforced in orchestrator.ts by assertNoRawAudioFields +
+    // assertNoClinicalLeak before this path is ever called).
+    match /users/{userId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+
+      match /hums/{humId} {
+        allow read, write: if request.auth != null
+                           && request.auth.uid == userId;
+      }
+    }
+
+    // Deny all other paths.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

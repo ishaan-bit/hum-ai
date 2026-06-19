@@ -6,5 +6,10 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hum-ai/shared-types": "*",
+    "@hum-ai/affect-model-contracts": "*",
+    "@hum-ai/safety-language": "*"
   }
 }

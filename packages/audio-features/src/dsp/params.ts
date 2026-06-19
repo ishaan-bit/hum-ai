@@ -63,6 +63,16 @@ export const DSP_PARAMS = {
   maxPitchHz: 500,
   /** Normalized-autocorrelation peak at/above this marks a frame as voiced. */
   voicingThreshold: 0.5,
+  /**
+   * Strength required for a peak pinned at the HIGHEST-frequency lag (minLag).
+   * A tone whose true F0 is below `minPitchHz` cannot reach its real period in
+   * the search band, so the global max lands on the descending shoulder at
+   * minLag and would otherwise be reported as a confident, wrong ~`maxPitchHz`
+   * F0. A genuine tone exactly at `maxPitchHz` yields a near-unity peak there, so
+   * requiring high strength at the edge rejects the out-of-band alias without
+   * losing real high-F0 detections.
+   */
+  edgePitchMinStrength: 0.9,
   /** Minimum run of voiced frames counted as continuous voicing. */
   minVoicedRunFrames: 3,
   /** Relative frame-to-frame F0 change below this is "stable" (for stable segments). */

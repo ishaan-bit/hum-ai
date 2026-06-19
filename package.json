@@ -20,7 +20,15 @@
     "qa:all": "npm run check && npm run qa",
     "data:manifest": "node --import tsx packages/dataset-harness/src/cli.ts manifest",
     "data:validate": "node --import tsx packages/dataset-harness/src/cli.ts validate",
-    "demo:voice": "node --import tsx apps/web/demo/voice-core-demo.ts"
+    "demo:voice": "node --import tsx apps/web/demo/voice-core-demo.ts",
+    "signal:availability": "node --import tsx packages/signal-lab/src/cli.ts availability",
+    "signal:extract": "node --import tsx packages/signal-lab/src/cli.ts extract",
+    "signal:train": "node --import tsx packages/signal-lab/src/cli.ts train",
+    "signal:infer": "node --import tsx packages/signal-lab/src/cli.ts infer",
+    "signal:experiment": "node --import tsx packages/signal-lab/src/cli.ts experiment",
+    "signal:export-neural": "node --import tsx packages/signal-lab/src/cli.ts export-neural",
+    "signal:all": "node --import tsx packages/signal-lab/src/cli.ts all",
+    "firebase:smoke": "node --import tsx apps/web/demo/firebase-smoke.ts"
   },
   "devDependencies": {
     "@types/node": "^22.19.21",

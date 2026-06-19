@@ -11,7 +11,8 @@ non-clinical signal honest.
 See also [Fusion and Confidence Architecture](./TRISENSE_ADAPTED_ARCHITECTURE.md),
 [Affect Contracts](../../packages/affect-model-contracts/), and the
 [Claims Ladder](../claims/CLAIMS_LADDER.md). Decisions: [ADR-0003](../adr/0003-personalization-and-relapse-model.md),
-[ADR-0004](../adr/0004-confidence-and-abstention.md).
+[ADR-0004](../adr/0004-confidence-and-abstention.md),
+[ADR-0007](../adr/0007-dual-baseline-rolling-and-anchored.md).
 
 ## The personalization ladder
 
@@ -58,14 +59,31 @@ history beyond what the rolling baseline retains. `assertNoRawAudioFields`
 `newUserProfile(user_id, now, model_version)` seeds an empty profile at stage
 `population_prior`: empty vectors, zeroed reliabilities, cap 0.72.
 
-## Robust rolling baseline
+## Dual baseline (ADR-0007)
 
-`buildBaselineVector(samplesByFeature, rollingWindow = 24)` mirrors `hum_spec` §4.6.
-For each feature it takes the **last 24** eligible-hum samples (`values.slice(-24)`) and
-computes `RobustStats` via `computeRobustStats`: `median` (robust center), `mad`, `iqr`
-(p75 − p25), and `robustStd = MAD × 1.4826` (`MAD_TO_STD`, the normal-consistent
-estimator) [hum_spec]. Robust estimators are used instead of mean/SD because early
-baselines are small and fragile and must not be hijacked by a single outlier hum.
+A single rolling baseline cannot do two opposite jobs at once — adapt fast enough to
+track genuine change, yet stay stable enough to be a trustworthy relapse reference — so
+Hum keeps **two** baselines (`buildDualBaseline` in `dual-baseline.ts`):
+
+- **Rolling short-term baseline.** `buildBaselineVector(samplesByFeature, rollingWindow = ROLLING_WINDOW)`
+  mirrors `hum_spec` §4.6: for each feature it takes the **last `ROLLING_WINDOW` (24)**
+  eligible-hum samples and computes `RobustStats` via `computeRobustStats`: `median`
+  (robust center), `mad`, `iqr` (p75 − p25), and `robustStd = MAD × 1.4826` (`MAD_TO_STD`,
+  the normal-consistent estimator) [hum_spec]. Robust estimators are used instead of
+  mean/SD because early baselines are small and fragile and must not be hijacked by a
+  single outlier hum. This is "your recent usual" and what z-deltas are computed against.
+- **Anchored long-term baseline.** A slowly-updated, drift-resistant reference built by
+  `buildAnchoredBaseline` over `ANCHOR_LONG_WINDOW` (180) samples and nudged online by a
+  small-α EMA (`ANCHOR_EMA_ALPHA` = 0.05, `updateAnchoredCenter`). It activates only once
+  the account is mature — `ANCHOR_MIN_HUMS` (20) eligible hums, the same boundary at which
+  the ladder's `relapse_model` stage turns on. This is "your established usual".
+
+The **divergence** between the two (`baselineDivergence`, rolling center vs anchored
+center in anchored-σ units) is itself the signal: a rolling center that has drifted far
+from the anchor is exactly the short-vs-long-term separation the relapse-drift head needs.
+The orchestrator clamps it into a longitudinal-trend strength (`longitudinalTrend`) that
+informs — but does not directly become — the `relapse_drift` head, which is what prevents
+a slow slide being silently absorbed into "your usual" (the masking failure ADR-0007 cites).
 
 `zDeltasAgainstBaseline(current, baseline)` scores the current capture per feature as
 `zDelta = (current − median) / max(robustStd, ε)`, with `ε = 1e-6` flooring the

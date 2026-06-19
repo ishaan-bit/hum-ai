@@ -48,6 +48,12 @@ export function findClinicalLeakKeys(view: unknown): string[] {
   const forbidden = forbiddenClinicalKeys();
   const offenders: string[] = [];
   const visit = (value: unknown): void => {
+    // Mirror assertNoClinicalLeak: a forbidden head id / internal label can leak
+    // as a string VALUE, not only as a field name.
+    if (typeof value === "string") {
+      if (forbidden.has(value)) offenders.push(value);
+      return;
+    }
     if (value === null || typeof value !== "object") return;
     if (Array.isArray(value)) {
       for (const item of value) visit(item);

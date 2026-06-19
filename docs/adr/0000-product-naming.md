@@ -21,6 +21,7 @@ The product is named **Hum AI**.
 | Context | Canonical form |
 |---|---|
 | Display / product name | **Hum AI** |
+| In-prose short form (after "Hum AI" is introduced on a surface) | "Hum" |
 | Repository name | `hum-ai` |
 | Root `package.json` `"name"` | `hum-ai` |
 | Package scope | `@hum-ai` |
@@ -31,13 +32,13 @@ The product is named **Hum AI**.
 
 ### Legacy Hum
 
-The older technical specification (`Hum_Academic_Review_Technical_Specification.docx`) and the pre-ADR-0000 implementation are referred to as **legacy Hum** when a distinction is required. This is the *only* sanctioned use of the bare word "Hum" as a product noun.
+The older technical specification (`Hum_Academic_Review_Technical_Specification.docx`) and the pre-ADR-0000 implementation are referred to as **legacy Hum** when a distinction is required. "legacy Hum" is the only sanctioned use of bare "Hum" to denote the OLD spec/implementation. Bare "Hum" MAY otherwise be used as an in-prose short form of "Hum AI" once the full name has been introduced on a surface (as the README does) — what must never appear is bare "Hum" in machine identifiers (package metadata, slugs, scopes), which is what CI enforces.
 
 ### Banned variants
 
 The following are **not** used as the primary product name:
 
-- `Hum` (bare, without "AI") — allowed only as "legacy Hum" in historical context
+- `Hum` (bare, without "AI") — as a product name use only in "legacy Hum" (historical) or as in-prose shorthand for "Hum AI" after first use; never as a machine identifier
 - `HumAI` — not used (no space)
 - `Hum-AI` — not used (hyphenated display form)
 - `Hum App` — not used
