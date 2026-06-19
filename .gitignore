@@ -62,6 +62,7 @@ processed_data/
 features/
 models/
 **/raw_audio/
+raw-audio/
 **/recordings/
 # Dataset harness: external data dir (../hum-ai-data) and any in-repo manifest
 # fallback. Manifests + raw audio MUST stay outside git (see docs/research-datasets.md).
@@ -76,6 +77,11 @@ hum-ai-data/
 *.aac
 *.webm
 *.opus
+# Archives (dataset zips/tarballs — never committed)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
 
 # --- Model weights / checkpoints (never committed) ---
 *.ckpt
