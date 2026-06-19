@@ -40,7 +40,7 @@ npm workspaces; one concern per package. All packages are `@hum-ai/*`.
 | `shared-types` | Numeric/stats primitives (`clamp`, `percentile`, `computeRobustStats`, `zDelta`, `featureRatio`), branded ids, `MODALITIES`, domain taxonomy (`AUDIO_DOMAINS`, `domainGapPenalty`), `ValenceArousal`, consent + `FORBIDDEN_RAW_AUDIO_FIELDS`/`assertNoRawAudioFields`. |
 | `affect-model-contracts` | Affect-head registry (`ALL_AFFECT_HEADS`, `RISK_MARKER_HEADS`), `MultiHeadAffectInference`, expert/confidence/intervention contracts, `ABSTAIN_REASONS`, `FUSION_LABELS`, `DVDSA_CLASSES`. |
 | `dataset-registry` | `DatasetRegistryEntry`, `MODEL_USES`, `DOMAIN_FORBIDDEN_USES`, `validateEntry`/`isUseAllowed`, and the 7-entry source `REGISTRY`. |
-| `audio-features` | `AcousticFeatures`, `CaptureMetrics`, `FeatureExtractor`/`NotImplementedExtractor`, primitives (`rms`, `peakAmplitude`, `silenceRatio`, `zeroCrossingRate`). |
+| `audio-features` | `AcousticFeatures`, `CaptureMetrics`, primitives (`rms`, `peakAmplitude`, `silenceRatio`, `zeroCrossingRate`), and the real **`HumDspExtractor`/`computeFeatures`** — a deterministic, pure-TypeScript DSP pipeline (RMS framing, noise-floor/SNR proxy, autocorrelation pitch, local radix-2 FFT, voicing/expression proxies). `NotImplementedExtractor` retained. |
 | `quality-gate` | `HUM_THRESHOLDS`, `CAPTURE_QUALITY_CONFIDENCE_CAP`, `evaluateQuality` → `QualityResult` (decision + capture quality + baseline eligibility). |
 | `domain-classifier` | `HeuristicDomainClassifier`, `HumDomainAdapter.adaptPrior`/`.scoreCapture`, `HUM_COMPATIBILITY`. |
 | `expert-ser` | Audio expert ensemble: `HumAcousticExpert`, `HumEmbeddingExpert`, `SingingPhonationExpert`, `VocalBurstExpressionExpert`, `SpeechEmotionExpert`, `SpeechClinicalExpert`, `defaultAudioExperts`. |
@@ -63,6 +63,8 @@ npm install        # workspaces, dev-deps only (tsx, typescript, @types/node)
 npm test           # node --import tsx --test "packages/**/test/**/*.test.ts"
 npm run typecheck  # tsc --noEmit -p tsconfig.json
 npm run check      # typecheck + test
+npm run qa         # QA gates: clinical-leak, camera-deps, confidence-copy, forbidden-files
+npm run demo:voice # drives synthetic hums through the full pipeline (no mic, no camera)
 ```
 
 Tests run **TypeScript directly** via `tsx` + the **Node built-in test runner** (`node:test`/`node:assert`) — there is **no third-party test framework dependency**.
@@ -86,7 +88,7 @@ The 10 required test areas and where each is covered:
 
 ## Status & non-claims
 
-- **Foundation pass.** Contracts, engines, and governance are implemented and tested; experts are **heuristic stubs** (`NotImplementedExtractor`, `HeuristicDomainClassifier`, stub-weighted/seeded experts). No models are trained yet.
+- **Voice core is real; experts are still stubs.** The hum feature extractor (`@hum-ai/audio-features` `HumDspExtractor`/`computeFeatures`) and the `orchestrateHumAudio(buffer)` audio entry point are implemented and tested as **deterministic, dependency-free DSP — honest signal processing, not a trained or clinically validated model**. The downstream affect/embedding experts remain **heuristic stubs** (`HeuristicDomainClassifier`, stub-weighted/seeded experts); the SER/embedding models (WavLM/HuBERT/Wav2Vec2) are Phase-2 work behind the `AffectExpert` contract. **No models are trained.** See the [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md).
 - **Non-clinical, not validated.** Hum is **not** a medical device, **not** FDA-cleared, and **not** clinically validated. It produces risk **markers** and reflective signals, never a diagnosis.
 - **Reference numbers are not Hum metrics.** TriSense MELD stream/fusion accuracies (18.4 / 38.0 / 54.0 → 66.0%) are **architecture-reference numbers on TV dialogue** [trisense_architecture]; clinical AUC/accuracy ranges are study priors [clinical_voice_biomarker_review; longitudinal_voice_treatment_response_source]. None are presented as Hum's accuracy. No fabricated metrics anywhere.
 - **Privacy posture.** Local-first; raw audio is not uploaded by default; only derived data syncs, and every sync payload must pass `assertNoRawAudioFields` [hum_spec].
@@ -108,4 +110,4 @@ The 10 required test areas and where each is covered:
 2. Fit and calibrate the `LogisticRegressionMetaLearner` on native hum data; evaluate abstention and reliability.
 3. Stand up within-user DVDSA-style longitudinal evaluation for the relapse engine [longitudinal_voice_treatment_response_source].
 4. Ground intervention suggestions in the music-stress evidence base as **support, not diagnosis** [intervention_support_source].
-5. Wire the orchestrator that connects the closed architecture decisions: two-head split + consent gate (`splitInference`), dual baseline (`buildDualBaseline`), and user-facing confidence language (`userFacingConfidence`) — see ADR-0006/0007/0008.
+5. Build a real browser capture surface (`getUserMedia({ audio })`, no camera) that feeds `orchestrateHumAudio` — the end-to-end orchestrator and its audio entry point are already wired and tested (two-head split + consent gate, dual baseline, qualitative confidence; ADR-0006/0007/0008/0009).
