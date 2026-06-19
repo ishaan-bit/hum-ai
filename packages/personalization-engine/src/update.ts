@@ -64,6 +64,12 @@ export interface HumObservation {
   readonly riskScore?: UnitInterval;
   /** Observed intervention response: `riskDelta = risk_after − risk_before` (<0 helped). */
   readonly interventionResponse?: { readonly type: InterventionType; readonly riskDelta: number };
+  /**
+   * Consecutive-drift count this read produced (from the longitudinal state). Stored
+   * verbatim so the next read's relapse-drift signal can honour the "min consecutive
+   * hums" rule. Omitted ⇒ the prior count is preserved.
+   */
+  readonly consecutiveDriftHums?: number;
 }
 
 function pushBounded<T>(arr: readonly T[], value: T, limit: number): T[] {
@@ -179,5 +185,11 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     last_updated_at: obs.capturedAt,
   };
 
-  return { profile, featureWindows, relapseHistory, eligibleHumCount };
+  return {
+    profile,
+    featureWindows,
+    relapseHistory,
+    eligibleHumCount,
+    consecutiveDriftHums: obs.consecutiveDriftHums ?? state.consecutiveDriftHums,
+  };
 }

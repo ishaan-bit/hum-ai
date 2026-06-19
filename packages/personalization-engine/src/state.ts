@@ -29,6 +29,12 @@ export interface PersonalizationState {
   readonly relapseHistory: readonly RelapseSample[];
   /** Count of eligible (quality-gated) hums ingested so far. */
   readonly eligibleHumCount: number;
+  /**
+   * Running count of consecutive eligible hums showing drift (the relapse engine's
+   * "single hum must not trigger a relapse-drift signal" rule). Reset to 0 by a
+   * non-drifting hum; held by an abstaining one. LOCAL-ONLY, derived.
+   */
+  readonly consecutiveDriftHums: number;
 }
 
 /** Retain exactly as much per-feature history as the anchored baseline summarizes. */
@@ -54,6 +60,7 @@ export function newPersonalizationState(
     featureWindows: {},
     relapseHistory: [],
     eligibleHumCount: 0,
+    consecutiveDriftHums: 0,
   };
 }
 

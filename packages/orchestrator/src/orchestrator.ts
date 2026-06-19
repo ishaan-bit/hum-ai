@@ -23,6 +23,7 @@ import {
   buildDualBaseline,
   buildRelapseReferences,
   ingestHum,
+  signatureAlignment,
   stagePolicy,
   zDeltasAgainstBaseline,
 } from "@hum-ai/personalization-engine";
@@ -34,8 +35,13 @@ import type {
   PersonalizationStage,
   PersonalizationState,
 } from "@hum-ai/personalization-engine";
-import { assessRelapse } from "@hum-ai/relapse-engine";
-import type { RelapseReferenceKind, RelapseSample, RelapseVerdict } from "@hum-ai/relapse-engine";
+import { assessLongitudinalState, assessRelapse } from "@hum-ai/relapse-engine";
+import type {
+  LongitudinalDiagnosticState,
+  RelapseReferenceKind,
+  RelapseSample,
+  RelapseVerdict,
+} from "@hum-ai/relapse-engine";
 import { selectInterventionFromView } from "@hum-ai/intervention-engine";
 import type { InterventionContext } from "@hum-ai/intervention-engine";
 import {
@@ -94,6 +100,12 @@ export interface HumHistory {
   readonly priorEligibleCount: number;
   /** Personal relapse references (previous stable / high-risk / 7d / 30d), optional. */
   readonly relapseReferences?: Partial<Record<RelapseReferenceKind, RelapseSample>>;
+  /** Learned recovery-signature centroid (z-deltas in stable periods) — for alignment. */
+  readonly recoverySignature?: Record<string, number>;
+  /** Learned high-risk-signature centroid (z-deltas in high-risk periods) — for alignment. */
+  readonly highRiskSignature?: Record<string, number>;
+  /** Consecutive drifting hums through the previous read (longitudinal "min consecutive" rule). */
+  readonly priorConsecutiveDriftHums?: number;
 }
 
 export interface OrchestratorInput {
@@ -129,6 +141,14 @@ export interface InternalRead {
   /** Two heads; the clinical head is consent-gated (withheld by default). */
   readonly twoHead: TwoHeadAffectOutput;
   readonly relapse: RelapseVerdict | null;
+  /**
+   * The integrated, INTERNAL longitudinal diagnostic state: trend direction, a
+   * consent-gated non-diagnostic risk hypothesis, sustained relapse-drift / recovery
+   * signals (confidence hard-capped at 88%), a monitoring flag + routing action, and
+   * source provenance. Never rendered or synced as-is; surfacing is consent-gated and
+   * must pass `@hum-ai/safety-language` (it contains internal risk labels by design).
+   */
+  readonly longitudinal: LongitudinalDiagnosticState;
   readonly dualBaseline: DualBaseline;
   readonly divergence: BaselineDivergence;
   readonly quality: QualityResult;
@@ -174,6 +194,15 @@ function dominantBroadState(states: TwoHeadAffectOutput["broad"]["states"]): Aff
 /** Divergence magnitude → longitudinal trend strength [0,1] (≈2.5σ ⇒ full). */
 function longitudinalTrend(divergence: BaselineDivergence): number {
   return divergence.anchored ? clamp01(divergence.magnitude / 2.5) : 0;
+}
+
+/** The `n` features with the largest |z-delta| (explainability: what drove the read). */
+function topFeaturesByAbsZ(zDeltas: Record<string, number>, n: number): string[] {
+  return Object.entries(zDeltas)
+    .filter(([, z]) => Number.isFinite(z))
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .slice(0, n)
+    .map(([k]) => k);
 }
 
 /** Gather every user-facing string for the safety screen. */
@@ -293,6 +322,41 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     recommendedIntervention: suggestion.type === "none" ? null : suggestion.type,
   };
 
+  // 8b. LONGITUDINAL DIAGNOSTIC STATE — synthesize the within-user signals into one
+  //     internal, non-diagnostic state: trend direction, a consent-gated risk
+  //     hypothesis, sustained relapse-drift / recovery signals (confidence hard-capped
+  //     at 88%), a monitoring flag, and source provenance. The learned recovery /
+  //     high-risk SIGNATURES (centroids of the user's z-deltas in stable / high-risk
+  //     periods) finally feed a read here: alignment of THIS hum with them sharpens
+  //     the drift/recovery direction. Computed beside the existing pipeline — the
+  //     relapse verdict, personalization, and confidence caps are all untouched.
+  const highRiskSignature = history.highRiskSignature ?? {};
+  const recoverySignature = history.recoverySignature ?? {};
+  const hasPersonalZ = Object.keys(personalZDeltas).length > 0;
+  const highRiskAlignment =
+    hasPersonalZ && Object.keys(highRiskSignature).length > 0
+      ? signatureAlignment(personalZDeltas, highRiskSignature)
+      : null;
+  const recoveryAlignment =
+    hasPersonalZ && Object.keys(recoverySignature).length > 0
+      ? signatureAlignment(personalZDeltas, recoverySignature)
+      : null;
+  const longitudinal = assessLongitudinalState({
+    relapseModelActive: stage.relapseModelActive,
+    baselineActive: stage.baselineActive,
+    anchoredActive: divergence.anchored,
+    relapse,
+    divergenceMagnitude: divergence.magnitude,
+    riskScore: currentRiskScore,
+    baseConfidence: inference.confidence.confidence,
+    abstained: inference.abstained,
+    abstainReason: inference.abstainReason,
+    highRiskAlignment,
+    recoveryAlignment,
+    driftEvidenceFeatures: topFeaturesByAbsZ(personalZDeltas, 3),
+    priorConsecutiveDriftHums: history.priorConsecutiveDriftHums ?? 0,
+  });
+
   // 9. Two-head split with the consent gate (clinical head withheld by default).
   const twoHead = splitInference(inference, consent);
 
@@ -333,6 +397,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       inference,
       twoHead,
       relapse,
+      longitudinal,
       dualBaseline,
       divergence,
       quality,
@@ -402,6 +467,9 @@ export function humHistoryFromState(state: PersonalizationState, now: IsoTimesta
     eligibleSamplesByFeature: state.featureWindows,
     priorEligibleCount: state.eligibleHumCount,
     relapseReferences: buildRelapseReferences(state.relapseHistory, now),
+    recoverySignature: state.profile.recovery_signature_vector,
+    highRiskSignature: state.profile.high_risk_signature_vector,
+    priorConsecutiveDriftHums: state.consecutiveDriftHums,
   };
 }
 
@@ -429,6 +497,10 @@ export function observationFromRead(read: OrchestratedRead, capturedAt: IsoTimes
     domainMatch: internal.domainMatch,
     dimensional: internal.inference.dimensional,
     riskScore: clinicalRiskScore(internal.inference),
+    // Persist the consecutive-drift streak so the next read can honour the relapse
+    // engine's "min consecutive hums" rule (ineligible hums never reach here, so a
+    // rejected hum cannot corrupt the streak).
+    consecutiveDriftHums: internal.longitudinal.consecutiveDriftHums,
   };
 }
 
