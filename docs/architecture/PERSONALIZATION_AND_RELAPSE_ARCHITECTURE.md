@@ -97,6 +97,68 @@ mental-health review, which found dimensional valence–arousal under-explored r
 categorical labels and SER used only indirectly — hence multi-head outputs plus
 abstention rather than one confident classifier [ser_mental_health_review].
 
+## The personalization engine — apply and learn
+
+The ladder, profile and dual baseline above are the *state*; two engine steps turn that
+state into an individual read and keep it growing. Both are pure functions in
+`@hum-ai/personalization-engine` and are wired into the runtime read by
+`@hum-ai/orchestrator` (the population-prior fusion output is re-referenced *before* the
+relapse, intervention and safety stages run).
+
+### Apply — making a read individual (`personalize.ts`)
+
+A population prior reads a hum against a crowd; `applyPersonalization(prior, zDeltas, policy)`
+reads it against the *user's own* baseline. It asks one disciplined question —
+`personalDeviation` reduces the per-feature z-deltas to a `selfNormality ∈ (0,1]`, the
+robust (median-of-|z|) answer to *how usual is this hum for this person?* — and then:
+
+- pulls the dimensional V-A point toward the user's neutral (origin) in proportion to how
+  usual the hum is, so a naturally low/breathy/quiet hummer's *normal* reads as their
+  normal rather than as the population's "low mood";
+- raises `neutral_close_to_usual` toward `selfNormality`, mildly lifts `calm_regulated`,
+  and damps every other state activation **by the same factor** — risk markers are never
+  selectively suppressed;
+- preserves the population prior when the hum *departs* from the user's baseline
+  (`selfNormality → 0`), so a genuine personal change is not smoothed away.
+
+The strength is `personalizationWeight(policy)` — λ derived from the ladder gates so it
+cannot desync: `0` while `baselineActive` is false (priors must own the cold start), then
+`0.30 → 0.55 → 0.70` across `personal_baseline → personalized_fusion → relapse_model`.
+The effective re-reference `pull = λ × coverage × selfNormality` is additionally scaled by
+per-feature **coverage** (`support / MIN_SUPPORT_FOR_FULL`) — thin baselines barely move
+the read. Personalization re-references and damps; it never *manufactures* affect or risk
+beyond what the prior carries (amplifying personal deviations in a validated direction is
+the trained model's job, not this layer's). Confidence, abstention and the longitudinal
+heads are left untouched — the ladder owns confidence ceilings, the relapse engine owns the
+longitudinal heads. `personalizedExpertWeight` (in `@hum-ai/fusion-engine`) is the matching
+hook for blending the learned `modality_reliability_vector` into fusion weights once a user
+reaches `personalizedFusionActive`.
+
+### Learn — accumulating the per-user model (`update.ts`, `state.ts`, `signatures.ts`)
+
+`PersonalizationState` carries the syncable `UserModelProfile` plus two **local-only**
+bounded rings: the per-feature derived-value windows the dual baseline is computed from
+(≤ `FEATURE_HISTORY_LIMIT` = `ANCHOR_LONG_WINDOW`) and a small ring of relapse summaries.
+`ingestHum(state, observation)` folds one *eligible* hum in — rebuilding the rolling and
+anchored baselines, EMA-nudging the learned per-modality and per-domain reliability toward
+what fusion actually trusted, extending the `recovery_signature_vector` /
+`high_risk_signature_vector` (centroids of the hum's z-deltas, routed by its risk band, and
+only once the baseline is active), learning the `intervention_response_vector`, and
+advancing the stage so `calibration_maturity` / `confidence_cap` track the ladder.
+Ineligible hums are returned unchanged: only quality-gated hums shape the model.
+
+Only `syncableProfile(state)` ever leaves the device — the derived profile, with the
+raw-audio guard run over its free-form feature-keyed maps (the fixed `audio | face | text`
+modality keys are channels, not raw audio, and are not name-scanned). The orchestrator
+closes the loop with `humHistoryFromState` (state → read-time `HumHistory`) and
+`observationFromRead` (read → learning `HumObservation`):
+
+```text
+state ─humHistoryFromState─► orchestrateHumRead ──► read (re-referenced, individual)
+  ▲                                                   │
+  └────────── ingestHum ◄── observationFromRead ◄─────┘   (learn from this hum)
+```
+
 ## The relapse engine
 
 The relapse engine is a **personalized, within-user, paired comparison** — the DVDSA

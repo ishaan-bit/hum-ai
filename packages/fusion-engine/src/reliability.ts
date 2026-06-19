@@ -15,6 +15,30 @@ export function expertWeight(e: ExpertOutput): number {
   return clamp01(e.selfConfidence * e.domainMatch * (1 - e.oodScore));
 }
 
+/**
+ * PERSONALIZED expert weight (the "personalized fusion uses modality-reliability
+ * weights" hook). Blends the per-sample `expertWeight` with the user's LEARNED
+ * per-modality reliability (`UserModelProfile.modality_reliability_vector`) by
+ * `personalWeight` (λ from the personalization ladder). A modality the user has
+ * historically produced reliable signal on counts for more; a chronically noisy
+ * one counts for less. `personalWeight = 0` (cold start) ⇒ identical to
+ * `expertWeight`, so this is a safe drop-in for a meta-learner once a user
+ * reaches `personalizedFusionActive`.
+ */
+export function personalizedExpertWeight(
+  e: ExpertOutput,
+  learned: ModalityReliability,
+  personalWeight: number,
+): number {
+  const base = expertWeight(e);
+  const w = clamp01(personalWeight);
+  if (w <= 0 || !e.available) return base;
+  const personal = clamp01(learned[e.modality] ?? 0);
+  // Personal factor in [0.5, 1.5]: trusted modality amplifies, distrusted damps.
+  const personalAdjusted = clamp01(base * (0.5 + personal));
+  return clamp01((1 - w) * base + w * personalAdjusted);
+}
+
 /** Aggregate expert weights into a per-modality reliability vector (max per modality). */
 export function modalityReliability(experts: readonly ExpertOutput[]): ModalityReliability {
   const out = emptyModalityReliability();

@@ -2,9 +2,11 @@ import {
   assertNoRawAudioFields,
   clamp01,
   hasConsent,
+  MODALITIES,
   type ConsentState,
   type IsoTimestamp,
   type ModelVersion,
+  type UnitInterval,
 } from "@hum-ai/shared-types";
 import { computeFeatures, metricsFromFeatures } from "@hum-ai/audio-features";
 import type { AcousticFeatures, AudioInput } from "@hum-ai/audio-features";
@@ -13,10 +15,25 @@ import type { QualityResult } from "@hum-ai/quality-gate";
 import { HeuristicDomainClassifier, HumDomainAdapter } from "@hum-ai/domain-classifier";
 import type { DomainClassification } from "@hum-ai/domain-classifier";
 import { defaultAudioExperts } from "@hum-ai/expert-ser";
-import { FusionEngine, combineCaps } from "@hum-ai/fusion-engine";
+import { FusionEngine, combineCaps, modalityReliability } from "@hum-ai/fusion-engine";
 import type { FusionContext } from "@hum-ai/fusion-engine";
-import { buildDualBaseline, baselineDivergence, stagePolicy } from "@hum-ai/personalization-engine";
-import type { BaselineDivergence, DualBaseline, PersonalizationStage } from "@hum-ai/personalization-engine";
+import {
+  applyPersonalization,
+  baselineDivergence,
+  buildDualBaseline,
+  buildRelapseReferences,
+  ingestHum,
+  stagePolicy,
+  zDeltasAgainstBaseline,
+} from "@hum-ai/personalization-engine";
+import type {
+  BaselineDivergence,
+  DualBaseline,
+  HumObservation,
+  PersonalizationApplication,
+  PersonalizationStage,
+  PersonalizationState,
+} from "@hum-ai/personalization-engine";
 import { assessRelapse } from "@hum-ai/relapse-engine";
 import type { RelapseReferenceKind, RelapseSample, RelapseVerdict } from "@hum-ai/relapse-engine";
 import { selectInterventionFromView } from "@hum-ai/intervention-engine";
@@ -116,6 +133,16 @@ export interface InternalRead {
   readonly divergence: BaselineDivergence;
   readonly quality: QualityResult;
   readonly domain: DomainClassification;
+  /** How the read was re-referenced against the user's own baseline (transparency). */
+  readonly personalization: PersonalizationApplication;
+  /**
+   * Per-modality reliability fusion observed this hum, in `MODALITIES` order
+   * `[audio, face, text]` (feeds reliability learning). An ARRAY, not an object,
+   * so the read carries no `audio`-keyed field through the raw-audio name guard.
+   */
+  readonly observedModalityReliabilityByOrder: readonly number[];
+  /** Live hum-domain match used to weight the read (feeds domain-trust learning). */
+  readonly domainMatch: UnitInterval;
   readonly stage: PersonalizationStage;
   readonly eligibleHumCount: number;
 }
@@ -191,6 +218,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   // 4. Audio-stream experts.
   const meta = { modality: "audio" as const, captureQuality: quality.captureQualityScore };
   const experts = await Promise.all(defaultAudioExperts().map((e) => e.predict(features, meta)));
+  const observedModalityReliability = modalityReliability(experts);
 
   // 5. Strictest of the personalization-stage, capture-quality and domain caps.
   const caps = combineCaps([
@@ -210,14 +238,30 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   };
   const baseInf = new FusionEngine().fuse(experts, fusionCtx);
 
-  // 7. Relapse (within-user) + dual-baseline-informed drift. The relapse engine
-  //    receives only an opaque riskScore computed from the clinical head here.
-  const currentRiskScore = clinicalRiskScore(baseInf);
+  // 6b. PERSONALIZATION — re-reference the population-prior read against the user's
+  //     OWN rolling baseline so the read is INDIVIDUAL, not population-derived. The
+  //     more this hum matches the user's usual, the more it reads as their usual;
+  //     the more it departs, the more the prior is preserved. Influence is 0 until
+  //     the baseline is active and grows up the ladder (`applyPersonalization`).
+  const currentSamples = humFeatureSamples(features);
+  const personalZDeltas = stage.baselineActive
+    ? zDeltasAgainstBaseline(currentSamples, dualBaseline.rolling.vector)
+    : {};
+  const { inference: personalizedInf, application: personalization } = applyPersonalization(
+    baseInf,
+    personalZDeltas,
+    stage,
+  );
+
+  // 7. Relapse (within-user) + dual-baseline-informed drift, on the PERSONALIZED
+  //    read. The relapse engine receives only an opaque riskScore from the clinical
+  //    head — now an individual one, scored against the user's own baseline.
+  const currentRiskScore = clinicalRiskScore(personalizedInf);
   const references = history.relapseReferences ?? {};
   const relapseActive = stage.relapseModelActive && Object.keys(references).length > 0;
   const relapse: RelapseVerdict | null = relapseActive
     ? assessRelapse(
-        { capturedAt: now, dimensional: baseInf.dimensional, riskScore: currentRiskScore },
+        { capturedAt: now, dimensional: personalizedInf.dimensional, riskScore: currentRiskScore },
         references,
       )
     : null;
@@ -226,7 +270,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   const relapseDrift = clamp01(Math.max(relapse ? relapse.drift : 0, divergenceDrift));
 
   const inferenceWithLongitudinal: MultiHeadAffectInference = {
-    ...baseInf,
+    ...personalizedInf,
     relapseDrift,
     recoveryWorseningUnchanged: relapse ? relapse.dvdsa : null,
   };
@@ -293,6 +337,9 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       divergence,
       quality,
       domain,
+      personalization,
+      observedModalityReliabilityByOrder: MODALITIES.map((m) => observedModalityReliability[m]),
+      domainMatch: domainAdaptation.domainMatch,
       stage: stage.stage,
       eligibleHumCount,
     },
@@ -326,6 +373,67 @@ export async function orchestrateHumAudio(input: AudioOrchestratorInput): Promis
     history: input.history,
   });
 }
+
+/**
+ * Project the derived `AcousticFeatures` into the flat `Record<string, number>`
+ * the baseline / personalization layer works in: every finite numeric field
+ * (booleans and the `featureMode` string are excluded). Exported so callers build
+ * `HumHistory.eligibleSamplesByFeature` with the SAME keys the read re-references
+ * against.
+ */
+export function humFeatureSamples(features: AcousticFeatures): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(features)) {
+    if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * THE PERSONALIZATION LOOP — bridges (1/2).
+ *
+ * Derive the read-time `HumHistory` from a persisted `PersonalizationState` so the
+ * orchestrator personalizes against the user's accumulated model: the bounded
+ * feature windows become the baseline samples, the eligible count sets the stage,
+ * and the relapse history is collapsed into the four personal references.
+ */
+export function humHistoryFromState(state: PersonalizationState, now: IsoTimestamp): HumHistory {
+  return {
+    eligibleSamplesByFeature: state.featureWindows,
+    priorEligibleCount: state.eligibleHumCount,
+    relapseReferences: buildRelapseReferences(state.relapseHistory, now),
+  };
+}
+
+/**
+ * THE PERSONALIZATION LOOP — bridges (2/2).
+ *
+ * Derive the learning `HumObservation` from a completed read. The full loop is:
+ *
+ *   const history = humHistoryFromState(state, now);
+ *   const read = await orchestrateHumRead({ features, consent, modelVersion, now, history });
+ *   state = ingestHum(state, observationFromRead(read, now));   // learn from this hum
+ *
+ * `ingestHum` is re-exported here so a caller has the whole loop from one module.
+ */
+export function observationFromRead(read: OrchestratedRead, capturedAt: IsoTimestamp): HumObservation {
+  const internal = read.internal;
+  const rel = internal.observedModalityReliabilityByOrder;
+  return {
+    capturedAt,
+    features: humFeatureSamples(internal.features),
+    eligible: internal.quality.baselineEligible,
+    // Rebuild the modality reliability object from the order-indexed array.
+    observedModalityReliability: { audio: rel[0] ?? 0, face: rel[1] ?? 0, text: rel[2] ?? 0 },
+    heardDomain: internal.domain.predicted,
+    domainMatch: internal.domainMatch,
+    dimensional: internal.inference.dimensional,
+    riskScore: clinicalRiskScore(internal.inference),
+  };
+}
+
+export { ingestHum };
+export type { HumObservation, PersonalizationState };
 
 /**
  * The derived, sync-safe projection of a read. Carries ONLY derived features and
