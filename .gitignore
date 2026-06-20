@@ -25,6 +25,13 @@ apps/web/public/models/
 *.log
 npm-debug.log*
 
+# --- Local scratch / diagnostic scripts and their outputs (never committed) ---
+# One-off probes/benchmarks at the repo root (XPU latency, dataset download
+# spikes). Real harness code lives under research/training/. _*.log is already
+# covered by *.log above.
+/_*.py
+/_*.txt
+
 # --- Env / secrets ---
 .env
 .env.*

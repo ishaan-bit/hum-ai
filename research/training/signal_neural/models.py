@@ -94,6 +94,36 @@ class MelCNN1D(nn.Module):
         return self.head(x)
 
 
+class MelCNN1DWide(nn.Module):
+    """Wider, deeper 1-D CNN along time (mel bands as channels) with concat avg+max
+    global pooling. A capacity-bumped sibling of `MelCNN1D` for cohort diversity — still
+    pure 1-D convs, which the Intel Arc XPU runs extremely fast (≈sub-second/epoch)."""
+    input_kind = "mel"
+
+    def __init__(self, n_mels: int, n_classes: int, channels=(96, 192, 256, 256), dropout=0.3, k=7):
+        super().__init__()
+        def block(ci, co):
+            return nn.Sequential(
+                nn.Conv1d(ci, co, k, padding=k // 2, bias=False), nn.BatchNorm1d(co), nn.ReLU(inplace=True),
+                nn.Conv1d(co, co, 3, padding=1, bias=False), nn.BatchNorm1d(co), nn.ReLU(inplace=True),
+                nn.MaxPool1d(2),
+            )
+        chs = [n_mels] + list(channels)
+        self.features = nn.Sequential(*[block(chs[i], chs[i + 1]) for i in range(len(channels))])
+        self.avg = nn.AdaptiveAvgPool1d(1)
+        self.max = nn.AdaptiveMaxPool1d(1)
+        self.head = nn.Sequential(
+            nn.Dropout(dropout), nn.Linear(2 * channels[-1], channels[-1]), nn.BatchNorm1d(channels[-1]),
+            nn.ReLU(inplace=True), nn.Dropout(dropout), nn.Linear(channels[-1], n_classes),
+        )
+
+    def forward(self, x):              # x: [B, n_mels, T]
+        x = self.features(x)
+        a = self.avg(x).flatten(1)
+        m = self.max(x).flatten(1)
+        return self.head(torch.cat([a, m], dim=1))
+
+
 class MelBiGRU(nn.Module):
     """Bi-directional GRU over mel frames [B, T, n_mels] with attention pooling."""
     input_kind = "mel_seq"
@@ -137,6 +167,74 @@ class MelCRNN(nn.Module):
         w = torch.softmax(self.attn(h).squeeze(-1), dim=1).unsqueeze(-1)
         ctx = (h * w).sum(dim=1)
         return self.head(ctx)
+
+
+class _SE(nn.Module):
+    """Squeeze-and-excitation channel gate (Hu et al. 2018) — cheap, helps small CNNs
+    focus on the informative mel channels."""
+    def __init__(self, c: int, r: int = 8):
+        super().__init__()
+        h = max(4, c // r)
+        self.fc = nn.Sequential(nn.Linear(c, h), nn.ReLU(), nn.Linear(h, c), nn.Sigmoid())
+
+    def forward(self, x):              # x: [B, C, F, T]
+        s = x.mean(dim=(2, 3))         # global avg pool → [B, C]
+        s = self.fc(s).unsqueeze(-1).unsqueeze(-1)
+        return x * s
+
+
+class _ResBlock(nn.Module):
+    """Pre-activation residual block (Conv-BN-ReLU ×2 + SE) with a projection shortcut
+    and optional spatial downsample."""
+    def __init__(self, ci: int, co: int, stride: int = 1, dropout: float = 0.1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(ci, co, 3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(co)
+        self.conv2 = nn.Conv2d(co, co, 3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(co)
+        self.se = _SE(co)
+        self.drop = nn.Dropout2d(dropout)
+        self.short = (nn.Sequential(nn.Conv2d(ci, co, 1, stride=stride, bias=False), nn.BatchNorm2d(co))
+                      if (stride != 1 or ci != co) else nn.Identity())
+        self.act = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        r = self.short(x)
+        y = self.act(self.bn1(self.conv1(x)))
+        y = self.drop(self.bn2(self.conv2(y)))
+        y = self.se(y)
+        return self.act(y + r)
+
+
+class MelResCNN(nn.Module):
+    """Residual SE-CNN over the log-mel spectrogram with concat avg+max global pooling.
+    Deeper than `MelCNN2D` but still small; augmentation keeps it from overfitting the
+    ~2 k-clip corpus. The strongest feature extractor in the audio cohort."""
+    input_kind = "mel"
+
+    def __init__(self, n_mels: int, n_classes: int, width: int = 32, dropout: float = 0.3):
+        super().__init__()
+        w = width
+        self.stem = nn.Sequential(nn.Conv2d(1, w, 3, padding=1, bias=False), nn.BatchNorm2d(w), nn.ReLU(inplace=True))
+        self.stage1 = nn.Sequential(_ResBlock(w, w), _ResBlock(w, w))
+        self.stage2 = nn.Sequential(_ResBlock(w, 2 * w, stride=2), _ResBlock(2 * w, 2 * w))
+        self.stage3 = nn.Sequential(_ResBlock(2 * w, 4 * w, stride=2), _ResBlock(4 * w, 4 * w))
+        self.avg = nn.AdaptiveAvgPool2d((1, 1))
+        self.max = nn.AdaptiveMaxPool2d((1, 1))
+        self.head = nn.Sequential(
+            nn.Linear(8 * w, 4 * w), nn.BatchNorm1d(4 * w), nn.ReLU(inplace=True), nn.Dropout(dropout),
+            nn.Linear(4 * w, n_classes),
+        )
+
+    def forward(self, x):              # x: [B, n_mels, T]
+        x = x.unsqueeze(1)
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        a = self.avg(x).flatten(1)
+        m = self.max(x).flatten(1)
+        return self.head(torch.cat([a, m], dim=1))
 
 
 class HybridMelFeat(nn.Module):

@@ -19,8 +19,8 @@ import torch
 
 from research.training.signal_neural import data, device as devmod, export_ts, paths, train
 from research.training.signal_neural.train import (
-    audio_cohort, build_manifest, feature_cohort, fit_full_best, run_target,
-    write_manifest, write_model_card, write_results,
+    audio_cohort, build_manifest, feature_cohort, fit_full_best, heavy_audio_cohort,
+    run_target, write_manifest, write_model_card, write_results,
 )
 
 TARGETS = ["arousal_binary", "valence_binary", "affect_fusion_label"]
@@ -31,6 +31,10 @@ def _select_cohort(name: str):
         return feature_cohort()
     if name == "audio":
         return audio_cohort()
+    if name == "heavy":
+        return heavy_audio_cohort()
+    if name == "everything":
+        return feature_cohort() + audio_cohort() + heavy_audio_cohort()
     return feature_cohort() + audio_cohort()
 
 
@@ -86,15 +90,28 @@ def _save_promoted(ds, result, cohort, device, device_name) -> str | None:
 
 
 def main(argv: list[str]) -> int:
+    # Windows consoles / redirected stdout default to cp1252, which cannot encode the
+    # arrows (→) and ≥ used in the progress lines — a long GPU run must never die on a
+    # stray glyph when piped to a file. Force UTF-8 with a replace fallback.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     ap = argparse.ArgumentParser(description="Signal-Lab neural training harness")
     ap.add_argument("mode", nargs="?", default="run", choices=["run", "smoke", "device"])
     ap.add_argument("--target", default="all", help="arousal_binary|valence_binary|affect_fusion_label|all")
-    ap.add_argument("--cohort", default="all", choices=["feature", "audio", "all"])
+    ap.add_argument("--cohort", default="all", choices=["feature", "audio", "all", "heavy", "everything"])
     ap.add_argument("--device", default="auto", choices=["auto", "xpu", "cuda", "cpu"])
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--permutations", type=int, default=150)
     ap.add_argument("--row-cap", type=int, default=0, help="subsample rows (0 = all)")
     ap.add_argument("--epochs", type=int, default=0, help="override max epochs (0 = per-spec default)")
+    ap.add_argument("--bag", type=int, default=0, help="override seed-bag count for every spec (0 = per-spec default)")
+    ap.add_argument("--models", default="", help="comma-separated spec names to keep (default = whole cohort)")
+    ap.add_argument("--threshold", type=float, default=None,
+                    help="override the promotion balanced-accuracy gate (default = export meta, 0.80)")
     args = ap.parse_args(argv)
 
     if args.mode == "device":
@@ -123,9 +140,21 @@ def main(argv: list[str]) -> int:
         print(f"[data] subsampled to {len(ds.rows)} rows ({len(set(ds.groups.tolist()))} groups)")
 
     cohort = _select_cohort(args.cohort)
+    if args.models:
+        keep = {m.strip() for m in args.models.split(",") if m.strip()}
+        cohort = [s for s in cohort if s.name in keep]
+        if not cohort:
+            print(f"[error] no specs match --models {args.models!r}")
+            return 2
     if epochs_override:
         for s in cohort:
             s.epochs = epochs_override
+    if args.bag:
+        for s in cohort:
+            s.bag = args.bag
+
+    eff_threshold = args.threshold if args.threshold is not None else ds.meta["gate"]["threshold"]
+    print(f"[gate] promotion threshold = {eff_threshold*100:.1f}% balanced accuracy")
 
     targets = TARGETS if args.target == "all" else [t.strip() for t in args.target.split(",")]
     # Incremental merge: keep prior targets' results so running a target at a time
@@ -152,7 +181,8 @@ def main(argv: list[str]) -> int:
     promoted_artifacts: dict[str, str | None] = dict(prior_artifacts)
     for tid in targets:
         result = run_target(ds, tid, cohort, device, device_name,
-                            folds=args.folds, permutations=args.permutations, log=print)
+                            folds=args.folds, permutations=args.permutations, log=print,
+                            threshold=eff_threshold)
         all_results.append(result)
         if result["promoted"]:
             try:
@@ -163,7 +193,7 @@ def main(argv: list[str]) -> int:
                 promoted_artifacts[tid] = None
 
     res = write_results(all_results, backend, device_name)
-    manifest = build_manifest(all_results, device_name, backend, promoted_artifacts)
+    manifest = build_manifest(all_results, device_name, backend, promoted_artifacts, threshold=eff_threshold)
     mpath = write_manifest(manifest)
     card = write_model_card(all_results, manifest, device_name)
     print(f"\n[artifacts] results → {res['path']}")

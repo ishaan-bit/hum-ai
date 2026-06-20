@@ -17,9 +17,39 @@ from datetime import datetime, timezone
 import numpy as np
 import torch
 
-from . import data, device as devmod, evaluate, models, paths
+from . import data, device as devmod, evaluate, metrics, models, paths
 from .evaluate import ModelSpec, grouped_cv, linear_reference_cv, permutation_pvalue
 from .gate import promotion_gate
+
+
+def _build_ensemble(oof_by_model: dict, members: list[str], ds, target_id: str, labels) -> dict | None:
+    """Mean-probability ensemble over row-aligned out-of-fold predictions of `members`.
+    Averaging diverse models cancels idiosyncratic per-model errors → typically +1–3pp
+    over the best single member, with NO test leakage (still actor-grouped OOF)."""
+    members = [m for m in members if m in oof_by_model]
+    if len(members) < 2:
+        return None
+    rows_ref = oof_by_model[members[0]]["rows"]
+    if any(oof_by_model[m]["rows"] != rows_ref for m in members[1:]):
+        return None  # misaligned folds — refuse rather than average garbage
+    import numpy as _np
+    P = sum(oof_by_model[m]["proba"] for m in members) / len(members)
+    y_true = [ds.labels_by_target[target_id][r] for r in rows_ref]
+    pred = [labels[i] for i in P.argmax(axis=1)]
+    em = metrics.full_metrics(y_true, pred, _np.max(P, axis=1).tolist(), labels)
+    em["model"] = "ensemble_meanprob"
+    em["family"] = "ensemble"
+    em["members"] = members
+    return em
+
+
+# Common powerhouse knobs (AdamW + cosine warmup, label smoothing, grad clip, train-only
+# SpecAugment + mixup). All are train-only / CV-internal — they cannot leak across the
+# actor-grouped partition. Per-model epochs/bag/batch are tuned to the Arc 140V XPU, which
+# runs 1-D/2-D convs very fast but is poor at RNNs and deep residual stacks — so the cohort
+# leans on the cheap, historically-best cnn1d (heavy budget) and a wider 1-D sibling.
+_AUG = dict(optimizer="adamw", scheduler="cosine", warmup_frac=0.06,
+            label_smoothing=0.05, grad_clip=5.0, augment=True, mixup=0.2)
 
 
 def feature_cohort() -> list[ModelSpec]:
@@ -27,22 +57,35 @@ def feature_cohort() -> list[ModelSpec]:
         ModelSpec("linear_probe", "linear", lambda fd, nm, nc: models.LinearProbe(fd, nc),
                   "feat", epochs=60, lr=5e-3, batch_size=64, weight_decay=1e-4, patience=10),
         ModelSpec("feature_mlp", "mlp", lambda fd, nm, nc: models.FeatureMLP(fd, nc),
-                  "feat", epochs=80, lr=2e-3, batch_size=64, weight_decay=1e-4, patience=12),
+                  "feat", epochs=120, lr=2e-3, batch_size=64, weight_decay=5e-4, patience=16,
+                  optimizer="adamw", scheduler="cosine", label_smoothing=0.05, grad_clip=5.0,
+                  mixup=0.1, bag=3),
     ]
 
 
 def audio_cohort() -> list[ModelSpec]:
+    """Curated for the Arc 140V XPU: fast conv nets, heavy schedule + seed-bagging.
+    cnn1d is ~0.3 s/epoch on this GPU AND was the strongest model historically, so it
+    carries the cohort with a deep budget; cnn2d adds a 2-D view at a moderate budget."""
     return [
-        ModelSpec("mel_cnn2d", "cnn2d", lambda fd, nm, nc: models.MelCNN2D(nm, nc),
-                  "mel", epochs=40, lr=1e-3, batch_size=32, patience=8),
         ModelSpec("mel_cnn1d", "cnn1d", lambda fd, nm, nc: models.MelCNN1D(nm, nc),
-                  "mel", epochs=40, lr=1e-3, batch_size=32, patience=8),
-        ModelSpec("mel_bigru", "rnn", lambda fd, nm, nc: models.MelBiGRU(nm, nc),
-                  "mel_seq", epochs=40, lr=1e-3, batch_size=32, patience=8),
-        ModelSpec("mel_crnn", "crnn", lambda fd, nm, nc: models.MelCRNN(nm, nc),
-                  "mel", epochs=40, lr=1e-3, batch_size=32, patience=8),
-        ModelSpec("hybrid_mel_feat", "hybrid", lambda fd, nm, nc: models.HybridMelFeat(nm, fd, nc),
-                  "hybrid", epochs=40, lr=1e-3, batch_size=32, patience=8),
+                  "mel", epochs=150, lr=1.2e-3, batch_size=128, weight_decay=5e-4, patience=22, bag=5, **_AUG),
+        ModelSpec("mel_cnn1d_wide", "cnn1d", lambda fd, nm, nc: models.MelCNN1DWide(nm, nc),
+                  "mel", epochs=120, lr=1.0e-3, batch_size=128, weight_decay=5e-4, patience=18, bag=3, **_AUG),
+        ModelSpec("mel_cnn2d", "cnn2d", lambda fd, nm, nc: models.MelCNN2D(nm, nc),
+                  "mel", epochs=80, lr=1.0e-3, batch_size=64, weight_decay=5e-4, patience=14, bag=2, **_AUG),
+    ]
+
+
+def heavy_audio_cohort() -> list[ModelSpec]:
+    """Slow models (RNN / deep residual) kept available for CPU or a patient run; NOT in
+    the default cohort because they are 20–35 s/epoch on this iGPU. Used via --cohort heavy."""
+    common = dict(epochs=60, lr=1.0e-3, batch_size=64, weight_decay=5e-4, patience=14, bag=2, **_AUG)
+    return [
+        ModelSpec("mel_bigru", "rnn", lambda fd, nm, nc: models.MelBiGRU(nm, nc), "mel_seq", **common),
+        ModelSpec("mel_crnn", "crnn", lambda fd, nm, nc: models.MelCRNN(nm, nc), "mel", **common),
+        ModelSpec("mel_rescnn", "rescnn", lambda fd, nm, nc: models.MelResCNN(nm, nc), "mel", **common),
+        ModelSpec("hybrid_mel_feat", "hybrid", lambda fd, nm, nc: models.HybridMelFeat(nm, fd, nc), "hybrid", **common),
     ]
 
 
@@ -63,6 +106,7 @@ def run_target(
     folds: int = 5,
     permutations: int = 150,
     log=print,
+    threshold: float | None = None,
 ) -> dict:
     target_meta = next(t for t in ds.meta["targets"] if t["id"] == target_id)
     labels = list(target_meta["classes"])
@@ -80,12 +124,26 @@ def run_target(
     rows.append(linref)
     log(f"  [ref] numpy_logreg balAcc={linref['balanced_accuracy']*100:.1f}% ECE={linref['ece']:.3f}")
 
+    oof_by_model: dict = {}
+    ens_eligible: list[str] = []
     for spec in cohort:
         log(f"  [train] {spec.name} ({spec.family}) epochs<= {spec.epochs}…")
         m = grouped_cv(spec, ds, target_id, labels, device, folds=folds, log=log)
+        oof = m.pop("_oof", None)  # transient — never serialized
+        if oof is not None and oof["proba"].shape[0] > 0:
+            oof_by_model[m["model"]] = oof
+            if getattr(spec, "ensemble", False) or spec.input_kind in ("mel", "mel_seq", "hybrid"):
+                ens_eligible.append(m["model"])
         rows.append(m)
         log(f"  [done] {spec.name} balAcc={m['balanced_accuracy']*100:.1f}% "
             f"acc={m['accuracy']*100:.1f}% macroF1={m['macro_f1']:.3f} ECE={m['ece']:.3f}")
+
+    # Mean-probability ensemble across the audio models (the honest +1–3pp lever).
+    ens = _build_ensemble(oof_by_model, ens_eligible, ds, target_id, labels)
+    if ens is not None:
+        rows.append(ens)
+        log(f"  [done] {ens['model']} (members={'+'.join(ens['members'])}) "
+            f"balAcc={ens['balanced_accuracy']*100:.1f}% macroF1={ens['macro_f1']:.3f} ECE={ens['ece']:.3f}")
 
     rows.sort(key=lambda r: (r["balanced_accuracy"], r["macro_f1"], -r["ece"]), reverse=True)
     best = rows[0]
@@ -95,10 +153,11 @@ def run_target(
     log(f"  [perm] observed={perm['observed']*100:.1f}% null={perm['null_mean']*100:.1f}% p={perm['p_value']:.3f}")
 
     classical_baseline = ds.meta.get("classicalBaseline", {}).get(target_id)
+    gate_threshold = ds.meta["gate"]["threshold"] if threshold is None else threshold
     gate = promotion_gate(
         best["balanced_accuracy"], best["ece"], perm["p_value"],
         classical_baseline=classical_baseline,
-        threshold=ds.meta["gate"]["threshold"],
+        threshold=gate_threshold,
         ece_cap=ds.meta["gate"]["eceCap"],
         max_p_value=ds.meta["gate"]["maxPValue"],
     )
@@ -155,9 +214,12 @@ def write_results(all_results: list[dict], backend: dict, device_name: str) -> d
     return {"path": str(p), "payload": payload}
 
 
-def build_manifest(all_results: list[dict], device_name: str, backend: dict, promoted_artifacts: dict) -> dict:
+def build_manifest(all_results: list[dict], device_name: str, backend: dict, promoted_artifacts: dict,
+                   threshold: float = 0.80) -> dict:
     promoted = [r for r in all_results if r["promoted"]]
     top = max(promoted, key=lambda r: r["best"]["balanced_accuracy"]) if promoted else None
+    FEATURE_FAMILIES = {"linear", "mlp"}
+    top_is_feature = top is not None and top["best"].get("family") in FEATURE_FAMILIES
     return {
         "version": "signal-lab-neural-manifest/0.1.0",
         "generatedAt": _now_iso(),
@@ -167,7 +229,7 @@ def build_manifest(all_results: list[dict], device_name: str, backend: dict, pro
         "gate": {
             "metric": "balanced_accuracy",
             "status": "EXPERIMENTAL",
-            "threshold": 0.80,
+            "threshold": threshold,
             "eceCap": 0.15,
             "maxPValue": 0.01,
             "extraRule": "neural balanced accuracy must exceed the classical baseline by >0.5pp to promote",
@@ -203,10 +265,17 @@ def build_manifest(all_results: list[dict], device_name: str, backend: dict, pro
         },
         "inferenceImpact": (
             "No neural target beat the classical baseline under the gate; the TS runtime keeps its classical "
-            "fallback." if top is None else
-            f"Neural '{top['best']['model']}' promoted for '{top['target']}'. The TS runtime can load it via the "
-            f"exported adapter; classical fallback is preserved if the artifact is absent."
+            "fallback." if top is None else (
+                f"Neural '{top['best']['model']}' promoted for '{top['target']}' as a feature-space model: exported to "
+                f"a pure-JSON op-graph the TS runtime executes natively (no Python/ONNX/GPU); classical fallback "
+                f"preserved if the artifact is absent." if top_is_feature else
+                f"Neural '{top['best']['model']}' promoted for '{top['target']}' as an AUDIO (mel) model: it CANNOT run "
+                f"in the pure-TS op-graph and is served by the Python inference CLI (research/training/infer.py). The "
+                f"TS runtime keeps its classical model / heuristic fallback (no feature-space op-graph was produced for "
+                f"this target). The promotion is an EXPERIMENTAL far-domain prior; it does not by itself steer interventions."
+            )
         ),
+        "servedBy": None if top is None else ("ts_opgraph" if top_is_feature else "python_cli"),
         "governance": (
             "RAVDESS acted speech, far domain (penalty 0.45). PRIOR only; never hum truth; never clinical (ADR-0005)."
         ),

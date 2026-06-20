@@ -17,6 +17,7 @@ tractable for 150 permutations. Documented as such; not a per-neural-model test.
 from __future__ import annotations
 
 import gc
+import math
 from dataclasses import dataclass
 from typing import Callable
 
@@ -24,9 +25,32 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from . import metrics
+from . import augment, metrics
 from .data import Dataset, grouped_folds
 from .linref import train_logreg
+
+
+def _lr_at(ep: int, total: int, base_lr: float, warmup_frac: float, min_lr_frac: float) -> float:
+    """Linear warmup → cosine decay to `min_lr_frac*base_lr` over `total` epochs."""
+    warmup = max(1, int(round(total * warmup_frac)))
+    if ep < warmup:
+        return base_lr * (ep + 1) / warmup
+    prog = (ep - warmup) / max(1, total - warmup)
+    cos = 0.5 * (1.0 + math.cos(math.pi * min(1.0, prog)))
+    return base_lr * (min_lr_frac + (1.0 - min_lr_frac) * cos)
+
+
+def _augment_batch(xb, kind: str):
+    """Apply SpecAugment in the canonical [B, n_mels, T] layout, returning the same
+    layout/type as the input. `feat` is left untouched (no spectrogram to mask)."""
+    if kind == "mel":
+        return augment.spec_augment(xb)
+    if kind == "mel_seq":                       # [B, T, n_mels] → augment → back
+        return augment.spec_augment(xb.transpose(1, 2)).transpose(1, 2)
+    if kind == "hybrid":
+        mel, feat = xb
+        return augment.spec_augment(mel), feat
+    return xb
 
 
 @dataclass
@@ -40,11 +64,24 @@ class ModelSpec:
     batch_size: int = 64
     weight_decay: float = 1e-4
     patience: int = 8
+    # ---- powerhouse knobs (default OFF → identical behaviour for untouched specs) ----
+    optimizer: str = "adam"           # "adam" | "adamw"
+    scheduler: str = "none"           # "none" | "cosine" (linear warmup → cosine decay)
+    warmup_frac: float = 0.05
+    label_smoothing: float = 0.0
+    grad_clip: float = 0.0            # max grad norm (0 = off)
+    augment: bool = False             # SpecAugment on mel/mel_seq/hybrid train batches
+    mixup: float = 0.0                # mixup alpha (0 = off); soft-target loss
+    bag: int = 1                      # seed-bagged sub-models per fold (probs averaged)
+    min_lr_frac: float = 0.02         # cosine floor as a fraction of base lr
+    ensemble: bool = False            # include this spec's OOF probs in the mean-prob ensemble
 
 
 def _seed(s: int = 1234):
-    torch.manual_seed(s)
+    torch.manual_seed(s)            # also seeds all accelerator RNGs (xpu/cuda) via the generator
     np.random.seed(s)
+    if getattr(torch, "xpu", None) is not None and torch.xpu.is_available():
+        torch.xpu.manual_seed_all(s)
 
 
 def _inner_split(groups: np.ndarray, rng: np.random.Generator, val_frac=0.2):
@@ -109,8 +146,9 @@ def _predict_proba(model, kind, idx, ds, feat_mean, feat_std, device, labels, ba
     return np.concatenate(out, axis=0) if out else np.zeros((0, len(labels)))
 
 
-def _train_fold(spec: ModelSpec, ds, tr_idx, labels, feat_dim, n_mels, device, log=lambda *_: None):
-    rng = np.random.default_rng(20240617)
+def _train_fold(spec: ModelSpec, ds, tr_idx, labels, feat_dim, n_mels, device, log=lambda *_: None, seed: int = 20240617):
+    _seed(seed)                                  # deterministic init/dropout per (fold, bag-member)
+    rng = np.random.default_rng(seed)
     y_tr_all = ds._target_labels[tr_idx]
     g_tr = ds.groups[tr_idx]
     inner_tr, inner_val = _inner_split(g_tr, rng)
@@ -127,8 +165,11 @@ def _train_fold(spec: ModelSpec, ds, tr_idx, labels, feat_dim, n_mels, device, l
 
     model = spec.build(feat_dim, n_mels, len(labels)).to(device)
     cw = _class_weights(ds._target_labels[sub_tr], labels, device)
-    loss_fn = nn.CrossEntropyLoss(weight=cw)
-    opt = torch.optim.Adam(model.parameters(), lr=spec.lr, weight_decay=spec.weight_decay)
+    loss_fn = nn.CrossEntropyLoss(weight=cw, label_smoothing=spec.label_smoothing)
+    if spec.optimizer == "adamw":
+        opt = torch.optim.AdamW(model.parameters(), lr=spec.lr, weight_decay=spec.weight_decay)
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=spec.lr, weight_decay=spec.weight_decay)
 
     best_val = -1.0
     best_state = None
@@ -136,6 +177,10 @@ def _train_fold(spec: ModelSpec, ds, tr_idx, labels, feat_dim, n_mels, device, l
     y_val_str = ds._target_labels[sub_val]
     n = len(sub_tr)
     for ep in range(spec.epochs):
+        if spec.scheduler == "cosine":
+            lr_ep = _lr_at(ep, spec.epochs, spec.lr, spec.warmup_frac, spec.min_lr_frac)
+            for pg in opt.param_groups:
+                pg["lr"] = lr_ep
         model.train()
         perm = rng.permutation(n)
         for s in range(0, n, spec.batch_size):
@@ -144,10 +189,20 @@ def _train_fold(spec: ModelSpec, ds, tr_idx, labels, feat_dim, n_mels, device, l
                 continue  # BatchNorm needs >1 row
             xb = _tensor_for(spec.input_kind, bidx, ds, feat_mean, feat_std, device)
             yb = torch.tensor([li[v] for v in ds._target_labels[bidx]], dtype=torch.long, device=device)
+            if spec.augment:
+                xb = _augment_batch(xb, spec.input_kind)
             opt.zero_grad()
-            logits = _forward(model, xb)
-            loss = loss_fn(logits, yb)
+            if spec.mixup > 0:
+                mperm, lam = augment.mixup_params(len(bidx), spec.mixup, device)
+                xb = augment.mixup_inputs(xb, mperm, lam)
+                logits = _forward(model, xb)
+                loss = lam * loss_fn(logits, yb) + (1.0 - lam) * loss_fn(logits, yb[mperm])
+            else:
+                logits = _forward(model, xb)
+                loss = loss_fn(logits, yb)
             loss.backward()
+            if spec.grad_clip > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), spec.grad_clip)
             opt.step()
         # early stopping on inner-val balanced accuracy
         proba = _predict_proba(model, spec.input_kind, sub_val, ds, feat_mean, feat_std, device, labels)
@@ -175,31 +230,47 @@ def grouped_cv(spec: ModelSpec, ds: Dataset, target_id: str, labels, device, fol
     feat_dim = ds.features.shape[1]
     n_mels = ds.mels.shape[1] if ds.mels is not None else 0
 
+    bag = max(1, spec.bag)
     y_true, y_pred, p_top = [], [], []
+    oof_rows: list[int] = []
+    oof_proba: list[np.ndarray] = []
     for f in range(folds):
-        _seed(1000 + f)
         te_local = np.where(fold_of == f)[0]
         tr_local = np.where(fold_of != f)[0]
         te_idx = idx_all[te_local]
         tr_idx = idx_all[tr_local]
         if len(te_idx) == 0 or len(tr_idx) == 0:
             continue
-        model, fmean, fstd, val_ba = _train_fold(spec, ds, tr_idx, labels, feat_dim, n_mels, device, log)
-        proba = _predict_proba(model, spec.input_kind, te_idx, ds, fmean, fstd, device, labels)
+        # Seed-bagging: train `bag` independent sub-models (distinct seeds → distinct
+        # init/dropout/augmentation/inner-split) and average their test probabilities.
+        proba_sum = None
+        val_bas = []
+        for b in range(bag):
+            model, fmean, fstd, val_ba = _train_fold(
+                spec, ds, tr_idx, labels, feat_dim, n_mels, device, log, seed=1000 + f * 101 + b * 9973)
+            pb = _predict_proba(model, spec.input_kind, te_idx, ds, fmean, fstd, device, labels)
+            proba_sum = pb if proba_sum is None else proba_sum + pb
+            val_bas.append(val_ba)
+            del model
+            gc.collect()
+        proba = proba_sum / bag
         pred_i = proba.argmax(axis=1)
         for j, row in enumerate(te_idx):
             y_true.append(ds.labels_by_target[target_id][row])
             y_pred.append(labels[pred_i[j]])
             p_top.append(float(proba[j].max()))
-        log(f"    fold {f}: test={len(te_idx)} innerVal_balAcc={val_ba:.3f}")
-        del model
-        gc.collect()
+        oof_rows.extend(int(r) for r in te_idx)
+        oof_proba.append(proba)
+        log(f"    fold {f}: test={len(te_idx)} bag={bag} innerVal_balAcc={np.mean(val_bas):.3f}")
 
     m = metrics.full_metrics(y_true, y_pred, p_top, labels)
     m["model"] = spec.name
     m["family"] = spec.family
     m["folds"] = folds
     m["group_count"] = len(set(groups.tolist()))
+    # Out-of-fold probabilities (row-aligned across all specs for this target) so the
+    # caller can build a mean-probability ensemble. Transient — stripped before write.
+    m["_oof"] = {"rows": oof_rows, "proba": np.concatenate(oof_proba, axis=0) if oof_proba else np.zeros((0, len(labels))), "labels": list(labels)}
     return m
 
 

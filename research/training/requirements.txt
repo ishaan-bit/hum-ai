@@ -1,14 +1,22 @@
-# Signal-Lab neural training harness — CPU baseline (guaranteed to install/run).
-# Install (Python 3.10):
-#   python -m pip install -r research/training/requirements.txt --index-url https://download.pytorch.org/whl/cpu
+# Signal-Lab neural training harness.
 #
-# Intel Arc / XPU acceleration (optional, auto-detected at runtime via torch.xpu):
-#   the CPU wheel below has NO XPU runtime. To enable the Intel GPU, install the
-#   XPU build INSTEAD (needs current Intel GPU drivers; oneAPI is bundled in the wheel):
-#     python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/xpu
-#   then re-run any command with --device xpu (or leave --device auto). The harness
-#   falls back to CPU automatically if XPU is unavailable; nothing else changes.
-torch==2.5.1
+# CPU baseline (guaranteed to install/run anywhere; no GPU required):
+#   python -m pip install "torch>=2.5" numpy --index-url https://download.pytorch.org/whl/cpu
+#
+# Intel Arc / XPU acceleration (auto-detected at runtime via torch.xpu) — VALIDATED on
+# an Intel Arc 140V (Lunar Lake / Xe2), driver 32.0.101.8509, Windows 11, Python 3.10:
+#   1. Upgrade pip first (the 23.x bundled with Python 3.10 mis-normalizes the
+#      typing_extensions wheel name on the pytorch index → install fails):
+#        python -m pip install --upgrade pip
+#   2. Install the XPU build (bundles the Intel oneAPI/SYCL runtime — no separate
+#      oneAPI install; ~3 GB, so use --no-cache-dir if disk is tight):
+#        python -m pip install --no-cache-dir "torch==2.8.0" --index-url https://download.pytorch.org/whl/xpu
+#   3. Verify:  python -m research.training.run device   # → device=xpu; torch=2.8.0+xpu
+#   Then run any command with --device xpu (or leave --device auto). The harness falls
+#   back to CPU automatically if XPU is unavailable; nothing else changes.
+#   NOTE: torch 2.5.1 is no longer on the xpu index and predates Lunar Lake support —
+#   use a 2.6+ xpu wheel for the Arc 140V (2.8.0 validated here).
+torch>=2.5
 numpy>=1.26
 # pytest is only needed for the harness tests (research/training/tests):
 #   python -m pip install pytest
