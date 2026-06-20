@@ -14,6 +14,10 @@ import { buildAnchoredBaseline, buildRollingBaseline } from "./dual-baseline";
 import { stagePolicy } from "./ladder";
 import { zDeltasAgainstBaseline, type UserModelProfile } from "./profile";
 import { updateSignatureCentroid } from "./signatures";
+import { featureSalience } from "./salience";
+import { newRegimeState, updateRegime } from "./changepoint";
+import { updateArm, type InterventionPolicy } from "./bandit";
+import { DEVIATION_WINSOR_Z } from "./deviation";
 import {
   FEATURE_HISTORY_LIMIT,
   HIGH_RISK_MIN,
@@ -79,6 +83,20 @@ function pushBounded<T>(arr: readonly T[], value: T, limit: number): T[] {
 
 function emaInto(prev: number | undefined, observed: number, alpha: number): number {
   return prev === undefined ? observed : prev + alpha * (observed - prev);
+}
+
+/** Salience-weighted, winsorized signed mean z-delta — the per-hum drift direction. */
+function signedSalienceDrift(zDeltas: Record<string, number>, salience: Record<string, number>): number {
+  let num = 0;
+  let den = 0;
+  for (const [f, z] of Object.entries(zDeltas)) {
+    if (!Number.isFinite(z)) continue;
+    const w = salience[f] ?? 0;
+    if (w <= 0) continue;
+    num += w * clamp(z, -DEVIATION_WINSOR_Z, DEVIATION_WINSOR_Z);
+    den += w;
+  }
+  return den > 0 ? num / den : 0;
 }
 
 export function ingestHum(state: PersonalizationState, obs: HumObservation): PersonalizationState {
@@ -158,6 +176,29 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
   const feature_distribution_summary: Record<string, number> = {};
   for (const [k, vals] of Object.entries(featureWindows)) feature_distribution_summary[k] = vals.length;
 
+  // 9. Learn per-feature SALIENCE (informativeness × independence) from the rebuilt
+  //    baseline + windows. Cached on the profile so inference reads it cheaply.
+  const salience_vector = featureSalience(rolling.vector, { windows: featureWindows });
+
+  // 10. ONLINE REGIME DETECTION: monitor the salience-weighted signed drift of this
+  //     hum vs the user's prior usual. A sustained directional run flags a genuine
+  //     baseline shift (recovery / decline / new normal) and lifts the adaptation
+  //     rate so the personal model re-centers rather than fighting the change.
+  let regime = state.profile.regime ?? newRegimeState();
+  let adaptation_rate = clamp01((state.profile.adaptation_rate ?? 0) * 0.85);
+  if (policy.baselineActive && Object.keys(zDeltas).length > 0) {
+    const upd = updateRegime(regime, signedSalienceDrift(zDeltas, salience_vector));
+    regime = upd.state;
+    if (upd.shift !== "none") adaptation_rate = 1;
+  }
+
+  // 11. PERSONALIZED INTERVENTION POLICY (bandit): fold this hum's intervention
+  //     outcome into the per-arm reward stats (reward = risk reduction = −riskDelta).
+  const intervention_policy: InterventionPolicy = { ...(state.profile.intervention_policy ?? {}) };
+  if (ir && ir.type !== "none") {
+    intervention_policy[ir.type] = updateArm(intervention_policy[ir.type], -ir.riskDelta);
+  }
+
   // 8. Bounded relapse history (used to build relapse references next read).
   const relapseHistory: readonly RelapseSample[] =
     obs.dimensional && obs.riskScore !== undefined
@@ -180,6 +221,10 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     recovery_signature_vector,
     high_risk_signature_vector,
     intervention_response_vector,
+    salience_vector,
+    intervention_policy,
+    regime,
+    adaptation_rate,
     calibration_maturity: policy.calibrationMaturity,
     confidence_cap: policy.confidenceCap,
     last_updated_at: obs.capturedAt,
