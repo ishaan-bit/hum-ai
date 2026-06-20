@@ -65,7 +65,7 @@ const postBaselineHistory: HumHistory = {
 // ---------------------------------------------------------------------------
 
 const TOP_KEYS = ["userFacing", "recommendationView", "internal"].sort();
-const USER_FACING_KEYS = ["abstained", "isEarlyBaseline", "confidence", "headline", "note", "suggestion", "interventionOfDay"].sort();
+const USER_FACING_KEYS = ["abstained", "isEarlyBaseline", "confidence", "headline", "innerState", "note", "suggestion", "interventionOfDay"].sort();
 
 test("orchestrator produces a stable output shape for first / early / post baseline", async () => {
   const reads = await Promise.all([
@@ -207,6 +207,7 @@ test("user-facing confidence is qualitative only — no raw number anywhere in c
 
   // Every user-facing string is percentage-free and forbidden-phrase-free.
   const strings = [read.userFacing.headline, read.userFacing.note, c.signalClarity, c.basedOn, c.summary];
+  if (read.userFacing.innerState) strings.push(read.userFacing.innerState);
   if (read.userFacing.suggestion) strings.push(read.userFacing.suggestion.copy);
   for (const s of strings) {
     assert.equal(isConfidenceCopySafe(s), true, `raw confidence number in: "${s}"`);

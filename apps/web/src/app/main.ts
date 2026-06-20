@@ -97,6 +97,9 @@ async function boot(): Promise<void> {
   renderLadderForState(session.state);
   renderHistory(session.log);
   updateSyncStatus();
+  // Render the longitudinal panel up front (locked when consent is off) so it's
+  // discoverable from the first visit, before any hum. The data stays consent-gated.
+  renderLongitudinal(null, session.consent, session.state.eligibleHumCount);
 
   // Load the trained prior (non-blocking for the rest of the UI).
   session.prior = await loadBrowserPrior();
@@ -139,8 +142,12 @@ function reflectConsentInputs(): void {
 
 async function onConsentChange(scope: ToggleableScope, granted: boolean): Promise<void> {
   session.consent = setScope(session.consent, scope, granted);
-  if (scope === "clinical_risk_surfacing" && session.lastRead) {
-    renderLongitudinal(session.lastRead, session.consent);
+  if (scope === "clinical_risk_surfacing") {
+    renderLongitudinal(
+      session.lastRead,
+      session.consent,
+      session.lastRead?.internal.eligibleHumCount ?? session.state.eligibleHumCount,
+    );
   }
   if (scope === "derived_feature_sync") {
     if (granted) {
@@ -193,7 +200,7 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
   renderInterventionOfDay(result.read);
   renderPersonalization(result.read);
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
-  renderLongitudinal(result.read, session.consent);
+  renderLongitudinal(result.read, session.consent, result.read.internal.eligibleHumCount);
   renderProvenance(result.read, session.prior, syncEnabled());
   session.log.push({
     at: result.now,

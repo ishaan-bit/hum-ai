@@ -93,6 +93,13 @@ export interface RegulationStateMeta {
   readonly baselineMature: boolean;
   /** Abstracted within-user trend; absent until the relapse model is active. */
   readonly longitudinal?: LongitudinalStatus;
+  /**
+   * Qualitative evidence band for THIS single read (ADR-0010). A confident single read
+   * is interpreted from hum #1 — before any personal baseline exists — and the baseline
+   * later refines it; only a too-weak read (below `low`) falls back to the general
+   * "still forming" step. Defaults to `medium` when omitted (a committed read is read).
+   */
+  readonly evidence?: EvidenceLevel;
 }
 
 // V-A thresholds — kept aligned with the existing `selectInterventionFromView` mapper. The IoD
@@ -119,8 +126,15 @@ export function deriveRegulationState(
     return meta.baselineMature ? "low_confidence" : "not_enough_history";
   }
 
-  // 3. Committed read, but baseline still forming → general regulation only.
-  if (!meta.baselineMature) return "not_enough_history";
+  // 3. Committed read. The read LEADS from hum #1 (ADR-0010): interpret the affect
+  //    region even before a personal baseline exists, as long as THIS single read is
+  //    confident enough to lean on. Only fall back to the general "still forming" step
+  //    when there is no baseline yet AND this read is too weak to interpret on its own
+  //    (below the `low` band). The personal baseline then only refines this, never gates it.
+  const evidence = meta.evidence ?? "medium";
+  if (!meta.baselineMature && EVIDENCE_RANK[evidence] < EVIDENCE_RANK.low) {
+    return "not_enough_history";
+  }
 
   // 4. Sustained, within-user worsening/relapse-drift → safe support (before affect).
   if (meta.longitudinal?.drifting && meta.longitudinal.persistent) {

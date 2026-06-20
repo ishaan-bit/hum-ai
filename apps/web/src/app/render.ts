@@ -75,12 +75,17 @@ export function renderRead(read: OrchestratedRead): void {
          </div>`
       : "";
 
+  // Lead with the synthesized inner-state read (valence + arousal + the affect lean);
+  // fall back to the acoustic headline only when the read abstained (innerState === null).
+  const lead = uf.innerState ?? uf.headline;
+  const eyebrow = uf.innerState ? `<p class="read-eyebrow muted small">Your inner state, right now</p>` : "";
   card.innerHTML = `
     <div class="read-head">
       <span class="evidence evidence-${esc(uf.confidence.evidenceLevel)}">${esc(uf.confidence.signalClarity)}</span>
       <span class="evidence-basedon">${esc(uf.confidence.basedOn)}</span>
     </div>
-    <h2 class="headline">${esc(uf.headline)}</h2>
+    ${eyebrow}
+    <h2 class="headline">${esc(lead)}</h2>
     <p class="note">${esc(uf.note)}</p>
     ${suggestion}
   `;
@@ -268,7 +273,8 @@ export function renderPersonalization(read: OrchestratedRead): void {
         : "";
     body = `<p>Re-referenced against <strong>your</strong> baseline — this hum reads as ${esc(closeness)}. Your personal pattern now shapes the read.</p>${shift}${drivers}`;
   } else if (n < 5) {
-    body = `<p class="muted">Learning your baseline — <strong>${n}</strong> eligible hum${n === 1 ? "" : "s"} so far. The read works now from population priors; it starts re-referencing against <em>your</em> usual as your pattern forms (around 5 hums).</p>`;
+    const count = n > 0 ? ` <span class="muted small">(${n} eligible hum${n === 1 ? "" : "s"} so far.)</span>` : "";
+    body = `<p>Working from the population baseline now — your read is fully live. As your own pattern builds over the next few hums, it quietly starts re-referencing against <em>your</em> usual.${count}</p>`;
   } else {
     body = `<p class="muted">Population read for this hum — not enough matching baseline coverage to personalize it yet. It keeps refining as you hum.</p>`;
   }
@@ -278,24 +284,26 @@ export function renderPersonalization(read: OrchestratedRead): void {
   `;
 }
 
-// ── the maturity card (refinement, NOT a gate) ────────────────────────────────
+// ── the refinement card (quiet status, NOT a gate) ────────────────────────────
+// ADR-0010: the read is LIVE from hum #1. The personal baseline / fusion / longitudinal
+// layers only REFINE it over time — they never gate, withhold, or delay it. So we show
+// them as quiet on/forming status, never as an "N / 5 hums to unlock" countdown wall.
 export function renderLadder(stage: string, n: number): void {
   const card = $("ladder-card");
   if (!card) return;
-  const milestones = [
-    { at: 5, label: "Personal baseline refines the read" },
-    { at: 10, label: "Personalized fusion" },
-    { at: 20, label: "Longitudinal trend monitoring" },
-  ];
-  const next = milestones.find((m) => n < m.at);
-  const progressTo = next ? `${n} / ${next.at} eligible hums → ${esc(next.label)}` : "All refinement stages active.";
-  const p = next ? Math.min(100, (n / next.at) * 100) : 100;
+  const chip = (on: boolean, label: string): string =>
+    `<span class="chip ${on ? "chip-on" : "chip-forming"}">${on ? "✓ " : "○ "}${esc(label)}${on ? "" : " · forming"}</span>`;
 
   card.innerHTML = `
-    <h3>Your model maturity <span class="muted small">(sharpens the read; never withholds it)</span></h3>
-    <p class="stage">Stage: <strong>${esc(STAGE_LABEL[stage] ?? stage)}</strong> · ${n} eligible hum${n === 1 ? "" : "s"}</p>
-    <div class="progress"><span style="width:${p.toFixed(1)}%"></span></div>
-    <p class="muted small">${progressTo}. Your read is available from the very first hum — these only refine it over time.</p>
+    <h3>Read refinement <span class="muted small">(quietly sharpens the read — never withholds it)</span></h3>
+    <p class="stage">Your read is live now. Stage: <strong>${esc(STAGE_LABEL[stage] ?? stage)}</strong>.</p>
+    <div class="refine-chips">
+      ${chip(true, "On-device read")}
+      ${chip(n >= 5, "Personal baseline")}
+      ${chip(n >= 10, "Personalized fusion")}
+      ${chip(n >= 20, "Longitudinal view")}
+    </div>
+    <p class="muted small">There's no calibration wall: every hum gets a full read. These layers switch on quietly as your own pattern builds, refining a read you already have.</p>
   `;
 }
 
@@ -312,22 +320,36 @@ const TREND_COPY: Record<"improving" | "worsening" | "stable" | "uncertain", str
   uncertain: "Your recent pattern isn't clear enough to call yet.",
 };
 
-export function renderLongitudinal(read: OrchestratedRead, consent: ConsentState): void {
+export function renderLongitudinal(
+  read: OrchestratedRead | null,
+  consent: ConsentState,
+  eligibleHumCount: number,
+): void {
   const card = $("longitudinal-card");
   if (!card) return;
+  // ADR-0006: the longitudinal DATA stays consent-gated — but the PANEL is always
+  // discoverable, so a first-time user can see the view exists and how to turn it on
+  // (rather than it being invisible). When consent is off we render a clear locked state.
+  card.hidden = false;
   if (!isGranted(consent, "clinical_risk_surfacing")) {
-    card.hidden = true;
+    card.innerHTML = `
+      <h3>Longitudinal view <span class="badge-mini">locked · consent-gated · non-diagnostic</span></h3>
+      <p class="muted">This view looks at your pattern <em>across many hums</em> — a gentle trend direction and sustained-change monitoring, in words only. It never diagnoses, and stays off until you turn it on.</p>
+      <p class="muted small">Turn on “Surface the consent-gated longitudinal / risk-marker view” in <strong>Consent</strong> above to see it. Your per-hum read is exactly the same either way.</p>
+      <p class="disclaimer">Research-stage and non-clinical. Hum AI does not diagnose, and this view is not a medical evaluation.</p>
+    `;
     return;
   }
-  card.hidden = false;
-  const lg = read.internal.longitudinal;
-  const n = read.internal.eligibleHumCount;
+  const lg = read ? read.internal.longitudinal : null;
+  const n = read ? read.internal.eligibleHumCount : eligibleHumCount;
 
-  // Before a personal baseline (~5 hums) there is no within-you longitudinal judgement.
-  if (lg.abstained) {
+  // Before a personal baseline forms there is no within-you longitudinal judgement yet
+  // (also the pre-first-hum case, read === null). The per-hum read is never affected.
+  if (!read || !lg || lg.abstained) {
+    const count = n > 0 ? ` <span class="small">(${n} eligible hum${n === 1 ? "" : "s"} so far.)</span>` : "";
     card.innerHTML = `
       <h3>Longitudinal view <span class="badge-mini">consented · non-diagnostic</span></h3>
-      <p class="muted">Collecting your longitudinal history — <strong>${n}</strong> eligible hum${n === 1 ? "" : "s"}. A trend read starts once your own baseline forms (around 5 hums); sustained-pattern monitoring sharpens around 20. The per-hum read above is unaffected.</p>
+      <p class="muted">Collecting your longitudinal history. A trend read starts once your own baseline forms, and sustained-pattern monitoring sharpens as more daily hums come in.${count} The per-hum read above is unaffected.</p>
       <p class="disclaimer">Research-stage and non-clinical. Hum AI does not diagnose, and this view is not a medical evaluation.</p>
     `;
     return;

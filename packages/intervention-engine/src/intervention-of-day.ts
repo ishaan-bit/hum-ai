@@ -98,7 +98,7 @@ const CONFIDENCE_LANGUAGE: Readonly<Record<EvidenceLevel, InterventionConfidence
   high: "stronger_evidence",
 };
 
-/** Safe observation lead per state. Affective leads only fire with a mature baseline. */
+/** Safe observation lead per state — phrased relative to the user's learned baseline. */
 const REGULATION_STATE_WHY: Readonly<Record<HumRegulationState, string>> = {
   calm_regulated: "Your hum sounded settled and close to your usual steady pattern",
   positive_activation: "Your hum sounded upbeat, with some extra energy",
@@ -114,6 +114,23 @@ const REGULATION_STATE_WHY: Readonly<Record<HumRegulationState, string>> = {
   not_enough_history: "Your personal baseline is still forming",
 };
 
+/**
+ * Baseline-FREE observation leads, used before a personal baseline exists (ADR-0010:
+ * the read leads from hum #1). Identical regions to `REGULATION_STATE_WHY` but with no
+ * "your usual" / "your recent baseline" comparison — there is no baseline to compare to
+ * yet, so a first-hum read describes only how THIS hum sounded. Only the interpreted
+ * affective states need a variant; meta states reuse the base map.
+ */
+const REGULATION_STATE_WHY_NO_BASELINE: Partial<Record<HumRegulationState, string>> = {
+  calm_regulated: "Your hum sounded settled and steady",
+  positive_activation: "Your hum sounded upbeat, with some extra energy",
+  high_activation_negative: "Your hum sounded activated and a little tense",
+  low_recovery: "Your hum sounded low on energy",
+  low_mood: "Your hum sounded quiet and low",
+  mixed_unsettled: "This read came out mixed, without one clear direction",
+  neutral_usual: "Your hum sounded fairly even and neutral",
+};
+
 /** What the suggestion is explicitly NOT based on (worded to pass safety-language). */
 export const NOT_BASED_ON: readonly string[] = [
   "any medical or clinical label",
@@ -122,7 +139,7 @@ export const NOT_BASED_ON: readonly string[] = [
   "a single certainty score",
 ];
 
-function basedOnSignals(state: HumRegulationState): string[] {
+function basedOnSignals(state: HumRegulationState, baselineMature: boolean): string[] {
   switch (state) {
     case "poor_capture":
       return ["how clear the hum recording was"];
@@ -137,19 +154,22 @@ function basedOnSignals(state: HumRegulationState): string[] {
     default:
       break;
   }
-  const signals = [
-    "how activated your hum sounded",
-    "how pleasant or settled it sounded",
-    "how today's hum compares with your recent baseline",
-  ];
-  if (state === "low_recovery") signals.push("your recent energy and recovery pattern");
-  if (state === "low_mood") signals.push("how subdued the hum sounded versus usual");
+  // Affective read. Only claim a baseline comparison once a baseline actually exists.
+  const signals = ["how activated your hum sounded", "how pleasant or settled it sounded"];
+  if (baselineMature) signals.push("how today's hum compares with your recent baseline");
+  if (state === "low_recovery") signals.push(baselineMature ? "your recent energy and recovery pattern" : "your hum's energy level");
+  if (state === "low_mood") signals.push(baselineMature ? "how subdued the hum sounded versus usual" : "how subdued the hum sounded");
   if (state === "mixed_unsettled") signals.push("how mixed or steady the read was");
   return signals;
 }
 
 /** Compose the single-sentence whySuggested from the state observation + the action clause. */
-function composeWhy(state: HumRegulationState, evidence: EvidenceLevel, template: InterventionTemplate): string {
+function composeWhy(
+  state: HumRegulationState,
+  evidence: EvidenceLevel,
+  template: InterventionTemplate,
+  baselineMature: boolean,
+): string {
   // `needs_support` is a longitudinal, risk-adjacent state (sustained worsening /
   // relapse-drift). Its claim rides on the WITHIN-USER trend, not on this single
   // read's confidence — so it ALWAYS carries an explicit, non-diagnostic tentative
@@ -158,7 +178,12 @@ function composeWhy(state: HumRegulationState, evidence: EvidenceLevel, template
   if (state === "needs_support") {
     return `${REGULATION_STATE_WHY[state]} — a tentative pattern to gently note, not a conclusion — so ${template.whyAction}.`;
   }
-  let observation = REGULATION_STATE_WHY[state];
+  // Before a personal baseline exists, describe only how THIS hum sounded — never claim
+  // a comparison to a "usual" that hasn't formed yet (ADR-0010 honest first-hum read).
+  let observation =
+    !baselineMature && isAffectiveState(state)
+      ? (REGULATION_STATE_WHY_NO_BASELINE[state] ?? REGULATION_STATE_WHY[state])
+      : REGULATION_STATE_WHY[state];
   // For other interpreted reads, surface single-read uncertainty when confidence is low.
   if (isAffectiveState(state) && EVIDENCE_RANK[evidence] <= EVIDENCE_RANK.low) {
     observation += " (an early, low-confidence read)";
@@ -264,6 +289,7 @@ export function selectInterventionOfDay(input: InterventionOfDayInput): Interven
     captureUsable: input.captureUsable,
     baselineMature: input.baselineMature,
     longitudinal: input.longitudinal,
+    evidence: input.evidence,
   };
   const state = deriveRegulationState(input.view, meta);
   const template = selectTemplateForState(state, input.evidence, input.baselineMature, input.rotationSeed ?? 0);
@@ -288,8 +314,8 @@ export function selectInterventionOfDay(input: InterventionOfDayInput): Interven
     durationMinutes: template.durationMinutes,
     category: template.category,
     instruction: template.instruction,
-    whySuggested: composeWhy(state, input.evidence, template),
-    basedOnSignals: basedOnSignals(state),
+    whySuggested: composeWhy(state, input.evidence, template, input.baselineMature),
+    basedOnSignals: basedOnSignals(state, input.baselineMature),
     notBasedOn: NOT_BASED_ON,
     confidenceLanguage: CONFIDENCE_LANGUAGE[input.evidence],
     ...(template.safetyNote ? { safetyNote: template.safetyNote } : {}),
@@ -307,5 +333,6 @@ export function regulationStateFor(input: InterventionOfDayInput): HumRegulation
     captureUsable: input.captureUsable,
     baselineMature: input.baselineMature,
     longitudinal: input.longitudinal,
+    evidence: input.evidence,
   });
 }

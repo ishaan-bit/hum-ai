@@ -153,15 +153,33 @@ test("low confidence / abstain (mature baseline) → cautious general grounding"
   assert.match(iod.whySuggested, /confiden|read/i);
 });
 
-test("not enough history → baseline-forming general option only", () => {
+test("pre-baseline: weak read stays general; a confident read leads from hum #1 (ADR-0010)", () => {
+  // An abstained read pre-baseline never infers affect.
   const abstainedYoung = input({ view: view({ abstained: true }), baselineMature: false });
   assert.equal(regulationStateFor(abstainedYoung), "not_enough_history");
 
-  // A committed read with an immature baseline is ALSO held to general-only.
-  const committedYoung = input({ view: view({ dimensional: { valence: -0.5, arousal: 0.7 } }), baselineMature: false });
-  assert.equal(regulationStateFor(committedYoung), "not_enough_history");
-  const iod = selectInterventionOfDay(committedYoung);
-  assert.match(iod.whySuggested, /baseline|forming/i);
+  // A committed read that is too weak to lean on (below `low`) still falls back to general.
+  const weakYoung = input({
+    view: view({ dimensional: { valence: -0.5, arousal: 0.7 } }),
+    baselineMature: false,
+    evidence: "early_baseline",
+  });
+  assert.equal(regulationStateFor(weakYoung), "not_enough_history");
+  assert.match(selectInterventionOfDay(weakYoung).whySuggested, /baseline|forming|general/i);
+
+  // A CONFIDENT committed read leads from the first hum: it derives its affect region even
+  // before a personal baseline, and the copy makes NO comparison to a "usual" that doesn't
+  // exist yet.
+  const confidentYoung = input({
+    view: view({ dimensional: { valence: -0.5, arousal: 0.7 } }),
+    baselineMature: false,
+    evidence: "medium",
+  });
+  assert.equal(regulationStateFor(confidentYoung), "high_activation_negative");
+  const iod = selectInterventionOfDay(confidentYoung);
+  assert.doesNotMatch(iod.whySuggested, /your usual|your recent baseline|baseline is still forming/i);
+  assert.doesNotMatch(iod.basedOnSignals.join(" "), /recent baseline/i);
+  assert.doesNotThrow(() => assertInterventionOfDaySafe(iod));
 });
 
 // --- 12. relapse_drift / worsening with safe copy + escalation gating -------

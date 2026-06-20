@@ -56,6 +56,46 @@ export function axisHeadline(valence: number, arousal: number, abstained: boolea
 }
 
 /**
+ * INNER-STATE line — the single reflective sentence the read leads with: "right now you
+ * read as …". It fuses the leading VALENCE + AROUSAL axis read with the secondary benign
+ * affect lean into one plain sentence so the user sees an inner-state read, not two
+ * abstract meters. Reflective and non-diagnostic (it describes how the read came out,
+ * never a clinical state or a certainty), and screened at the boundary like all copy.
+ *
+ * The lean rides on the far-domain 6-way prior, so it is phrased tentatively ("leaning
+ * toward …") and the neutral "close to your usual" head is dropped (it implies a baseline
+ * that may not exist yet and adds nothing). ADR-0005 / ADR-0010.
+ */
+export function innerStateLine(
+  valence: number,
+  arousal: number,
+  affectHint: AffectStateHead | null,
+  abstained: boolean,
+): string | null {
+  if (abstained) return null;
+  const T = 0.2;
+  const hiA = arousal > T;
+  const loA = arousal < -T;
+  const hiV = valence > T;
+  const loV = valence < -T;
+  let core: string;
+  if (hiA && hiV) core = "bright and energized";
+  else if (hiA && loV) core = "keyed up and a little tense";
+  else if (loA && hiV) core = "calm and at ease";
+  else if (loA && loV) core = "low and subdued";
+  else if (hiA) core = "energized";
+  else if (loA) core = "quiet and settled";
+  else if (hiV) core = "warm and even";
+  else if (loV) core = "a little flat";
+  else core = "fairly steady and even";
+  const lean =
+    affectHint && affectHint !== "neutral_close_to_usual"
+      ? ` — leaning toward ${userFacingLabel(AFFECT_HEADS[affectHint].internalLabel)}`
+      : "";
+  return `Right now you read as ${core}${lean}.`;
+}
+
+/**
  * A gentle, NON-ALARMING note. Baseline divergence may nudge the wording toward
  * "a little different from your recent usual" — but never names a risk, never
  * diagnoses, and never raises an alarm (ADR-0006 / ADR-0008 framing).

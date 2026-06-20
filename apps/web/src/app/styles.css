@@ -410,6 +410,31 @@ h3 {
   color: #8fcf9c;
 }
 
+/* refinement status chips (read is live from hum #1; these only refine it) */
+.refine-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+}
+.chip-on {
+  background: #14241a;
+  border-color: #244231;
+  color: #8fcf9c;
+}
+.chip-forming {
+  background: #1a1e26;
+  border-color: #2a3038;
+  color: #8b909b;
+}
+
+/* read eyebrow above the inner-state headline */
+.read-eyebrow {
+  margin: 0 0 0.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* ladder */
 .stage {
   margin: 0 0 0.5rem;

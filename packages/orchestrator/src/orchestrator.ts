@@ -78,7 +78,7 @@ import {
 } from "@hum-ai/safety-language";
 import type { UserFacingConfidence } from "@hum-ai/safety-language";
 import { clinicalRiskScore } from "./risk";
-import { INTERVENTION_COPY, axisHeadline, readNote } from "./copy";
+import { INTERVENTION_COPY, axisHeadline, innerStateLine, readNote } from "./copy";
 import { resolveAxisRead, axisReadConfidence, type AffectAxisPriors, type AxisRead } from "./axis-read";
 
 /**
@@ -258,6 +258,12 @@ export interface UserFacingRead {
   /** Qualitative only (High/Medium/Low evidence or Early baseline) — never a number. */
   readonly confidence: UserFacingConfidence;
   readonly headline: string;
+  /**
+   * The reflective inner-state line the read leads with — valence + arousal fused with
+   * the benign affect lean into one plain "right now you read as …" sentence. Null when
+   * the read abstained. Non-diagnostic; screened with the rest of the user-facing copy.
+   */
+  readonly innerState: string | null;
   readonly note: string;
   readonly suggestion: { readonly type: InterventionType; readonly copy: string } | null;
   /**
@@ -365,6 +371,7 @@ function userFacingStrings(read: UserFacingRead): string[] {
     read.confidence.basedOn,
     read.confidence.summary,
   ];
+  if (read.innerState) strings.push(read.innerState);
   if (read.suggestion) strings.push(read.suggestion.copy);
   strings.push(...interventionOfDayStrings(read.interventionOfDay));
   return strings;
@@ -608,6 +615,12 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     isEarlyBaseline: confidence.isEarlyBaseline,
     confidence,
     headline: axisHeadline(inference.dimensional.valence, inference.dimensional.arousal, inference.abstained),
+    innerState: innerStateLine(
+      axisRead.dimensional.valence,
+      axisRead.dimensional.arousal,
+      affectHint,
+      inference.abstained,
+    ),
     note: readNote({
       abstained: inference.abstained,
       isEarlyBaseline: confidence.isEarlyBaseline,
