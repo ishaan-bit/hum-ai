@@ -12,7 +12,11 @@ A free-speech sample is confounded by language, content, and privacy exposure. A
 
 ## Architecture at a glance
 
-Expert-based **late fusion** with a deterministic reliability-weighted meta-learner (`StubWeightedMetaLearner`, the v1 default) over per-expert probability vectors, adapted from the TriSense FER+SER+TER design [trisense_architecture]. The `LogisticRegressionMetaLearner` is the drop-in target once weights are fit — its `combine` throws until then, so **no model is trained today**. Hum's online path runs SER-family experts on the hum; FER/TER experts exist as optional, off-domain inputs.
+The read **leads with a valence + arousal axis read, available from the first hum** ([ADR-0010](docs/adr/0010-model-led-read-from-first-hum.md)). The backbone is the transparent, on-domain **acoustic axes** (energy/brightness/pitch/clarity/stability → valence/arousal). Trained **far-domain priors refine that read silently**: each carries an OOD distance and **abstains when the hum is outside its acted-speech domain** (the common case), nudging the acoustic value only when in-domain (weight capped at 0.5 — it never overrides). A secondary 6-way affect-label hint rides alongside but is no longer the dimensional read.
+
+Under that axis read sits expert-based **late fusion** with a deterministic reliability-weighted meta-learner over per-expert probability vectors, adapted from the TriSense FER+SER+TER design [trisense_architecture]. Hum's online path runs SER-family experts on the hum; FER/TER experts exist as optional, off-domain inputs.
+
+**Models today (honest reconciliation):** the shipped browser priors are **trained-but-far-domain** classical JSON models (RAVDESS acted speech, penalized as priors, never hum truth — [ADR-0005](docs/adr/0005-public-datasets-as-priors-not-truth.md)): the 6-class `model.json` and the `model.valence_binary.json` are **below the experimental ~80% gate** (valence "developing"), while `model.arousal_binary.json` **cleared the gate at ~83%** — surfaced as an auxiliary prior that does **not** steer the affect/intervention read. The newer **mel-CNN hum model (~84.2% arousal on hum)** is a **Python-CLI-only research checkpoint** — not browser-servable and **not promoted** (below its own 85% gate). The `LogisticRegressionMetaLearner` remains the drop-in target once weights are fit on native hum data; its `combine` throws until then.
 
 ```mermaid
 flowchart LR
@@ -27,7 +31,7 @@ flowchart LR
   I --> J[safety-language<br/>non-diagnostic render]
 ```
 
-Confidence is **capped, not just calibrated**. The strictest of the capture-quality cap (`CAPTURE_QUALITY_CONFIDENCE_CAP`), the domain-gap penalty (`domainGapPenalty`), and the personalization-stage cap wins via `combineCaps`. Stage caps rise only as the model earns confidence: **0.72** (first hum) → **0.76** (pre-baseline) → **0.82** (baseline, 5–9) → **0.88** (personalized, 10–19) → **0.92** (mature, 20+) [hum_spec]. Below the evidence floor the engine **abstains** with an explicit reason rather than guessing — a discipline reinforced by the under-exploration of dimensional valence–arousal and indirect SER use in the literature [ser_mental_health_review].
+Confidence is **capped, not just calibrated**. The strictest of the capture-quality cap (`CAPTURE_QUALITY_CONFIDENCE_CAP`), the domain-gap penalty (`domainGapPenalty`), and the personalization-stage cap wins via `combineCaps`. Stage caps rise only as the model earns confidence: **0.72** (first hum) → **0.76** (pre-baseline) → **0.82** (baseline, 5–9) → **0.88** (personalized, 10–19) → **0.92** (mature, 20+) [hum_spec]. Per [ADR-0010](docs/adr/0010-model-led-read-from-first-hum.md) the 5/10/20 thresholds are **silent progressive refinement, not a read gate**: the personal baseline and longitudinal model re-reference the axis read once they have history but no longer withhold it. Below the evidence floor the engine **abstains** with an explicit reason rather than guessing — a discipline reinforced by the under-exploration of dimensional valence–arousal and indirect SER use in the literature [ser_mental_health_review].
 
 The relapse engine is a **within-user paired comparison** (`RelapseSample` vs reference), inspired by DVDSA's intra-patient recovery/worsening/unchanged design, not a group-level classifier [longitudinal_voice_treatment_response_source]. It emits `recovery | stable | worsening | relapse_drift | uncertain`, defaulting to `uncertain` when references are absent or conflicting.
 
@@ -56,7 +60,7 @@ npm workspaces; one concern per package. All packages are `@hum-ai/*`.
 | `dataset-harness` | Local-only dataset manifest/validate CLI (`data:manifest`, `data:validate`); no audio ever written into the repo. |
 | `naming-check` | Enforces the Hum AI / `@hum-ai` naming constitution (ADR-0000). |
 
-Plus **`apps/`** (`web`, `mobile`, `ops` — placeholder shells wiring the pipeline; no UI built this pass) and **`research/`** (Python-only dataset/training/evaluation/model-card scaffolds; no models trained, no heavy ML deps installed).
+Plus **`apps/`** — **`web`** is a real **local-first Vite SPA** that runs the full spine **client-side** (capture → Stage ① acceptance gate → axis read → personalization → longitudinal), persists to localStorage / Firebase, and is **deployed to Vercel production** (`vercel.json` `build:web` → `apps/web/dist`; `firebase.json` + `firestore.rules` deployed to `humai-core-prod`); `mobile`/`ops` remain placeholder shells. Plus **`research/`** (Python dataset/training/evaluation/model-card work; see the models line below for what is trained vs. shipped).
 
 ## Quickstart
 
@@ -92,7 +96,7 @@ The 10 required test areas and where each is covered:
 
 ## Status & non-claims
 
-- **Voice core is real; experts are still stubs.** The hum feature extractor (`@hum-ai/audio-features` `HumDspExtractor`/`computeFeatures`) and the `orchestrateHumAudio(buffer)` audio entry point are implemented and tested as **deterministic, dependency-free DSP — honest signal processing, not a trained or clinically validated model**. The downstream affect/embedding experts remain **heuristic stubs** (`HeuristicDomainClassifier`, stub-weighted/seeded experts); the SER/embedding models (WavLM/HuBERT/Wav2Vec2) are Phase-2 work behind the `AffectExpert` contract. **No models are trained.** See the [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md).
+- **Voice core is real; experts are still stubs.** The hum feature extractor (`@hum-ai/audio-features` `HumDspExtractor`/`computeFeatures`) and the `orchestrateHumAudio(buffer)` audio entry point are implemented and tested as **deterministic, dependency-free DSP — honest signal processing, not a trained or clinically validated model**. The downstream affect/embedding experts remain **heuristic stubs** (`HeuristicDomainClassifier`, stub-weighted/seeded experts); the SER/embedding models (WavLM/HuBERT/Wav2Vec2) are Phase-2 work behind the `AffectExpert` contract. **Some classical priors are trained** — the browser serves far-domain RAVDESS LogReg/RF JSON priors (`model.arousal_binary.json` cleared the ~80% experimental gate at ~83%; the 6-class and valence priors are below-gate), kept as penalized priors that never steer the affect/intervention read; a Python-CLI-only **mel-CNN hum model (~84.2% arousal)** is research-stage, not browser-served and **not promoted** (below its 85% gate). See the [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md) and [ADR-0010](docs/adr/0010-model-led-read-from-first-hum.md).
 - **Non-clinical, not validated.** Hum is **not** a medical device, **not** FDA-cleared, and **not** clinically validated. It produces risk **markers** and reflective signals, never a diagnosis.
 - **Reference numbers are not Hum metrics.** TriSense MELD stream/fusion accuracies (18.4 / 38.0 / 54.0 → 66.0%) are **architecture-reference numbers on TV dialogue** [trisense_architecture]; clinical AUC/accuracy ranges are study priors [clinical_voice_biomarker_review; longitudinal_voice_treatment_response_source]. None are presented as Hum's accuracy. No fabricated metrics anywhere.
 - **Privacy posture.** Local-first; raw audio is not uploaded by default; only derived data syncs, and every sync payload must pass `assertNoRawAudioFields` [hum_spec].
@@ -104,7 +108,7 @@ The 10 required test areas and where each is covered:
 - Claims ladder & non-claims: [docs/claims/CLAIMS_LADDER.md](docs/claims/CLAIMS_LADDER.md)
 - Validation & evaluation protocol: [docs/validation/](docs/validation/), [research/evaluation/](research/evaluation/README.md)
 - Privacy & data governance: [docs/privacy/DATA_GOVERNANCE.md](docs/privacy/DATA_GOVERNANCE.md), [public-repo privacy checklist](docs/privacy/PUBLIC_REPO_PRIVACY_CHECKLIST.md)
-- Decision records: [docs/adr/](docs/adr/) — naming (0000), spine (0001), audio (0002), personalization/relapse (0003), confidence (0004), datasets-as-priors (0005), **two-head separation (0006)**, **dual baseline (0007)**, **user-facing confidence (0008)**, **voice-first/camera-later (0009)**
+- Decision records: [docs/adr/](docs/adr/) — naming (0000), spine (0001), audio (0002), personalization/relapse (0003), confidence (0004), datasets-as-priors (0005), **two-head separation (0006)**, **dual baseline (0007)**, **user-facing confidence (0008)**, **voice-first/camera-later (0009)**, **model-led axis read from hum #1 (0010)**
 - DevOps & deployment: [docs/devops/](docs/devops/) (GitHub bootstrap, branch protection, Vercel setup, deployment, environment variables)
 - Research scaffolds & model cards: [research/README.md](research/README.md), [research/model-cards/](research/model-cards/)
 
@@ -114,4 +118,4 @@ The 10 required test areas and where each is covered:
 2. Fit and calibrate the `LogisticRegressionMetaLearner` on native hum data; evaluate abstention and reliability.
 3. Stand up within-user DVDSA-style longitudinal evaluation for the relapse engine [longitudinal_voice_treatment_response_source].
 4. Ground intervention suggestions in the music-stress evidence base as **support, not diagnosis** [intervention_support_source].
-5. Build a real browser capture surface (`getUserMedia({ audio })`, no camera) that feeds `orchestrateHumAudio` — the end-to-end orchestrator and its audio entry point are already wired and tested (two-head split + consent gate, dual baseline, qualitative confidence; ADR-0006/0007/0008/0009).
+5. **Done — the browser capture surface ships.** `apps/web` is a deployed local-first SPA: `getUserMedia({ audio })` (no camera) feeds the full client-side spine — Stage ① acceptance gate → axis read → personalization → longitudinal — with the classical JSON priors served from `apps/web/public/models/` (ADR-0006/0007/0008/0009/0010). Next: port the mel-CNN to a browser-runnable form (mel filterbank + conv1d) or stand up a hum-native dataset so a genuinely model-led read can be served, not just refined.

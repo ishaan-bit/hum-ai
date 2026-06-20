@@ -1,15 +1,24 @@
 # Deployment — Hum AI
 
-## Current state: preview placeholder only
+## Current state: production SPA deployed
 
-There is **no production deployment** of Hum AI. `apps/web` is a static **preview
-placeholder** (see [VERCEL_SETUP.md](VERCEL_SETUP.md)); the product client is not built.
-Do not present any deployed URL as the Hum AI product.
+`apps/web` is a real **local-first Vite SPA** that runs the full spine client-side
+(prior → personalization → longitudinal; the capture acceptance gate, Stage ①, is wired
+in) and is **deployed to Vercel production** (`vercel.json` `buildCommand`
+`npm run build:web`, `outputDirectory` `apps/web/dist`). Firestore rules/indexes
+(`firebase.json` + `firestore.rules`) are deployed to project `humai-core-prod`.
+
+The browser serves the **classical JSON priors** only: `model.json` (6-class, below
+gate), `model.arousal_binary.json` (cleared the ~80% experimental gate at ~83%, served
+as an auxiliary prior), and `model.valence_binary.json` (below gate, developing). The
+newer **mel-CNN hum model** (84.2% arousal on hum) is a Torch checkpoint, Python-CLI
+**only**, not browser-servable, and was **not promoted** (84.2% < its 85% gate) — do not
+present it as deployed or served in the browser.
 
 | Surface | State | Deployable? |
 | --- | --- | --- |
-| `packages/*` (intelligence core) | Implemented + tested (heuristic stubs) | Libraries — not deployed directly |
-| `apps/web` | Static preview placeholder | **Preview only** (not production) |
+| `packages/*` (intelligence core) | Implemented + tested | Libraries — not deployed directly |
+| `apps/web` | Local-first SPA running the full spine; serves the classical JSON priors | **Deployed to production** |
 | `apps/mobile` | Placeholder | No |
 | `apps/ops` | Placeholder | No |
 
@@ -23,36 +32,38 @@ Before **any** deploy:
 
 Before **production** (`--prod`) deploy, additionally:
 
-- [ ] A real web client exists (not the placeholder) and has been reviewed.
+- [x] A real web client exists (the local-first SPA) and has been reviewed.
 - [ ] Env vars are set in the Vercel dashboard, not in the repo (see [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md)).
 - [ ] No raw-audio / clinical-label code path can sync without consent (ADR-0006, DATA_GOVERNANCE).
 
-> **Hard rule:** never run `vercel --prod` while `apps/web` is the placeholder. Preview
-> deploys of the placeholder are fine and explicitly labeled as such.
+> **Hard rule:** never run a one-shot `vercel --prod`. The multi-GB git-ignored `data/`
+> tree must not upload, so always build locally and deploy the prebuilt artifact:
+> `vercel build --prod && vercel deploy --prebuilt --prod`. `.vercelignore` excludes
+> `data/`, `research/`, and docs (keeping only the small derived model JSONs the prebuild
+> stages into the SPA).
 
-## Preview deploy (placeholder, safe)
+## Preview deploy (safe)
 
 ```bash
-vercel deploy --scope ishaans-projects-f5eaf242     # preview URL of the static placeholder
+vercel build && vercel deploy --prebuilt --scope ishaans-projects-f5eaf242   # preview URL
 ```
 
-## Production deploy (future — only when the real client exists)
+## Production deploy
 
 ```bash
 npm run check                                       # must be green
 # privacy scan must pass (see checklist)
-vercel --prod --scope ishaans-projects-f5eaf242
+vercel build --prod && vercel deploy --prebuilt --prod --scope ishaans-projects-f5eaf242
+firebase deploy --only firestore:rules,firestore:indexes --project humai-core-prod
 ```
 
 ## CI and deploys
 
 CI (`.github/workflows/ci.yml`) builds and tests the **packages**; it does **not**
-deploy. Vercel deploys are triggered from Vercel's GitHub integration (preview on PRs)
-once the project is linked — and remain previews until a real client and an explicit
-production promotion exist.
+deploy. Production deploys are run from the CLI via the prebuilt-artifact path above
+(not a one-shot `vercel --prod`) so the git-ignored `data/` tree is never uploaded.
 
 ## Rollback
 
-Vercel keeps prior deployments; promote a previous deployment from the dashboard or
-`vercel rollback`. Since there is no production deployment yet, there is nothing to roll
-back to in this pass.
+Vercel keeps prior deployments; promote a previous production deployment from the
+dashboard or with `vercel rollback`.

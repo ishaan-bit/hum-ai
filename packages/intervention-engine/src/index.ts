@@ -10,6 +10,7 @@ import {
 // ./intervention-of-day.ts). The V-A mapper below stays as the minimal contract.
 export * from "./states";
 export * from "./templates";
+export * from "./music";
 export * from "./intervention-of-day";
 
 /**

@@ -41,8 +41,11 @@ bursts, raw speech, whistles, and **synthesized noise/silence** (reject), under
 
   → **noise and silence are rejected 100%** ("we don't process noise"); a rejected capture
   returns `action="ask_user_to_hum_again"` and **no affect is computed**.
-- Deployed by `signal_neural/runtime_gate.py` (`assess_capture`, `gated_read`); decision
-  matches the validated weights in `capture_gate.json`. TS contract: `capture-gate.ts`.
+- Reference impl: `signal_neural/runtime_gate.py` (`assess_capture`, `gated_read`) over the
+  CV-validated weights in `capture_gate.json` (the 97.6% figure). The browser/runtime path is
+  `capture-gate.ts` — a pure, browser-safe heuristic logistic over the SAME `AcousticFeatures`,
+  **aligned to (not byte-identical with)** the validated gate; it is now **wired into the web SPA**
+  so a rejected capture shows "hum again" before any affect is computed.
 
 ## ② Hum-ification (datasets → reusable hum signals)
 
@@ -65,10 +68,18 @@ speech). The headline is the **speech→hum gap**, which is the whole point:
 
 **Key finding:** on hum-projected audio the **from-scratch mel-CNN (84.2% arousal) beats the
 pretrained speech model wav2vec2 (74.8%)** — mel spectrograms transfer to hum, phonetic
-embeddings do not. The deployed hum prior is therefore the mel model
-(`checkpoints/model.hum.<target>.pt`, served by `infer.py`), surfaced as an **auxiliary,
-OOD-abstaining, far-domain-penalised** prior — it never steers the affect head, confidence,
-or interventions (ADR-0005 / `axis-prior.ts`).
+embeddings do not.
+
+**Deployment status (honest).** NONE of these hum models passed this run's promotion gate
+(arousal 84.2% < the 85% threshold; valence 81.1%; 6-way 64.7% — all `promoted: false`). The mel
+checkpoint (`checkpoints/model.hum.<target>.pt`, served by `infer.py`) is a **Python-CLI research
+artifact**: it is a torch state-dict with **no browser-servable export** (`export_ts.py` converts
+only feature-space linear/MLP heads, not mel-CNNs). The **deployed web runtime therefore runs the
+classical JSON priors** — `model.arousal_binary.json` (the only one to clear the ~80% experimental
+axis gate, ≈83%) plus the below-gate valence/6-class priors — each surfaced as an **OOD-abstaining,
+far-domain-penalised** prior that never steers the affect head, confidence, or interventions
+(ADR-0005 / `axis-prior.ts`). Porting the mel-CNN to the browser (mel filterbank + conv) is a
+tracked follow-up; the 84.2% is a research result, not a shipped capability.
 
 ## Data reality (honest)
 

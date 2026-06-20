@@ -18,6 +18,7 @@ import {
   type InterventionCategory,
   type InterventionTemplate,
 } from "./templates";
+import { selectMusicForTarget, type MusicRecommendation } from "./music";
 
 /**
  * INTERVENTION OF THE DAY.
@@ -61,6 +62,13 @@ export interface InterventionOfDay {
     readonly reason?: string;
     readonly copy?: string;
   };
+  /**
+   * A concrete music suggestion DERIVED FROM the model's V-A read — present only for a
+   * `music_regulation` step with sufficient confidence (≥ medium evidence; the ~72%
+   * threshold from MUSIC_INTERVENTION_REQUIREMENTS §5). Support only, never treatment;
+   * its strings are safety-screened with the rest of the IoD copy.
+   */
+  readonly musicRecommendation?: MusicRecommendation;
 }
 
 export interface InterventionOfDayInput {
@@ -214,6 +222,10 @@ export function interventionOfDayStrings(iod: InterventionOfDay): string[] {
   if (iod.safetyNote) strings.push(iod.safetyNote);
   if (iod.escalation?.reason) strings.push(iod.escalation.reason);
   if (iod.escalation?.copy) strings.push(iod.escalation.copy);
+  if (iod.musicRecommendation) {
+    const m = iod.musicRecommendation;
+    strings.push(m.copy, m.tempoBand, m.basedOn, ...m.tracks.flatMap((t) => [t.title, t.genre]));
+  }
   return strings;
 }
 
@@ -257,6 +269,19 @@ export function selectInterventionOfDay(input: InterventionOfDayInput): Interven
   const template = selectTemplateForState(state, input.evidence, input.baselineMature, input.rotationSeed ?? 0);
 
   const escalation = buildEscalation(state, input);
+
+  // Music suggestion DERIVED FROM the model's V-A read — only for a music_regulation step
+  // with sufficient confidence (≥ medium evidence ≈ the ~72% spec threshold) and a real
+  // (non-abstained) read. Below the gate the generic template text still shows, but no
+  // specific recommendation is made (MUSIC_INTERVENTION_REQUIREMENTS §5).
+  const music =
+    template.category === "music_regulation" &&
+    template.musicTarget &&
+    !input.view.abstained &&
+    EVIDENCE_RANK[input.evidence] >= EVIDENCE_RANK.medium
+      ? selectMusicForTarget(input.view.dimensional, template.musicTarget)
+      : undefined;
+
   const iod: InterventionOfDay = {
     id: template.id,
     title: template.title,
@@ -269,6 +294,7 @@ export function selectInterventionOfDay(input: InterventionOfDayInput): Interven
     confidenceLanguage: CONFIDENCE_LANGUAGE[input.evidence],
     ...(template.safetyNote ? { safetyNote: template.safetyNote } : {}),
     ...(escalation ? { escalation } : {}),
+    ...(music ? { musicRecommendation: music } : {}),
   };
 
   assertInterventionOfDaySafe(iod);

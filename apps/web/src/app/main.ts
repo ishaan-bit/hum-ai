@@ -32,6 +32,7 @@ import {
   appendHumCloud,
 } from "./store";
 import { signInAnon, getFirebase } from "./firebase";
+import { HUM_AGAIN_MESSAGE, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import {
   renderRead,
   renderInterventionOfDay,
@@ -40,6 +41,7 @@ import {
   renderProvenance,
   renderPersonalization,
   renderHistory,
+  renderCaptureRejected,
   setCaptureStatus,
   setLiveMeter,
   setSyncStatus,
@@ -164,7 +166,7 @@ function updateSyncStatus(): void {
 }
 
 // ── run a hum ───────────────────────────────────────────────────────────────────
-async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise<void> {
+async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise<CaptureGateDecision> {
   const audio = await getAudio();
   const result = await runHumCycle({
     audio,
@@ -174,6 +176,15 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
     prior: session.prior?.prior ?? null,
     axisPriors: session.prior?.axisPriors,
   });
+
+  // STAGE ① — a rejected capture is never read for affect. Show "hum again", surface NO
+  // affect, and persist/learn nothing (the state came back unchanged). ADR-0005.
+  if (!result.accepted) {
+    session.state = result.nextState;
+    session.lastRead = null;
+    renderCaptureRejected(result.captureGate);
+    return result.captureGate;
+  }
 
   session.state = result.nextState;
   session.lastRead = result.read;
@@ -199,14 +210,15 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
     await saveStateCloud(session.uid, session.state);
     await appendHumCloud(session.uid, result.syncPayload);
   }
+  return result.captureGate;
 }
 
 async function runSynth(kind: SynthKind): Promise<void> {
   setBusy(true);
   setCaptureStatus(`Synthesizing a ${kind} hum…`);
   try {
-    await runOne(() => synthesize(kind));
-    setCaptureStatus("Ready for the next hum.");
+    const gate = await runOne(() => synthesize(kind));
+    setCaptureStatus(gate.accepted ? "Ready for the next hum." : HUM_AGAIN_MESSAGE);
   } catch (err) {
     setCaptureStatus(`Error: ${(err as Error).message}`);
   } finally {
@@ -218,14 +230,14 @@ async function runMic(): Promise<void> {
   setBusy(true);
   setCaptureStatus("Recording — hum steadily for 12 seconds…", 0);
   try {
-    await runOne(() =>
+    const gate = await runOne(() =>
       recordHum({
         seconds: 12,
         onProgress: (f) => setCaptureStatus(`Recording — hum steadily… ${Math.round(f * 12)}s / 12s`, f),
         onLevel: (level) => setLiveMeter(level),
       }),
     );
-    setCaptureStatus("Done — read updated above.");
+    setCaptureStatus(gate.accepted ? "Done — read updated above." : HUM_AGAIN_MESSAGE);
   } catch (err) {
     setCaptureStatus(`Mic unavailable (${(err as Error).message}). Try a simulated hum instead.`);
   } finally {

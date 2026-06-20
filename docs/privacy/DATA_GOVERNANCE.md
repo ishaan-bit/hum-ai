@@ -39,6 +39,7 @@ Consent is explicit, scoped, and independently granted. The `CONSENT_SCOPES` are
 | `derived_feature_sync` | Upload derived feature summaries only — no raw audio | Off |
 | `research_audio_upload` | Upload raw audio for research, via the dedicated channel | Off |
 | `clinical_label_capture` | Capture PHQ / GAD / CES-DC labels for research | Off |
+| `clinical_risk_surfacing` | Surface clinical-risk markers + the longitudinal panel (ADR-0006) | Off |
 
 `ConsentState` is `{ grantedScopes: ConsentScope[], updatedAt: IsoTimestamp }`. `hasConsent(state, scope)` is a pure membership check. `defaultConsent(now)` returns `{ grantedScopes: ["local_processing"] }` — a new user is local-only until they opt in. Absence of a scope means *not granted*; there is no implicit escalation between scopes.
 
@@ -57,6 +58,7 @@ Self-report instruments — PHQ-9, GAD-7, and the CES-DC used in adolescent long
 | Rolling baseline / `UserModelProfile` (robust stats, z-deltas) | Yes | Yes (derived only) | `derived_feature_sync` |
 | Relapse verdict / read metadata (timestamps, `ModelVersion`, hum count) | Yes | Yes | `derived_feature_sync` |
 | Clinical labels (PHQ / GAD / CES-DC) | Only if granted | Only if granted | `clinical_label_capture` |
+| Clinical-risk surfacing + longitudinal panel (computed on-device from derived stats; surfaced to user) | Only if granted | n/a (surfaced locally, not a sync category) | `clinical_risk_surfacing` (ADR-0006) |
 | Consent state | Yes | Yes (audit) | — |
 
 **Derived data that may be stored/synced:** feature summaries, quality decisions and capture grades, affect/confidence outputs, baseline statistics, relapse verdicts, and read metadata (hum id, model version, ISO timestamps). **Data that is never stored or synced under the default posture:** raw audio, PCM sample arrays, waveform buffers, microphone streams, or any reconstructable representation of the signal. The substring matcher (Section 3) is deliberately broad so that future fields cannot accidentally smuggle reconstructable audio into a derived payload.

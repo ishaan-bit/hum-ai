@@ -12,7 +12,9 @@
  * numeric per-read confidence in `read.internal` are NEVER rendered.
  */
 import type { OrchestratedRead, AxisResolution } from "@hum-ai/orchestrator";
+import type { MusicRecommendation } from "@hum-ai/intervention-engine";
 import type { ConsentState } from "@hum-ai/shared-types";
+import type { CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import type { LoadedPrior } from "./prior";
 import type { CaptureLevel } from "./capture";
 import { isGranted } from "./consent";
@@ -136,6 +138,33 @@ function axisMeter(label: string, lowPole: string, highPole: string, res: AxisRe
     </div>`;
 }
 
+// ── rejected capture (Stage ① — not a usable hum) ────────────────────────────
+// A non-hum (noise/silence/speech/sigh/whistle/too-quiet) is NEVER given an affect read.
+// We clear every read surface and ask for another hum — no axis meters, no suggestion, no
+// history entry, nothing learned or saved. The raw hum-likeness number is never shown.
+export function renderCaptureRejected(_decision: CaptureGateDecision): void {
+  const card = $("read-card");
+  if (card) {
+    card.innerHTML = `
+      <div class="read-head">
+        <span class="evidence evidence-low">hum again</span>
+      </div>
+      <h2 class="headline">Didn't catch a clear hum</h2>
+      <p class="note">That take didn't sound like a sustained hum — it may have been too quiet, too noisy, speech, or silence. Find a quieter spot and hum one steady note for the full 12 seconds. Nothing was read or saved from this take.</p>
+    `;
+  }
+  const axes = $("axes-card");
+  if (axes) axes.innerHTML = `<p class="muted">No read — we only interpret a clear, sustained hum.</p>`;
+  const intervention = $("intervention-card");
+  if (intervention) intervention.innerHTML = "";
+  const personalization = $("personalization-card");
+  if (personalization) personalization.innerHTML = "";
+  const longitudinal = $("longitudinal-card");
+  if (longitudinal) longitudinal.hidden = true;
+  const provenance = $("provenance");
+  if (provenance) provenance.innerHTML = "";
+}
+
 // ── intervention of the day (richer guided step; strings already safety-screened) ──
 //
 // Renders read.userFacing.interventionOfDay — the @hum-ai/intervention-engine
@@ -157,6 +186,32 @@ const IOD_CATEGORY_LABEL: Record<string, string> = {
   safety_support: "Support",
 };
 
+// Map the qualitative confidence ENUM to friendly prose (never a number/percent, ADR-0008).
+const IOD_CONFIDENCE_LABEL: Record<string, string> = {
+  early_signal: "An early signal — still getting to know your baseline.",
+  low_evidence: "A lighter-confidence read for today.",
+  moderate_evidence: "A moderately confident read today.",
+  stronger_evidence: "A clearer read today.",
+};
+
+// A concrete music suggestion derived from the model's V-A read. The only number shown is
+// the tempo (BPM) — a tempo, never a confidence figure. All strings were safety-screened
+// by the spine before reaching here.
+function musicBlock(m: MusicRecommendation): string {
+  const tracks = m.tracks
+    .map(
+      (t) =>
+        `<li><span class="music-title">${esc(t.title)}</span> <span class="muted small">${esc(t.genre)} · ~${t.bpm} BPM</span></li>`,
+    )
+    .join("");
+  return `
+    <div class="music-rec">
+      <p class="music-copy">${esc(m.copy)}</p>
+      <p class="muted small">Tempo: ${esc(m.tempoBand)} · matched to ${esc(m.basedOn)}.</p>
+      <ul class="music-tracks">${tracks}</ul>
+    </div>`;
+}
+
 export function renderInterventionOfDay(read: OrchestratedRead): void {
   const card = $("intervention-card");
   if (!card) return;
@@ -171,6 +226,7 @@ export function renderInterventionOfDay(read: OrchestratedRead): void {
   const notBasedOn = iod.notBasedOn.length
     ? `<p class="muted small">Not based on: ${esc(iod.notBasedOn.join(", "))}.</p>`
     : "";
+  const music = iod.musicRecommendation ? musicBlock(iod.musicRecommendation) : "";
   const escalationCopy = iod.escalation?.show ? iod.escalation.copy : undefined;
   const escalation = escalationCopy ? `<p class="monitor">${esc(escalationCopy)}</p>` : "";
   const safety = iod.safetyNote ? `<p class="disclaimer">${esc(iod.safetyNote)}</p>` : "";
@@ -182,7 +238,8 @@ export function renderInterventionOfDay(read: OrchestratedRead): void {
     <p class="iod-title"><strong>${esc(iod.title)}</strong></p>
     <p class="iod-instruction">${esc(iod.instruction)}</p>
     <p class="muted iod-why">${esc(iod.whySuggested)}</p>
-    <p class="muted small iod-conf">${esc(iod.confidenceLanguage)}</p>
+    <p class="muted small iod-conf">${esc(IOD_CONFIDENCE_LABEL[iod.confidenceLanguage] ?? iod.confidenceLanguage)}</p>
+    ${music}
     ${basedOn}
     ${notBasedOn}
     ${escalation}
@@ -199,7 +256,17 @@ export function renderPersonalization(read: OrchestratedRead): void {
   let body: string;
   if (p.applied) {
     const closeness = p.selfNormality >= 0.6 ? "close to your usual" : "a little apart from your usual";
-    body = `<p>Re-referenced against <strong>your</strong> baseline — this hum reads as ${esc(closeness)}. Your personal pattern now shapes the read.</p>`;
+    const shift =
+      p.regimeShift === "up"
+        ? `<p class="muted small">Your baseline looks like it's been shifting a little higher lately — the model is re-centering on your new usual.</p>`
+        : p.regimeShift === "down"
+          ? `<p class="muted small">Your baseline looks like it's been shifting a little lower lately — the model is re-centering on your new usual.</p>`
+          : "";
+    const drivers =
+      p.topContributors && p.topContributors.length > 0
+        ? `<p class="muted small">A few of your most distinctive hum features shaped today's comparison.</p>`
+        : "";
+    body = `<p>Re-referenced against <strong>your</strong> baseline — this hum reads as ${esc(closeness)}. Your personal pattern now shapes the read.</p>${shift}${drivers}`;
   } else if (n < 5) {
     body = `<p class="muted">Learning your baseline — <strong>${n}</strong> eligible hum${n === 1 ? "" : "s"} so far. The read works now from population priors; it starts re-referencing against <em>your</em> usual as your pattern forms (around 5 hums).</p>`;
   } else {

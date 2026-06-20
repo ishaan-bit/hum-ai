@@ -21,7 +21,8 @@
       "@hum-ai/orchestrator": ["packages/orchestrator/src/index.ts"],
       "@hum-ai/signal-lab/model": ["packages/signal-lab/src/model.ts"],
       "@hum-ai/signal-lab/expert": ["packages/signal-lab/src/expert.ts"],
-      "@hum-ai/signal-lab/axis-prior": ["packages/signal-lab/src/axis-prior.ts"]
+      "@hum-ai/signal-lab/axis-prior": ["packages/signal-lab/src/axis-prior.ts"],
+      "@hum-ai/signal-lab/capture-gate": ["packages/signal-lab/src/capture-gate.ts"]
     }
   },
   "include": ["src/app/**/*.ts", "src/vite-env.d.ts"],

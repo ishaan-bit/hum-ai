@@ -43,6 +43,9 @@ export default defineConfig({
       { find: "@hum-ai/signal-lab/model", replacement: resolve(repoRoot, "packages/signal-lab/src/model.ts") },
       { find: "@hum-ai/signal-lab/expert", replacement: resolve(repoRoot, "packages/signal-lab/src/expert.ts") },
       { find: "@hum-ai/signal-lab/axis-prior", replacement: resolve(repoRoot, "packages/signal-lab/src/axis-prior.ts") },
+      // Stage ① capture-acceptance gate: a PURE module (imports only the AcousticFeatures
+      // type), so it is browser-safe via the same deep-alias pattern as the prior modules.
+      { find: "@hum-ai/signal-lab/capture-gate", replacement: resolve(repoRoot, "packages/signal-lab/src/capture-gate.ts") },
     ],
   },
   build: {

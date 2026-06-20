@@ -325,6 +325,37 @@ h3 {
   color: #cbd6cf;
 }
 
+/* music recommendation (derived from the V-A read) */
+.music-rec {
+  margin: 0.7rem 0 0.2rem;
+  padding: 0.7rem 0.9rem;
+  background: #14111c;
+  border: 1px solid #322a44;
+  border-radius: 8px;
+}
+.music-copy {
+  margin: 0 0 0.35rem;
+  color: #d3c8e6;
+}
+.music-tracks {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+}
+.music-tracks li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.25rem 0;
+  border-top: 1px solid #221c2e;
+}
+.music-tracks li:first-child {
+  border-top: none;
+}
+.music-title {
+  color: #cbb6e8;
+}
+
 /* bands */
 .bands-card {
   margin-top: 1rem;

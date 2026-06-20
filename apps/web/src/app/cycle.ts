@@ -28,6 +28,7 @@ import {
   type LearnedAffectPrior,
   type AffectAxisPriors,
 } from "@hum-ai/orchestrator";
+import { assessCapture, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import { asIsoTimestamp, type ConsentState, type IsoTimestamp, type ModelVersion } from "@hum-ai/shared-types";
 
 export interface HumCycleInput {
@@ -40,22 +41,44 @@ export interface HumCycleInput {
   readonly axisPriors?: AffectAxisPriors;
 }
 
-export interface HumCycleResult {
-  readonly read: OrchestratedRead;
-  /** The state AFTER learning from this hum — persist this. */
-  readonly nextState: PersonalizationState;
-  /** Derived-only, privacy-guarded summary safe to sync. */
-  readonly syncPayload: HumSyncPayload;
-  readonly now: IsoTimestamp;
-  /** Whether the quality gate counted this hum toward the baseline (advances the ladder). */
-  readonly eligible: boolean;
-}
+export type HumCycleResult =
+  | {
+      /**
+       * Stage ① rejected the capture — it wasn't a usable hum (noise/silence/speech/sigh/
+       * whistle). NO affect was computed, and the baseline/ladder is untouched.
+       */
+      readonly accepted: false;
+      readonly captureGate: CaptureGateDecision;
+      /** State is unchanged — a non-hum never advances the baseline. */
+      readonly nextState: PersonalizationState;
+      readonly now: IsoTimestamp;
+    }
+  | {
+      readonly accepted: true;
+      readonly captureGate: CaptureGateDecision;
+      readonly read: OrchestratedRead;
+      /** The state AFTER learning from this hum — persist this. */
+      readonly nextState: PersonalizationState;
+      /** Derived-only, privacy-guarded summary safe to sync. */
+      readonly syncPayload: HumSyncPayload;
+      readonly now: IsoTimestamp;
+      /** Whether the quality gate counted this hum toward the baseline (advances the ladder). */
+      readonly eligible: boolean;
+    };
 
 export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult> {
   const now = asIsoTimestamp(new Date().toISOString());
 
   // 1. Derive features on-device; the raw audio buffer is not retained past this call.
   const features = computeFeatures(input.audio);
+
+  // 1a. STAGE ① — capture acceptance (ADR-0005). Affect is NEVER read from a capture that
+  //     isn't a usable hum. A rejected capture short-circuits BEFORE any affect inference and
+  //     never advances the baseline/ladder or syncs — the caller shows "hum again".
+  const captureGate = assessCapture(features);
+  if (!captureGate.accepted) {
+    return { accepted: false, captureGate, nextState: input.state, now };
+  }
 
   // 2. Project the persisted baseline into read-time history, then run the full spine.
   const history = humHistoryFromState(input.state, now);
@@ -76,5 +99,5 @@ export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult>
   // 4. Build the derived-only payload (runs the raw-audio + clinical-leak guards).
   const syncPayload = buildHumSyncPayload(read, { capturedAt: now, modelVersion: input.modelVersion });
 
-  return { read, nextState, syncPayload, now, eligible: observation.eligible };
+  return { accepted: true, captureGate, read, nextState, syncPayload, now, eligible: observation.eligible };
 }
