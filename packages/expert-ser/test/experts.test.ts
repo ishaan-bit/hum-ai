@@ -4,6 +4,9 @@ import type { AcousticFeatures } from "@hum-ai/audio-features";
 import {
   defaultAudioExperts,
   HumAcousticExpert,
+  HumEmbeddingExpert,
+  VocalBurstExpressionExpert,
+  SpeechEmotionExpert,
   SpeechClinicalExpert,
 } from "@hum-ai/expert-ser";
 
@@ -57,4 +60,29 @@ test("the hum-acoustic expert tilts toward low-energy/low-mood when energy is lo
   );
   const p = lowEnergy.probabilities;
   assert.ok((p.low_mood ?? 0) + (p.fatigued ?? 0) > (p.positive_activation ?? 0));
+});
+
+test("the previously-neutral experts now express real, non-uniform tilts from the hum", async () => {
+  // A bright, energetic, clear hum vs a quiet, rough one — each expert should MOVE,
+  // not return a flat neutral distribution.
+  const lively = features({ rmsEnergy: 0.12, activeFrameRatio: 0.85, clarityScore: 0.85, spectralCentroidHz: 1600, pitchRangeSemitones: 6, spectralFlux: 0.2 });
+  const flat = features({ rmsEnergy: 0.006, activeFrameRatio: 0.25, clarityScore: 0.25, residualInstabilityScore: 0.6, pitchRangeSemitones: 0.5, breathinessProxy: 0.6, jitter: 0.03 });
+
+  for (const Expert of [HumEmbeddingExpert, VocalBurstExpressionExpert, SpeechEmotionExpert, SpeechClinicalExpert]) {
+    const out = await new Expert().predict(lively, meta);
+    const vals = Object.values(out.probabilities);
+    const total = vals.reduce((a, b) => a + b, 0);
+    assert.ok(Math.abs(total - 1) < 1e-9, `${Expert.name} distribution normalizes`);
+    const uniform = 1 / vals.length;
+    assert.ok(vals.some((v) => Math.abs(v - uniform) > 0.05), `${Expert.name} is not flat-neutral`);
+    assert.ok(out.selfConfidence <= 0.35, `${Expert.name} stays low-confidence (untrained)`);
+  }
+
+  // HumEmbedding: a lively, clear hum leans toward activation, not low mood.
+  const livelyEmb = await new HumEmbeddingExpert().predict(lively, meta);
+  assert.ok((livelyEmb.probabilities.positive_activation ?? 0) > (livelyEmb.probabilities.low_mood ?? 0));
+  // SpeechClinical: a flat, breathy, rough hum leans toward low-mood/fatigue/tension over neutral mass share.
+  const flatClin = await new SpeechClinicalExpert().predict(flat, meta);
+  const risk = (flatClin.probabilities.low_mood ?? 0) + (flatClin.probabilities.fatigued ?? 0) + (flatClin.probabilities.tense_anxious ?? 0);
+  assert.ok(risk > (flatClin.probabilities.neutral_close_to_usual ?? 0), "risk-leaning labels exceed neutral on a flat/rough hum");
 });

@@ -58,7 +58,7 @@ export abstract class StubAudioExpert implements AffectExpert {
       selfConfidence,
       domainMatch: clamp01(this.defaultDomainMatch),
       oodScore,
-      notes: "v1-stub (deterministic, untrained)",
+      notes: "deterministic heuristic expert (untrained; capped low-confidence)",
     };
   }
 }

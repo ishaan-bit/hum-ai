@@ -38,11 +38,13 @@ HiTL corpus *unblocks* — honestly labelled as gated on data we do not have yet
 
 ## 1. Shipped this pass
 
-Six concrete, tested changes — one or more per layer — all green under `npm run check`
-(478 tests), `npm run qa` (4 gates), and `npm run build:web`.
+Concrete, tested changes — one or more per layer — all green under `npm run check`
+(484 tests), `npm run qa` (4 gates), and `npm run build:web`.
 
 | Layer | Change | Files | Why it's better |
 |---|---|---|---|
+| **Pretrained / priors** | **Implemented the trained `LogisticRegressionMetaLearner`** (`combine()` was a throwing stub): a real softmax forward pass over the fixed-layout concatenation of expert probability vectors, plus `fitMetaLearner` (deterministic multinomial-LogReg, inverse-frequency class weights). The deterministic `StubWeightedMetaLearner` stays the live default — the trained model is now a tested drop-in. | `fusion-engine/src/meta-learner.ts`, `fusion-engine/test/meta-learner.test.ts` | The fusion meta-learner is real and trainable instead of throwing; ready to wire on the native corpus. |
+| **Diagnosis / affect** | **Replaced the 4 neutral SER-expert stubs** (`HumEmbedding`, `VocalBurstExpression`, `SpeechEmotion`, `SpeechClinical` all returned `{neutral: 1}`) with **principled deterministic multi-label tilts** from DSP features — each through its own lens (embedding/holistic, expressive-burst, prosodic-speech, clinical-biomarker), finite-guarded, keeping the low `domainMatch` so the ADR-0005 far-domain penalty + 0.35 confidence cap stand. | `expert-ser/src/experts.ts`, `base.ts`, `test/experts.test.ts` | The fused secondary read is carried by 6 real experts instead of 1 + near-uniform noise — the affect-label hint actually reflects the hum. |
 | **Pretrained / priors** | A native, in-domain prior earns a **larger nudge cap** (`NATIVE_AXIS_NUDGE_CAP = 0.75`) than a far-domain one (`0.5`); the read stops leaning on the penalized far-domain prior once the user's own model is promoted. | `orchestrator/src/axis-read.ts`, `native-corpus/src/prior.ts` | The user's on-domain hum model actually *leads* the refinement, instead of being capped like an acted-speech prior. |
 | **Pretrained / priors** | **Prior-disagreement confidence penalty**: an in-domain prior that *agrees* with the acoustic backbone lifts confidence; one that strongly *disagrees* now **lowers** it (conflicting evidence ⇒ a more ambiguous read). | `orchestrator/src/axis-read.ts` | Confidence reflects evidence conflict honestly, not just agreement. |
 | **Diagnosis / affect** | The transparent acoustic→valence/arousal mapping went from **7 features to 13** (arousal adds melodic pitch-range + spectral flux; valence adds musicality + controlled-expression + vibrato-regularity), still fully transparent + deterministic + non-clinical. | `orchestrator/src/axis-read.ts` | A richer, more faithful read of the hum's character — while preserving every invariant (energetic > subdued, bounded, acoustic-only confidence below the High band). |
@@ -65,7 +67,7 @@ Honest tags: **[NEXT]** = pure-TS, schema-stable, no shipped-artifact break (the
 follow-on pass); **[GATED]** = needs data / training / IRB / a schema migration.
 
 ### Layer A — Pretrained models & priors
-- **[NEXT] Implement `LogisticRegressionMetaLearner.combine()`** (it currently throws) — the forward pass over concatenated expert probability vectors, weights fit via `signal-lab` `trainLogReg` on the native corpus (≥30 examples). Files: `fusion-engine/src/meta-learner.ts`, `native-corpus/src/train.ts`.
+- **[DONE] `LogisticRegressionMetaLearner.combine()` implemented** (forward pass) + `fitMetaLearner` (training). `fusion-engine/src/meta-learner.ts`. *Follow-up:* wire it live — map each native-corpus example to `(expert outputs → fusion label)` and fit on ≥30 examples, then promote it over `StubWeightedMetaLearner` when it beats the stub on held-out hums.
 - **[NEXT] Failed-gate 6-class affect prior is aux-only** — ensure the orchestrator treats an affect model with `affectPassedGate:false` as transparency-only (parity with the arousal aux), never a steering signal. Files: `orchestrator/src/orchestrator.ts`, `fusion-engine/src/fuse.ts`.
 - **[NEXT] Mahalanobis OOD** replacing the scalar `meanAbsZ` — precompute covariance in the standardizer; `d = √((x−μ)ᵀΣ⁻¹(x−μ))`, pure TS. Files: `signal-lab/src/axis-prior.ts`, `native-corpus/src/prior.ts`.
 - **[NEXT] Domain-ranked prior stacking** — a proximity×confidence blend across all available priors (backbone anchor 1.0; native 1.0; far-domain 0.45). Files: `orchestrator/src/axis-read.ts`, `shared-types/src/domain.ts`.
@@ -80,7 +82,7 @@ follow-on pass); **[GATED]** = needs data / training / IRB / a schema migration.
 - **[GATED] Stage-3a reliability study** (test-retest ICC, device agreement). Needs real multi-device recordings; gates the confidence caps. Files: `quality-gate/src/thresholds.ts`, `docs/validation/VALIDATION_PLAN.md`.
 
 ### Layer C — Diagnosis / affect read
-- **[NEXT] Replace the 4 neutral-stub SER experts** (`HumEmbeddingExpert`, `VocalBurstExpressionExpert`, `SpeechEmotionExpert`, `SpeechClinicalExpert` all return `{neutral_close_to_usual: 1}`) with principled deterministic multi-label tilts from DSP features, keeping their low `defaultDomainMatch` so the ADR-0005 penalty stands. Files: `expert-ser/src/experts.ts`, `base.ts`.
+- **[DONE] The 4 neutral-stub SER experts now express real deterministic multi-label tilts** from DSP features (`expert-ser/src/experts.ts`), each through its own lens, finite-guarded, low-confidence-capped, far-domain-penalty preserved. *Follow-up:* swap the heuristic tilts for trained SSL embeddings behind the same contract (gated on a browser-servable embedding path).
 - **[NEXT] Per-axis continuous OOD on `AxisResolution`** (expose the distance, not just the binary flag) so the nudge weight fades with distance. Files: `orchestrator/src/axis-read.ts`, `personalization-engine/src/axis-calibration.ts`.
 - **[NEXT] Per-marker confidence on the clinical-risk head** (`confidenceByMarker`) so the relapse engine + consent UI can down-weight noisy markers. Files: `affect-model-contracts/src/two-head.ts`, `orchestrator/src/risk.ts`.
 - **[NEXT] Adversarial axis-read test suite** (whisper, clipped, extreme-pitch, very-faint, vibrato). Files: `orchestrator/test/axis-read.adversarial.test.ts`.

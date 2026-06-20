@@ -120,10 +120,17 @@ expression proxies.
   - *Valence* (pleasant/settled): `0.24·clarity + 0.18·smoothness + 0.18·stability + 0.16·(1−roughness) + 0.12·musicality + 0.08·controlledExpression + 0.04·vibratoRegularity`.
   - Transparent, deterministic, bounded [-1,1]; the same honesty class as `HumAcousticExpert` — a
     reflection of acoustic qualities, never a clinical or ground-truth label.
+- **Six deterministic experts** (`expert-ser`) — each reads the hum through a distinct lens
+  (acoustic, embedding-holistic, singing-phonation, expressive-burst, prosodic-speech,
+  clinical-biomarker) and emits a multi-label tilt; off-domain experts carry a low `domainMatch`
+  (far-domain penalty, ADR-0005) and a hard 0.35 confidence cap (untrained heuristics, never
+  trained-model claims).
 - **Late fusion** — a reliability-weighted meta-learner over per-expert probability vectors
   (`FusionEngine.fuse`), calibrated + capped. The strictest of the stage / capture-quality /
-  domain / far-domain caps wins (`combineCaps`). *(The trained `LogisticRegressionMetaLearner` is
-  the drop-in target once fit on hum data — see REVAMP_PLAN Layer A.)*
+  domain / far-domain caps wins (`combineCaps`). The trained `LogisticRegressionMetaLearner` is
+  **implemented** (softmax forward pass + `fitMetaLearner`) and is a tested drop-in; the
+  deterministic `StubWeightedMetaLearner` stays the live default until the trained model is fit
+  on native-hum data and beats it on held-out hums.
 - **Multi-head contract** (`affect-model-contracts`) — a dimensional core, benign affect-state
   heads, clinical-risk-marker heads (gated), longitudinal heads, meta heads. `splitInference`
   applies the consent gate; `toRecommendationView` + `assertNoClinicalLeak` keep clinical labels
@@ -258,7 +265,9 @@ from source by Vite.
 
 - The downstream affect/clinical-risk apparatus is carried by the **transparent acoustic backbone**
   plus penalized, abstaining priors and the growing hum-native model — **not** by validated clinical
-  models. Several SER experts are still deterministic stubs; the trained meta-learner is not yet fit.
+  models. The SER experts are **deterministic heuristics** (not trained models); the trained
+  `LogisticRegressionMetaLearner` is implemented + trainable but **not yet fit on hum data** or
+  wired live (the deterministic fusion remains the default).
 - **Non-clinical, not validated.** Risk **markers** and reflective signals only, never a diagnosis.
 - **Reference numbers are not Hum metrics.** Architecture-reference accuracies (TriSense MELD) and
   clinical study AUCs are priors, never presented as Hum's accuracy. No fabricated metrics anywhere.
