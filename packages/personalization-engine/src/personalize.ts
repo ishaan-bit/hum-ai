@@ -7,6 +7,8 @@ import {
   type MultiHeadAffectInference,
 } from "@hum-ai/affect-model-contracts";
 import type { StagePolicy } from "./ladder";
+import type { BaselineVector } from "./profile";
+import { personalDeviationV2, SELF_NORMALITY_TAU, type FeatureDeviation } from "./deviation";
 
 /**
  * THE PERSONALIZATION APPLY STEP — "from public priors to personal dominance".
@@ -41,10 +43,10 @@ export const PERSONAL_WEIGHT_BASELINE = 0.3; // 5–9 hums: re-reference against
 export const PERSONAL_WEIGHT_FUSION = 0.55; // 10–19 hums: + personalized fusion / modality reliability
 export const PERSONAL_WEIGHT_RELAPSE = 0.7; // 20+ hums: personal model dominates
 
-/** Robust-σ scale at which a hum is considered "unusual for you" (selfNormality → 0). */
-export const SELF_NORMALITY_TAU = 1.5;
-/** Per-feature baseline coverage at/above which personalization is at full strength. */
+/** Per-feature baseline coverage at/above which v1 personalization is at full strength. */
 export const MIN_SUPPORT_FOR_FULL = 8;
+/** Extra re-reference strength applied (× coverage) just after a detected regime shift. */
+export const REGIME_ADAPTATION_BOOST = 0.12;
 
 /**
  * λ — how strongly personal evidence overrides the population prior, derived from
@@ -97,11 +99,36 @@ export interface PersonalizationApplication {
   readonly support: number;
   readonly stage: string;
   readonly note: string;
+  // --- v2 (present when a personal-model context was supplied) ---
+  /** Aggregate per-feature evidence that gated the re-reference strength, [0,1]. */
+  readonly effectiveEvidence?: UnitInterval;
+  /** Which features drove this hum's deviation from the user's usual (strongest first). */
+  readonly topContributors?: readonly FeatureDeviation[];
+  /** Direction of an active baseline-regime shift, if one was recently detected. */
+  readonly regimeShift?: "up" | "down";
+}
+
+/** v2 personal-model context that upgrades the re-reference from plain z to salience-aware. */
+export interface PersonalizationModelContext {
+  /** Learned per-feature salience (informativeness × independence). */
+  readonly salience?: Record<string, number>;
+  /** Personal baseline (for per-feature evidence / shrinkage). */
+  readonly baseline?: BaselineVector;
+  /** Direction of an active regime shift ("none" ⇒ no boost). */
+  readonly regimeShift?: "none" | "up" | "down";
+  /** Override the post-shift adaptation boost. */
+  readonly adaptationBoost?: number;
 }
 
 export interface ApplyPersonalizationOptions {
   /** Override λ (defaults to `personalizationWeight(policy)`). */
   readonly weight?: UnitInterval;
+  /**
+   * v2 personal-model context. When present, the re-reference uses the
+   * salience/evidence-weighted deviation and regime-aware adaptation; when absent,
+   * behaviour is identical to v1 (plain median-of-|z|).
+   */
+  readonly model?: PersonalizationModelContext;
 }
 
 /** Risk-marker heads are damped exactly like any other non-neutral head — never selectively hidden. */
@@ -124,7 +151,33 @@ export function applyPersonalization(
   opts: ApplyPersonalizationOptions = {},
 ): { inference: MultiHeadAffectInference; application: PersonalizationApplication } {
   const weight = opts.weight ?? personalizationWeight(policy);
-  const dev = personalDeviation(zDeltas);
+  const model = opts.model;
+
+  // v2 (model-aware) deviation when a personal-model context is supplied; else v1.
+  let selfNormality: number;
+  let magnitude: number;
+  let support: number;
+  let coverage: number;
+  let effectiveEvidence: UnitInterval | undefined;
+  let topContributors: readonly FeatureDeviation[] | undefined;
+  if (model) {
+    const dev = personalDeviationV2(zDeltas, { salience: model.salience, baseline: model.baseline });
+    selfNormality = dev.selfNormality;
+    magnitude = dev.magnitude;
+    support = dev.support;
+    coverage = dev.effectiveEvidence; // evidence-driven coverage (supersedes the count ratio)
+    effectiveEvidence = dev.effectiveEvidence;
+    topContributors = dev.topContributors;
+  } else {
+    const dev = personalDeviation(zDeltas);
+    selfNormality = dev.selfNormality;
+    magnitude = dev.magnitude;
+    support = dev.support;
+    // Thin per-feature coverage ⇒ we barely know this user; scale influence down.
+    coverage = clamp01(support / MIN_SUPPORT_FOR_FULL);
+  }
+
+  const regimeShift = model?.regimeShift && model.regimeShift !== "none" ? model.regimeShift : undefined;
 
   const passthrough = (note: string): { inference: MultiHeadAffectInference; application: PersonalizationApplication } => ({
     inference: prior,
@@ -132,21 +185,25 @@ export function applyPersonalization(
       applied: false,
       weight,
       pull: 0,
-      selfNormality: dev.selfNormality,
-      deviationMagnitude: dev.magnitude,
-      support: dev.support,
+      selfNormality,
+      deviationMagnitude: magnitude,
+      support,
       stage: policy.stage,
       note,
+      effectiveEvidence,
+      topContributors,
+      regimeShift,
     },
   });
 
   if (weight <= 0) return passthrough(`stage '${policy.stage}': population prior only — personalization inactive`);
   if (prior.abstained) return passthrough("read abstained — nothing trustworthy to personalize");
-  if (dev.support === 0) return passthrough("no personal baseline coverage for this hum's features yet");
+  if (support === 0) return passthrough("no personal baseline coverage for this hum's features yet");
 
-  // Thin per-feature coverage ⇒ we barely know this user; scale influence down.
-  const coverage = clamp01(dev.support / MIN_SUPPORT_FOR_FULL);
-  const pull = clamp01(weight * coverage * dev.selfNormality);
+  let pull = clamp01(weight * coverage * selfNormality);
+  // Regime-aware: just after a detected baseline shift, re-reference a touch more
+  // firmly toward the (new) personal normal instead of fighting the change.
+  if (regimeShift) pull = clamp01(pull + (model?.adaptationBoost ?? REGIME_ADAPTATION_BOOST) * coverage);
 
   if (pull <= 0) return passthrough("hum departs from your usual — population prior preserved");
 
@@ -160,19 +217,28 @@ export function applyPersonalization(
   //    `calm_regulated`, and damp every other activation toward the user's neutral
   //    by `pull`. Risk markers are damped by the SAME factor as any other head —
   //    personalization re-references, it does not selectively suppress risk.
-  const states = personalizeStates(prior.states, dev.selfNormality, pull);
+  const states = personalizeStates(prior.states, selfNormality, pull);
 
+  const driverNote =
+    topContributors && topContributors.length > 0
+      ? ` [drivers: ${topContributors.map((c) => c.feature).join(", ")}]`
+      : "";
   return {
     inference: { ...prior, dimensional, states },
     application: {
       applied: true,
       weight,
       pull,
-      selfNormality: dev.selfNormality,
-      deviationMagnitude: dev.magnitude,
-      support: dev.support,
+      selfNormality,
+      deviationMagnitude: magnitude,
+      support,
       stage: policy.stage,
-      note: `re-referenced against your baseline (selfNormality ${dev.selfNormality.toFixed(2)}, pull ${pull.toFixed(2)})`,
+      note: `re-referenced against your baseline (selfNormality ${selfNormality.toFixed(2)}, pull ${pull.toFixed(2)}${
+        regimeShift ? `, regime ${regimeShift}` : ""
+      })${driverNote}`,
+      effectiveEvidence,
+      topContributors,
+      regimeShift,
     },
   };
 }

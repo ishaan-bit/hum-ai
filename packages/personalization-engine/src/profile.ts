@@ -12,6 +12,8 @@ import type { DomainClass } from "@hum-ai/shared-types";
 import type { InterventionType } from "@hum-ai/affect-model-contracts";
 import { ROLLING_WINDOW } from "./dual-baseline";
 import { stagePolicy } from "./ladder";
+import { newRegimeState, type RegimeState } from "./changepoint";
+import type { InterventionPolicy } from "./bandit";
 
 /** Per-feature robust baseline: feature name → robust stats over eligible hums. */
 export type BaselineVector = Record<string, RobustStats>;
@@ -48,6 +50,29 @@ export interface UserModelProfile {
   readonly confidence_cap: UnitInterval;
   readonly last_updated_at: IsoTimestamp;
   readonly model_version: ModelVersion;
+
+  // --- v2 adaptive-personalization fields (optional ⇒ back-compatible) ---
+  /**
+   * Learned per-feature SALIENCE (informativeness × independence). Weights the
+   * personal deviation toward the user's reliable, distinctive axes. See `salience.ts`.
+   */
+  readonly salience_vector?: Record<string, number>;
+  /**
+   * Per-intervention BANDIT policy stats (count / mean reward / variance) — the
+   * personalized intervention policy (`bandit.ts`). Supersedes the flat EMA
+   * `intervention_response_vector`, which is kept for compatibility.
+   */
+  readonly intervention_policy?: InterventionPolicy;
+  /**
+   * Online CHANGEPOINT detector state over the user's signed drift (`changepoint.ts`)
+   * — recognizes a genuine shift in "your usual" instead of silently absorbing it.
+   */
+  readonly regime?: RegimeState;
+  /**
+   * Current baseline adaptation rate [0,1]. Rises briefly after a detected regime
+   * shift so the personal model re-centers on the new normal, then relaxes.
+   */
+  readonly adaptation_rate?: UnitInterval;
 }
 
 /**
@@ -100,5 +125,9 @@ export function newUserProfile(
     confidence_cap: policy.confidenceCap,
     last_updated_at: now,
     model_version,
+    salience_vector: {},
+    intervention_policy: {},
+    regime: newRegimeState(),
+    adaptation_rate: 0,
   };
 }

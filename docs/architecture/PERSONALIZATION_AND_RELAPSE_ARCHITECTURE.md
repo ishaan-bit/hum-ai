@@ -177,6 +177,47 @@ state ─humHistoryFromState─► orchestrateHumRead ──► read (re-referen
   └────────── ingestHum ◄── observationFromRead ◄─────┘   (learn from this hum)
 ```
 
+## Adaptive personal affect model (v2)
+
+v1 re-references the read against a flat median-of-|z| deviation under a single
+ladder λ. v2 makes the personal model genuinely individual — it learns *which* axes
+carry this person's signal, how much each is earned, when their normal has changed,
+and what helps them — while keeping every v1 guarantee (honest, non-clinical,
+derived-only, abstention-safe; v2 is a strict superset, and `applyPersonalization`
+falls back to v1 byte-for-byte when no model context is supplied).
+
+- **Per-feature salience (`salience.ts`).** A learned weight per feature =
+  evidence coverage (`n/(n+K)`) × a **redundancy decorrelation** discount
+  (`1/(1+Σ|corr|)`) so a cluster of co-moving features — e.g. the loudness-linked
+  energy features — can't dominate. The read leans on the user's reliable, *independent*
+  axes instead of every DSP feature equally. A cheap, stable stand-in for an
+  inverse-covariance (Mahalanobis) weighting on small, ragged real-user samples.
+- **Empirical-Bayes shrinkage (`shrinkage.ts`).** The prior→personal handoff is
+  per-feature and evidence-driven (`evidenceWeight = n/(n+K)`, James–Stein flavor),
+  not one global λ: a feature seen cleanly ten times earns more personal trust than
+  one seen twice.
+- **Salience/evidence-weighted deviation (`deviation.ts`).** `personalDeviationV2`
+  aggregates **winsorized** z-deltas weighted by salience × evidence → a robust
+  `selfNormality`, and reports the **top contributors** — *which* features drove the
+  departure from the user's usual ("what's different about your hum today"). A
+  deviation only on a low-salience axis correctly reads as still-usual.
+- **Online regime detection (`changepoint.ts`).** A two-sided **Page–Hinkley** test
+  on the per-hum signed drift catches a *sustained* shift in the user's baseline
+  (recovery, a hard stretch, a new normal), reports its direction, and lifts the
+  `adaptation_rate` so the model re-centers on the new normal instead of silently
+  absorbing or fighting it. The read becomes regime-aware (`REGIME_ADAPTATION_BOOST`).
+- **Personalized intervention policy (`bandit.ts`).** A contextual bandit over the
+  user's own intervention outcomes — per-arm reward + uncertainty (Welford), with
+  deterministic **UCB** and optional seeded **Thompson sampling** — balances
+  exploiting what has worked for this person against exploring what is under-tried.
+
+These are learned in `ingestHum` (cached on the profile: `salience_vector`, `regime`,
+`intervention_policy`, `adaptation_rate`) and consumed cheaply at inference; the
+orchestrator passes the salience + rolling baseline + recent regime shift into
+`applyPersonalization` via `HumHistory`. Constants (`K`, `τ`, Page–Hinkley `δ`/`λ`,
+the bandit explore weight) are principled defaults, not yet tuned on native hums —
+revisit under the [VALIDATION_PLAN](../validation/VALIDATION_PLAN.md).
+
 ## The relapse engine
 
 The relapse engine is a **personalized, within-user, paired comparison** — the DVDSA

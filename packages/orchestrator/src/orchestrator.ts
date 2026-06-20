@@ -119,6 +119,10 @@ export interface HumHistory {
   readonly highRiskSignature?: Record<string, number>;
   /** Consecutive drifting hums through the previous read (longitudinal "min consecutive" rule). */
   readonly priorConsecutiveDriftHums?: number;
+  /** Learned per-feature SALIENCE (v2) — weights the personal re-reference toward the user's informative axes. */
+  readonly salience?: Record<string, number>;
+  /** Recently-detected baseline REGIME shift direction (v2), if any — enables regime-aware adaptation. */
+  readonly regimeShift?: "none" | "up" | "down";
 }
 
 /**
@@ -444,6 +448,14 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     axisLedInf,
     personalZDeltas,
     stage,
+    {
+      // v2 personal model: salience-weighted, evidence-gated, regime-aware re-reference.
+      model: {
+        salience: history.salience,
+        baseline: dualBaseline.rolling.vector,
+        regimeShift: history.regimeShift,
+      },
+    },
   );
 
   // 7. Relapse (within-user) + dual-baseline-informed drift, on the PERSONALIZED
@@ -691,7 +703,16 @@ export function humHistoryFromState(state: PersonalizationState, now: IsoTimesta
     recoverySignature: state.profile.recovery_signature_vector,
     highRiskSignature: state.profile.high_risk_signature_vector,
     priorConsecutiveDriftHums: state.consecutiveDriftHums,
+    salience: state.profile.salience_vector,
+    regimeShift: recentRegimeShift(state),
   };
+}
+
+/** A regime shift is "recent" (and so should bias adaptation) for a few hums after it fires. */
+function recentRegimeShift(state: PersonalizationState): "none" | "up" | "down" {
+  const r = state.profile.regime;
+  if (!r || r.lastShift === "none" || r.sinceShift > 3) return "none";
+  return r.lastShift;
 }
 
 /**
