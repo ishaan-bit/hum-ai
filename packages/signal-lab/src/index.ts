@@ -21,6 +21,7 @@ export * from "./expert";
 export * from "./inference";
 export * from "./manifest";
 export * from "./neural-feature-model";
+export * from "./capture-gate";
 export * from "./runtime-bridge";
 export * from "./report";
 export * from "./pipeline";

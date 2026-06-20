@@ -14,6 +14,7 @@ import { deserializeModel, type LogRegParams } from "./model";
 import { LearnedAffectPriorExpert } from "./expert";
 import { predictNeuralFromFeatures, type NeuralFeatureModel } from "./neural-feature-model";
 import { loadNeuralAuxModel, loadPromotionManifest, notEvaluatedPromotion } from "./manifest";
+import { assessCapture, type CaptureGateDecision } from "./capture-gate";
 import type { InferencePromotion } from "./inference";
 
 /**
@@ -190,6 +191,12 @@ export interface LearnedHumReadResult {
   readonly promotion: InferencePromotion;
   /** A promoted coarse NEURAL prior surfaced for transparency; never steers the read. `null` when none. */
   readonly neuralAuxiliary: NeuralAuxiliaryPrior | null;
+  /**
+   * STAGE ① capture-acceptance decision (computed from the same features the spine used).
+   * When `accepted === false`, the caller should show "hum again" and DISREGARD the affect
+   * read — affect must never be surfaced for a capture that isn't a usable hum (ADR-0005).
+   */
+  readonly captureGate: CaptureGateDecision;
 }
 
 /**
@@ -251,5 +258,6 @@ export async function orchestrateHumWithLearnedPrior(
       : "heuristic fallback ensemble (no trained model artifact)",
     promotion,
     neuralAuxiliary,
+    captureGate: assessCapture(read.internal.features),
   };
 }
