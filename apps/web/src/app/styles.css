@@ -489,3 +489,41 @@ footer {
   flex-direction: column;
   gap: 0.2rem;
 }
+
+/* intervention of the day */
+.intervention-card .iod-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.iod-cat {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: #6fcf7c;
+  white-space: nowrap;
+}
+.iod-title {
+  margin: 0.45rem 0 0.2rem;
+  color: #eef1f4;
+  font-size: 1.02rem;
+}
+.iod-instruction {
+  margin: 0.2rem 0 0.45rem;
+  color: #cbd6cf;
+}
+.iod-why {
+  margin: 0.2rem 0;
+}
+.iod-conf {
+  font-style: italic;
+}
+
+/* longitudinal trend headline */
+.trend {
+  color: #cdd3da;
+  margin: 0.2rem 0 0.5rem;
+  font-size: 0.98rem;
+}

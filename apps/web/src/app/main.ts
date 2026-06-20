@@ -34,6 +34,7 @@ import {
 import { signInAnon, getFirebase } from "./firebase";
 import {
   renderRead,
+  renderInterventionOfDay,
   renderLadder,
   renderLongitudinal,
   renderProvenance,
@@ -178,6 +179,7 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
   session.lastRead = result.read;
 
   renderRead(result.read);
+  renderInterventionOfDay(result.read);
   renderPersonalization(result.read);
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
   renderLongitudinal(result.read, session.consent);
@@ -248,6 +250,33 @@ async function runWeek(): Promise<void> {
   }
 }
 
+// Demo seeder: cross the ~20-eligible-hum threshold in one click so an evaluator can SEE
+// the longitudinal/diagnostic layer ENGAGE (the enriched trend + provenance panel), instead
+// of the cold-start "collecting history" message. Honest: it runs clean synthetic hums through
+// the SAME runOne cycle and enables the consent toggle for the demo — it does not fabricate a
+// clinical drift/monitoring signal (that needs genuinely worsening input, not synthesized here).
+// Gated behind ?demo so first-time real visitors still get the honest cold start.
+async function runDemoSeed(): Promise<void> {
+  setBusy(true);
+  if (!isGranted(session.consent, "clinical_risk_surfacing")) {
+    await onConsentChange("clinical_risk_surfacing", true);
+    reflectConsentInputs();
+  }
+  try {
+    const total = 22;
+    for (let i = 0; i < total; i += 1) {
+      setCaptureStatus(`Seeding longitudinal demo… ${i + 1} / ${total} daily hums`);
+      await runOne(() => synthesize("clean"));
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    setCaptureStatus("Seeded ~22 hums — the longitudinal model is now active above (demo data).");
+  } catch (err) {
+    setCaptureStatus(`Error: ${(err as Error).message}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
 // ── wire DOM ─────────────────────────────────────────────────────────────────
 function wireControls(): void {
   document.getElementById("btn-record")?.addEventListener("click", () => void runMic());
@@ -255,6 +284,12 @@ function wireControls(): void {
   document.getElementById("btn-noisy")?.addEventListener("click", () => void runSynth("noisy"));
   document.getElementById("btn-silence")?.addEventListener("click", () => void runSynth("silence"));
   document.getElementById("btn-week")?.addEventListener("click", () => void runWeek());
+
+  // ?demo reveals the longitudinal seeder (kept off the default first-visit surface).
+  if (new URLSearchParams(location.search).has("demo")) {
+    document.getElementById("btn-demo-seed")?.removeAttribute("hidden");
+    document.getElementById("btn-demo-seed")?.addEventListener("click", () => void runDemoSeed());
+  }
 
   document
     .getElementById("consent-sync")

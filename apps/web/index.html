@@ -57,6 +57,7 @@
           <button id="btn-noisy" data-capture class="btn">Simulate noisy</button>
           <button id="btn-silence" data-capture class="btn">Simulate silence</button>
           <button id="btn-week" data-capture class="btn btn-ghost">Simulate a week (×7)</button>
+          <button id="btn-demo-seed" data-capture class="btn btn-ghost" hidden>Seed longitudinal demo (×22)</button>
           <button id="btn-reset" class="btn btn-ghost">Reset baseline</button>
         </div>
         <div id="live-meter" class="live-meter" hidden>
@@ -74,6 +75,14 @@
           <p class="muted">Record or simulate a hum to see your reflective read.</p>
         </div>
         <div id="axes-card" class="bands-card"></div>
+      </section>
+
+      <!-- intervention of the day -->
+      <section class="card">
+        <div id="intervention-card" class="intervention-card">
+          <h3>Today's suggestion</h3>
+          <p class="muted">A gentle, optional next step will appear here with your read.</p>
+        </div>
       </section>
 
       <!-- personalization status -->

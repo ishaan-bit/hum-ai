@@ -136,6 +136,60 @@ function axisMeter(label: string, lowPole: string, highPole: string, res: AxisRe
     </div>`;
 }
 
+// ── intervention of the day (richer guided step; strings already safety-screened) ──
+//
+// Renders read.userFacing.interventionOfDay — the @hum-ai/intervention-engine
+// "intervention of the day" (curated template, qualitative confidence language, gated
+// escalation). Every string was screened by the spine (interventionOfDayStrings →
+// assertSafeUserFacingText + isConfidenceCopySafe), so we surface it verbatim; the only
+// number shown is the duration in minutes (a session length, never a confidence value).
+const IOD_CATEGORY_LABEL: Record<string, string> = {
+  breath_regulation: "Breath",
+  grounding: "Grounding",
+  music_regulation: "Music",
+  movement_reset: "Movement",
+  rest_recovery: "Rest",
+  journaling: "Journaling",
+  social_check_in: "Connection",
+  reduce_load: "Ease the load",
+  repeat_capture: "Try again",
+  no_action_needed: "All good",
+  safety_support: "Support",
+};
+
+export function renderInterventionOfDay(read: OrchestratedRead): void {
+  const card = $("intervention-card");
+  if (!card) return;
+  const iod = read.userFacing.interventionOfDay;
+  const cat = IOD_CATEGORY_LABEL[iod.category] ?? iod.category.replace(/_/g, " ");
+  const duration = iod.durationMinutes > 0 ? ` · ${iod.durationMinutes} min` : "";
+  const basedOn = iod.basedOnSignals.length
+    ? `<div class="chips"><span class="muted small">Based on:</span> ${iod.basedOnSignals
+        .map((s) => `<span class="chip">${esc(s)}</span>`)
+        .join("")}</div>`
+    : "";
+  const notBasedOn = iod.notBasedOn.length
+    ? `<p class="muted small">Not based on: ${esc(iod.notBasedOn.join(", "))}.</p>`
+    : "";
+  const escalationCopy = iod.escalation?.show ? iod.escalation.copy : undefined;
+  const escalation = escalationCopy ? `<p class="monitor">${esc(escalationCopy)}</p>` : "";
+  const safety = iod.safetyNote ? `<p class="disclaimer">${esc(iod.safetyNote)}</p>` : "";
+  card.innerHTML = `
+    <div class="iod-head">
+      <h3>Today's suggestion</h3>
+      <span class="iod-cat">${esc(cat)}${esc(duration)}</span>
+    </div>
+    <p class="iod-title"><strong>${esc(iod.title)}</strong></p>
+    <p class="iod-instruction">${esc(iod.instruction)}</p>
+    <p class="muted iod-why">${esc(iod.whySuggested)}</p>
+    <p class="muted small iod-conf">${esc(iod.confidenceLanguage)}</p>
+    ${basedOn}
+    ${notBasedOn}
+    ${escalation}
+    ${safety}
+  `;
+}
+
 // ── personalization status (honest engaging-state, from hum #1) ────────────────
 export function renderPersonalization(read: OrchestratedRead): void {
   const card = $("personalization-card");
@@ -178,7 +232,19 @@ export function renderLadder(stage: string, n: number): void {
   `;
 }
 
-// ── consent-gated longitudinal panel (booleans only; non-diagnostic) ──────────
+// ── consent-gated longitudinal panel (qualitative direction + provenance; non-diagnostic) ──
+//
+// Surfaces the within-you longitudinal SHAPE — trend direction, recovery vs sustained
+// drift, gentle routing, and which of YOUR signals informed it — as words only. It never
+// renders riskHypothesis.confidence, driftMagnitude, or any number/percent (the 88% clinical
+// cap is a no-numbers-in-copy rule here), never a clinical label, and stays consent-gated.
+const TREND_COPY: Record<"improving" | "worsening" | "stable" | "uncertain", string> = {
+  improving: "Your recent pattern looks like it's gently easing toward steadier.",
+  worsening: "Your recent pattern looks a little more unsettled than your usual.",
+  stable: "Your recent pattern looks steady.",
+  uncertain: "Your recent pattern isn't clear enough to call yet.",
+};
+
 export function renderLongitudinal(read: OrchestratedRead, consent: ConsentState): void {
   const card = $("longitudinal-card");
   if (!card) return;
@@ -189,18 +255,65 @@ export function renderLongitudinal(read: OrchestratedRead, consent: ConsentState
   card.hidden = false;
   const lg = read.internal.longitudinal;
   const n = read.internal.eligibleHumCount;
-  const active = read.internal.stage === "relapse_model";
-  let body: string;
-  if (active && !lg.abstained) {
-    body = lg.monitoringFlag
-      ? `<p class="monitor">A gentle check-in is suggested based on your recent pattern. This is reflective support, not a medical assessment.</p>`
-      : `<p class="muted">Nothing notable stands out in your longitudinal pattern right now.</p>`;
-  } else {
-    body = `<p class="muted">Collecting longitudinal history — <strong>${n}</strong> eligible hum${n === 1 ? "" : "s"}. Trend monitoring engages once there's enough of your own history (around 20 daily hums). The per-hum read above is unaffected.</p>`;
+
+  // Before a personal baseline (~5 hums) there is no within-you longitudinal judgement.
+  if (lg.abstained) {
+    card.innerHTML = `
+      <h3>Longitudinal view <span class="badge-mini">consented · non-diagnostic</span></h3>
+      <p class="muted">Collecting your longitudinal history — <strong>${n}</strong> eligible hum${n === 1 ? "" : "s"}. A trend read starts once your own baseline forms (around 5 hums); sustained-pattern monitoring sharpens around 20. The per-hum read above is unaffected.</p>
+      <p class="disclaimer">Research-stage and non-clinical. Hum AI does not diagnose, and this view is not a medical evaluation.</p>
+    `;
+    return;
   }
+
+  const parts: string[] = [`<p class="trend">${esc(TREND_COPY[lg.trendDirection] ?? TREND_COPY.uncertain)}</p>`];
+
+  if (lg.recovery) {
+    parts.push(
+      lg.recovery.trajectoryDirection === "exceeding_prior_stable"
+        ? `<p class="muted">You're tracking a little above your usual steadier baseline — a positive sign.</p>`
+        : `<p class="muted">You're settling back toward your steadier pattern.</p>`,
+    );
+  }
+
+  if (lg.relapseDrift) {
+    parts.push(
+      lg.relapseDrift.driftDirection === "diverging_from_stable"
+        ? `<p class="monitor">This stretch is drifting from your steadier pattern across several recent hums.</p>`
+        : `<p class="monitor">This stretch looks more unsettled than your steadier pattern across several recent hums.</p>`,
+    );
+    parts.push(
+      lg.relapseDrift.userAction === "check_in_prompt"
+        ? `<p class="monitor">A gentle check-in might help right now. This is reflective support, not a medical assessment.</p>`
+        : `<p class="muted">We'll keep gently noticing this — nothing to act on right now.</p>`,
+    );
+  } else if (read.internal.stage !== "relapse_model") {
+    parts.push(
+      `<p class="muted small">Sustained-pattern monitoring engages once there's enough of your history (around 20 daily hums); the trend above already reflects your baseline so far.</p>`,
+    );
+  } else {
+    parts.push(`<p class="muted">Nothing notable stands out in your longitudinal pattern right now.</p>`);
+  }
+
+  // Provenance chips: which of YOUR signals materially informed this view (explainability,
+  // not a verdict). Direct field access — no clinical id, no number.
+  const sources: ReadonlyArray<readonly [boolean, string]> = [
+    [lg.evidenceSources.personalBaseline, "your personal baseline"],
+    [lg.evidenceSources.longitudinalTrend, "your longitudinal trend"],
+    [lg.evidenceSources.relapseModel, "your own longitudinal model"],
+    [lg.evidenceSources.recoverySignature, "your recovery signature"],
+    [lg.evidenceSources.highRiskSignature, "your learned pattern"],
+  ];
+  const chips = sources
+    .filter(([on]) => on)
+    .map(([, label]) => `<span class="chip">${esc(label)}</span>`)
+    .join("");
+  const provenance = chips ? `<div class="chips"><span class="muted small">Based on:</span> ${chips}</div>` : "";
+
   card.innerHTML = `
     <h3>Longitudinal view <span class="badge-mini">consented · non-diagnostic</span></h3>
-    ${body}
+    ${parts.join("")}
+    ${provenance}
     <p class="disclaimer">Research-stage and non-clinical. Hum AI does not diagnose, and this view is not a medical evaluation.</p>
   `;
 }
