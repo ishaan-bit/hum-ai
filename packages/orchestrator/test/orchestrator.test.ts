@@ -65,7 +65,7 @@ const postBaselineHistory: HumHistory = {
 // ---------------------------------------------------------------------------
 
 const TOP_KEYS = ["userFacing", "recommendationView", "internal"].sort();
-const USER_FACING_KEYS = ["abstained", "isEarlyBaseline", "confidence", "headline", "note", "suggestion"].sort();
+const USER_FACING_KEYS = ["abstained", "isEarlyBaseline", "confidence", "headline", "note", "suggestion", "interventionOfDay"].sort();
 
 test("orchestrator produces a stable output shape for first / early / post baseline", async () => {
   const reads = await Promise.all([

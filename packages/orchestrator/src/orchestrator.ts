@@ -42,8 +42,8 @@ import type {
   RelapseSample,
   RelapseVerdict,
 } from "@hum-ai/relapse-engine";
-import { selectInterventionFromView } from "@hum-ai/intervention-engine";
-import type { InterventionContext } from "@hum-ai/intervention-engine";
+import { selectInterventionFromView, selectInterventionOfDay, interventionOfDayStrings } from "@hum-ai/intervention-engine";
+import type { InterventionContext, InterventionOfDay } from "@hum-ai/intervention-engine";
 import {
   assertNoClinicalLeak,
   splitInference,
@@ -61,6 +61,7 @@ import {
   assertSafeUserFacingText,
   isConfidenceCopySafe,
   userFacingConfidence,
+  EARLY_BASELINE_HUMS,
 } from "@hum-ai/safety-language";
 import type { UserFacingConfidence } from "@hum-ai/safety-language";
 import { clinicalRiskScore } from "./risk";
@@ -238,6 +239,14 @@ export interface UserFacingRead {
   readonly headline: string;
   readonly note: string;
   readonly suggestion: { readonly type: InterventionType; readonly copy: string } | null;
+  /**
+   * Today's regulation-support step (Intervention of the Day). Always present — even
+   * an abstaining/poor-capture read yields a useful "try another hum" step. Built
+   * from the sanitized view + qualitative confidence + abstracted trend only, and
+   * screened with the rest of the user-facing copy. Carries no clinical label and
+   * no raw confidence number.
+   */
+  readonly interventionOfDay: InterventionOfDay;
 }
 
 /** Internal, NEVER-rendered detail (logging, eval, consent-gated risk surfacing). */
@@ -336,6 +345,7 @@ function userFacingStrings(read: UserFacingRead): string[] {
     read.confidence.summary,
   ];
   if (read.suggestion) strings.push(read.suggestion.copy);
+  strings.push(...interventionOfDayStrings(read.interventionOfDay));
   return strings;
 }
 
@@ -523,6 +533,25 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     eligibleHumCount,
   );
   const affectHint = inference.abstained ? null : dominantBroadState(twoHead.broad.states);
+
+  // Intervention of the Day — built from the SAME sanitized view + qualitative
+  // confidence + abstracted trend the rest of the safe layer uses. No clinical
+  // label, no raw confidence number; self-screened, then screened again below.
+  const daySeed = Number(now.slice(5, 7)) * 31 + Number(now.slice(8, 10));
+  const interventionOfDay: InterventionOfDay = selectInterventionOfDay({
+    view: recommendationView,
+    captureUsable: quality.decision !== "rejected",
+    evidence: confidence.evidenceLevel,
+    baselineMature: eligibleHumCount >= EARLY_BASELINE_HUMS,
+    longitudinal: relapse
+      ? {
+          drifting: relapseDrift >= 0.5 || interventionCtx.persistentRiskPattern === true,
+          persistent: interventionCtx.persistentRiskPattern === true,
+        }
+      : undefined,
+    safetyAllowsEscalation: interventionCtx.safetyAllowsEscalation,
+    rotationSeed: Number.isFinite(daySeed) ? daySeed : 0,
+  });
   const userFacing: UserFacingRead = {
     abstained: inference.abstained,
     isEarlyBaseline: confidence.isEarlyBaseline,
@@ -537,6 +566,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     suggestion: inference.abstained
       ? null
       : { type: suggestion.type, copy: INTERVENTION_COPY[suggestion.type] },
+    interventionOfDay,
   };
 
   // Lexical screen (no diagnosis/clinical-certainty phrasing; no raw % confidence).

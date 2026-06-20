@@ -6,6 +6,12 @@ import {
   type RecommendationView,
 } from "@hum-ai/affect-model-contracts";
 
+// Intervention of the Day — the richer daily regulation-support layer (see
+// ./intervention-of-day.ts). The V-A mapper below stays as the minimal contract.
+export * from "./states";
+export * from "./templates";
+export * from "./intervention-of-day";
+
 /**
  * Intervention engine (intentionally minimal this pass — contracts + a V-A
  * mapper, not a learned policy). Interventions are SUPPORT, never treatment.

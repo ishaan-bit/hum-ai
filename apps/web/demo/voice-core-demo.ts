@@ -43,6 +43,12 @@ function printRead(label: string, read: OrchestratedRead): void {
   console.log(`    ${uf.note}`);
   console.log(`    ${uf.confidence.summary}`);
   console.log(`    suggestion: ${uf.suggestion ? uf.suggestion.copy : "(none)"}`);
+  const iod = uf.interventionOfDay;
+  console.log(`  INTERVENTION OF THE DAY (safe to show):`);
+  console.log(`    [${iod.category} · ${iod.durationMinutes} min · ${iod.confidenceLanguage}] ${iod.title}`);
+  console.log(`    ${iod.instruction}`);
+  console.log(`    why: ${iod.whySuggested}`);
+  if (iod.escalation?.show && iod.escalation.copy) console.log(`    support: ${iod.escalation.copy}`);
   console.log(`  INTERNAL (never shown to a user):`);
   console.log(
     `    quality=${read.internal.quality.decision}/${read.internal.quality.captureQuality}` +
