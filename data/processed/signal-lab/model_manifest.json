@@ -1,0 +1,71 @@
+{
+  "version": "signal-lab-model-manifest/0.1.0",
+  "generatedBy": "@hum-ai/signal-lab runExperiment",
+  "gate": {
+    "status": "EXPERIMENTAL",
+    "metric": "balanced_accuracy",
+    "threshold": 0.8,
+    "eceCap": 0.15,
+    "maxPValue": 0.01,
+    "validation": "speaker/actor-grouped 5-fold CV + label-permutation significance + top-class ECE",
+    "rationale": "The repo defines no numeric promotion bar; balanced accuracy is chosen (over raw accuracy) so a skewed class prior cannot inflate the score — consistent with evaluate.ts reporting majority-class accuracy as chance."
+  },
+  "datasets": {
+    "supervised": [
+      "ravdess"
+    ],
+    "domainOod": [
+      "ravdess",
+      "vocalset",
+      "vocalsound"
+    ]
+  },
+  "priorAffectModel": {
+    "name": "signal-lab-logreg",
+    "version": "signal-lab-logreg/0.1.0",
+    "target": "affect_fusion_label",
+    "balancedAccuracy": 0.4791666666666666,
+    "passedGate": false,
+    "role": "population_prior — KEPT (far-domain acted speech, penalty 0.45; did not reach the 80% gate; never hum truth / clinical, ADR-0005)"
+  },
+  "targets": [
+    {
+      "id": "affect_fusion_label",
+      "bestModel": "random_forest_15",
+      "balancedAccuracy": 0.4791666666666666,
+      "ece": 0.07261866601736536,
+      "pValue": 0.006622516556291391,
+      "tier": "supported",
+      "passedGate": false,
+      "artifact": null
+    },
+    {
+      "id": "arousal_binary",
+      "bestModel": "logreg",
+      "balancedAccuracy": 0.830895390070922,
+      "ece": 0.03187832736153307,
+      "pValue": 0.006622516556291391,
+      "tier": "supported",
+      "passedGate": true,
+      "artifact": "model.arousal_binary.json"
+    },
+    {
+      "id": "valence_binary",
+      "bestModel": "random_forest_15",
+      "balancedAccuracy": 0.6941489361702128,
+      "ece": 0.03205651774366148,
+      "pValue": 0.006622516556291391,
+      "tier": "supported",
+      "passedGate": false,
+      "artifact": null
+    }
+  ],
+  "promoted": {
+    "targetId": "arousal_binary",
+    "model": "logreg",
+    "balancedAccuracy": 0.830895390070922,
+    "artifact": "model.arousal_binary.json",
+    "note": "EXPERIMENTAL far-domain PRIOR that cleared the 80% gate. It is NOT wired to change the runtime affect/intervention read: it is acted-speech (penalty 0.45), a coarse axis, and not hum truth. Surfaced as an auxiliary, gate-passed prior only."
+  },
+  "inferenceImpact": "Target 'arousal_binary' cleared the experimental gate as a far-domain prior; the 6-class affect head + interventions are UNCHANGED (the 6-class prior did not pass). Inference reports gate status honestly."
+}
