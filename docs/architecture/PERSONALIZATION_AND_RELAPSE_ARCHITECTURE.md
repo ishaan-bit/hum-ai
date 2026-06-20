@@ -210,13 +210,26 @@ falls back to v1 byte-for-byte when no model context is supplied).
   user's own intervention outcomes — per-arm reward + uncertainty (Welford), with
   deterministic **UCB** and optional seeded **Thompson sampling** — balances
   exploiting what has worked for this person against exploring what is under-tried.
+  It is **wired into selection**: `selectInterventionFromView` stays the single
+  safety authority (it owns the V-A region and the gated `escalation` / `none` /
+  abstain decisions), and the bandit chooses only among that region's safe
+  `supportiveCandidates` — and only once the user is established
+  (`personalizedFusionActive`) and has real intervention history. The safety gates
+  are never overridden.
+- **Circadian context (`context.ts`).** Per-time-of-day feature centers
+  (`contextual_centers`, EMA per bucket) let the read be re-referenced against
+  "your usual *at this time of day*" once a bucket is well-sampled
+  (`contextAdjustedBaseline`); it falls back to the global baseline otherwise. Only
+  centers are kept (spread is borrowed), so the synced footprint stays small.
 
 These are learned in `ingestHum` (cached on the profile: `salience_vector`, `regime`,
-`intervention_policy`, `adaptation_rate`) and consumed cheaply at inference; the
-orchestrator passes the salience + rolling baseline + recent regime shift into
-`applyPersonalization` via `HumHistory`. Constants (`K`, `τ`, Page–Hinkley `δ`/`λ`,
-the bandit explore weight) are principled defaults, not yet tuned on native hums —
-revisit under the [VALIDATION_PLAN](../validation/VALIDATION_PLAN.md).
+`intervention_policy`, `adaptation_rate`, `contextual_centers`) and consumed cheaply at
+inference; the orchestrator passes salience + the (circadian-adjusted) rolling baseline +
+recent regime shift + the intervention policy into the read via `HumHistory`. Constants
+(`K`, `τ`, Page–Hinkley `δ`/`λ`, the bandit explore weight, circadian `minN`) are
+principled defaults, not yet tuned on native hums — revisit under the
+[VALIDATION_PLAN](../validation/VALIDATION_PLAN.md). Recency-/quality-weighted baseline
+construction remains the one designed-in extension still deferred.
 
 ## The relapse engine
 
