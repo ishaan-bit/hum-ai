@@ -34,12 +34,32 @@ import type { AffectStateHead, MultiHeadAffectInference } from "@hum-ai/affect-m
  * [0, max severity] and CAN cross the high-risk band when a hum is dominated by a
  * high-severity state — restoring the high-risk pathway. The severities are
  * PRINCIPLED DEFAULTS, ordered by clinical salience; they are NOT calibrated on
- * outcome data, and `anger_frustration` is intentionally left unscored in v1
- * (an open taxonomy question deferred to the roadmap, matching the prior behaviour).
+ * outcome data (Tier B).
+ *
+ * ── STATE vs TRAIT, GENERAL across every risk state (not anger-specific) ──
+ * A single elevated hum — of ANY of these states — is a momentary STATE, not a
+ * clinical finding. So this score is deliberately a per-hum SIGNAL; the clinical
+ * weight lives in the LONGITUDINAL layer, and the "is it clinical?" decision is made
+ * DOWNSTREAM and identically for every state:
+ *   - a SUSTAINED pattern (>= MIN_CONSECUTIVE_DRIFT_HUMS, relapse-engine longitudinal)
+ *     raises the monitoring flag / relapse-drift signal, and
+ *   - intervention-of-day escalates to clinical-support routing ONLY when that
+ *     longitudinal pattern is `persistent` (intervention-engine `buildEscalation`),
+ *     targeting whichever state recurred.
+ * So a one-off elevated hum (low-mood, anxious, frustrated, or fatigued) is treated as
+ * a transient and never escalates; the SAME state recurring against a sustained trend
+ * is then targeted as clinical. This module's only job is to make every risk-bearing
+ * state v1 fusion emits TRACKABLE so the longitudinal layer can apply that rule to it.
+ * `anger_frustration` is included for exactly this reason (previously it scored 0 and
+ * was invisible, so sustained frustration could never be detected at all).
  */
 const RISK_SEVERITY: Partial<Record<AffectStateHead, number>> = {
+  // HIGH — a low-mood / anxious hum is the most clinically salient single-hum signal.
   sadness_low_mood: 0.85,
   anxiety_like_tension: 0.8,
+  // MODERATE — a one-off stays below the 0.6 high-risk band (a transient); tracked so a
+  // SUSTAINED pattern is detectable longitudinally and then escalated as clinical.
+  anger_frustration: 0.55,
   fatigue_low_recovery: 0.55,
 };
 

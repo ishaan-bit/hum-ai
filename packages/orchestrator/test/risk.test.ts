@@ -54,3 +54,19 @@ test("only the heads v1 fusion can emit are scored — no dead weight, no NaN", 
   // A hum whose mass is ONLY on a non-emitted head reads as no risk.
   assert.equal(clinicalRiskScore(inferWith({ stress_overload: 1 })), 0);
 });
+
+test("STATE vs TRAIT: every risk-bearing state is tracked; one-off moderate states stay in the watch band", () => {
+  // Every risk state v1 fusion can emit must be trackable (> 0), so the longitudinal
+  // layer can apply the sustained-vs-one-off rule to ALL of them — not just anger.
+  for (const head of ["sadness_low_mood", "anxiety_like_tension", "anger_frustration", "fatigue_low_recovery"] as const) {
+    assert.ok(clinicalRiskScore(inferWith({ [head]: 1 })) > 0, `${head} must be tracked (> 0)`);
+  }
+  // A SINGLE frustrated / fatigued hum is a transient: elevated above the recovery zone
+  // but below the 0.6 high-risk band — so a one-off never reads as clinical on its own.
+  // (Clinical escalation requires a SUSTAINED pattern; enforced downstream by the relapse
+  // longitudinal min-consecutive rule + intervention-of-day persistent-gated escalation.)
+  const anger = clinicalRiskScore(inferWith({ anger_frustration: 1 }));
+  const fatigue = clinicalRiskScore(inferWith({ fatigue_low_recovery: 1 }));
+  assert.ok(anger > RECOVERY_MAX && anger < HIGH_RISK_BAND, `one-off frustration is a tracked transient, got ${anger}`);
+  assert.ok(fatigue > RECOVERY_MAX && fatigue < HIGH_RISK_BAND, `one-off fatigue is a tracked transient, got ${fatigue}`);
+});
