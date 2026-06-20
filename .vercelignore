@@ -1,0 +1,33 @@
+# =============================================================================
+# .vercelignore — keep the Vercel upload small and the build deterministic.
+# The web client (apps/web) is built from packages/* + apps/web only. Everything
+# below is multi-GB local research data, caches, or docs that must NOT be
+# uploaded (the CLI otherwise tried to upload the whole data/ tree and hit the
+# 100 MB per-file limit).
+# =============================================================================
+
+# --- Datasets / raw audio / embedding caches / neural artifacts (multi-GB) ---
+# Keep ONLY the 4 small derived model JSONs that the prebuild stages into the
+# SPA, so a remote build still serves the real trained prior.
+data/*
+!data/processed
+data/processed/*
+!data/processed/signal-lab
+data/processed/signal-lab/*
+!data/processed/signal-lab/*.json
+
+# --- Offline research harness (PyTorch training; not part of the web build) ---
+research/
+
+# --- Docs, worklogs, parallel review/research scratch ---
+docs/
+worklog/
+parallel-agent-review/
+parallel-research-pass/
+.extract/
+.pytest_cache/
+
+# --- Logs and local scratch probes ---
+*.log
+_*.py
+_*.txt
