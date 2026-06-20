@@ -583,3 +583,71 @@ footer {
   margin: 0.2rem 0 0.5rem;
   font-size: 0.98rem;
 }
+
+/* ── HiTL feedback prompt ─────────────────────────────────────────────────── */
+.feedback-card {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #243245;
+  border-radius: 9px;
+  background: #14181f;
+}
+.feedback-card h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.92rem;
+  color: #d6dae0;
+}
+.feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0.2rem;
+}
+.btn-sm {
+  font-size: 0.84rem;
+  padding: 0.4rem 0.75rem;
+}
+.feedback-adjust {
+  margin-top: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.fb-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.88rem;
+  color: #c7cad1;
+}
+.fb-slider input[type="range"] {
+  width: 100%;
+  accent-color: #7eb8f7;
+}
+.fb-thanks {
+  margin: 0;
+  color: #8fd6a4;
+  font-size: 0.9rem;
+}
+
+/* ── "Your hum model" lab ─────────────────────────────────────────────────── */
+.model-lab .model-status-list,
+.model-lab .model-trend {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: #c7cad1;
+}
+.model-lab .model-hint {
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-left: 3px solid #2f568a;
+  background: #131a24;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.88rem;
+  color: #b9c2cd;
+}

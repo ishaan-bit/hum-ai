@@ -11,10 +11,22 @@
  * a non-diagnostic disclaimer. The raw risk hypothesis, relapse-drift details, and any
  * numeric per-read confidence in `read.internal` are NEVER rendered.
  */
-import type { OrchestratedRead, AxisResolution } from "@hum-ai/orchestrator";
+import type { OrchestratedRead, AxisResolution, FeedbackRequest } from "@hum-ai/orchestrator";
+import type { HumSelfReport } from "@hum-ai/affect-model-contracts";
 import type { MusicRecommendation } from "@hum-ai/intervention-engine";
+import { EVIDENCE_BANDS } from "@hum-ai/safety-language";
 import type { ConsentState } from "@hum-ai/shared-types";
 import type { CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
+import {
+  corpusStats,
+  corpusCalibration,
+  calibrationTrend,
+  corpusReadiness,
+  nextCollectionHint,
+  type NativeCorpus,
+  type HumNativeArtifact,
+  type HumNativeAxisStatus,
+} from "@hum-ai/native-corpus";
 import type { LoadedPrior } from "./prior";
 import type { CaptureLevel } from "./capture";
 import { isGranted } from "./consent";
@@ -36,10 +48,6 @@ const STAGE_LABEL: Record<string, string> = {
   personalized_fusion: "Personalized fusion",
   relapse_model: "Longitudinal model active",
 };
-
-function pct(x: number): string {
-  return `${(x * 100).toFixed(0)}%`;
-}
 
 // ── friendly quality-gate reason text ─────────────────────────────────────────
 const REASON_TEXT: ReadonlyArray<readonly [string, string]> = [
@@ -117,12 +125,15 @@ export function renderRead(read: OrchestratedRead): void {
 /** A single axis meter with qualitative confidence + honest trained-prior provenance. */
 function axisMeter(label: string, lowPole: string, highPole: string, res: AxisResolution): string {
   const left = Math.max(0, Math.min(100, ((res.value + 1) / 2) * 100));
+  // Use the canonical evidence-band thresholds (ADR-0008) — never re-hardcode the cutoffs.
   const conf =
-    res.confidence >= 0.72 ? "clear" : res.confidence >= 0.5 ? "moderate" : "developing";
+    res.confidence >= EVIDENCE_BANDS.high ? "clear" : res.confidence >= EVIDENCE_BANDS.medium ? "moderate" : "developing";
   let prov: string;
   if (res.trainedContribution === "in_domain") {
-    const acc = res.trainedBalancedAccuracy != null ? ` (${pct(res.trainedBalancedAccuracy)}${res.trainedPassedGate ? ", gate-passed" : ""})` : "";
-    prov = `Acoustic read, with the trained ${res.axis} prior${acc} agreeing — it was in-domain for this hum.`;
+    // Qualitative only — no accuracy % in the per-read copy (ADR-0008). The gate-passed
+    // flag is honest provenance; the raw balanced-accuracy stays internal.
+    const gate = res.trainedPassedGate ? " (gate-passed)" : "";
+    prov = `Acoustic read, with the trained ${res.axis} prior${gate} agreeing — it was in-domain for this hum.`;
   } else if (res.trainedContribution === "abstained_ood") {
     prov = `Transparent acoustic read. The trained ${res.axis} prior was held back — this hum sits outside its acted-speech training domain (ADR-0005).`;
   } else {
@@ -168,6 +179,149 @@ export function renderCaptureRejected(_decision: CaptureGateDecision): void {
   if (longitudinal) longitudinal.hidden = true;
   const provenance = $("provenance");
   if (provenance) provenance.innerHTML = "";
+  clearFeedbackPrompt();
+}
+
+// ── HiTL feedback: confirm / adjust the read → one row of native-hum truth ─────
+// After a usable read we ask the user whether it matches how they feel. A confirm or a
+// two-slider adjust mints a {derived features, benign self-report} training example (the
+// orchestrator's applyFeedback runs the privacy + clinical-leak guards). This is the only
+// source of hum truth the model can actually learn from on-domain (ADR-0011).
+
+// A pending "thanks" auto-clear timer. Cancelled whenever the card is re-rendered or
+// cleared, so a stale timeout from a PREVIOUS feedback can never wipe a freshly-rendered
+// prompt for a newer hum.
+let thanksTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function clearFeedbackPrompt(): void {
+  if (thanksTimer !== undefined) {
+    clearTimeout(thanksTimer);
+    thanksTimer = undefined;
+  }
+  const card = $("feedback-card");
+  if (card) {
+    card.hidden = true;
+    card.innerHTML = "";
+  }
+}
+
+/** Render the feedback prompt for a usable read; `onSubmit` is called with the self-report. */
+export function renderFeedbackPrompt(
+  read: OrchestratedRead,
+  request: FeedbackRequest,
+  onSubmit: (report: HumSelfReport) => void,
+): void {
+  const card = $("feedback-card");
+  if (!card) return;
+  if (read.userFacing.abstained) {
+    clearFeedbackPrompt();
+    return;
+  }
+  // Cancel any pending "thanks" auto-clear from a previous hum before rendering this one.
+  if (thanksTimer !== undefined) {
+    clearTimeout(thanksTimer);
+    thanksTimer = undefined;
+  }
+  const predicted = read.internal.axis.dimensional;
+  const v0 = Math.round(predicted.valence * 100);
+  const a0 = Math.round(predicted.arousal * 100);
+  card.hidden = false;
+  card.innerHTML = `
+    <h4>Does this match how you feel right now? <span class="muted small">teaches your hum model</span></h4>
+    <p class="muted small">${esc(request.note)}</p>
+    <div class="feedback-actions">
+      <button id="fb-confirm" class="btn btn-primary btn-sm">Yes, that's right</button>
+      <button id="fb-toggle-adjust" class="btn btn-sm">Adjust</button>
+    </div>
+    <div id="fb-adjust" class="feedback-adjust" hidden>
+      <label class="fb-slider">
+        <span>Mood <span class="muted small">subdued ↔ pleasant</span></span>
+        <input type="range" id="fb-valence" min="-100" max="100" step="5" value="${v0}" />
+      </label>
+      <label class="fb-slider">
+        <span>Energy <span class="muted small">settled ↔ activated</span></span>
+        <input type="range" id="fb-arousal" min="-100" max="100" step="5" value="${a0}" />
+      </label>
+      <button id="fb-save" class="btn btn-primary btn-sm">Save how I feel</button>
+    </div>
+    <p class="muted small disclaimer">Stored as derived features + your self-report only — never raw audio. Non-clinical.</p>
+  `;
+
+  const thank = (): void => {
+    card.innerHTML = `<p class="fb-thanks">Thanks — your hum model just learned from this. ✓</p>`;
+    if (thanksTimer !== undefined) clearTimeout(thanksTimer);
+    thanksTimer = setTimeout(() => clearFeedbackPrompt(), 2600);
+  };
+
+  $("fb-confirm")?.addEventListener("click", () => {
+    onSubmit({ label: predicted, source: "self_report_confirm", agreedWithRead: true });
+    thank();
+  });
+  $("fb-toggle-adjust")?.addEventListener("click", () => {
+    const adj = $("fb-adjust");
+    if (adj) adj.hidden = !adj.hidden;
+  });
+  $("fb-save")?.addEventListener("click", () => {
+    const vEl = document.getElementById("fb-valence") as HTMLInputElement | null;
+    const aEl = document.getElementById("fb-arousal") as HTMLInputElement | null;
+    const valence = vEl ? Number(vEl.value) / 100 : predicted.valence;
+    const arousal = aEl ? Number(aEl.value) / 100 : predicted.arousal;
+    const agreed = Math.abs(valence - predicted.valence) < 0.2 && Math.abs(arousal - predicted.arousal) < 0.2;
+    onSubmit({ label: { valence, arousal }, source: "self_report_adjust", agreedWithRead: agreed });
+    thank();
+  });
+}
+
+// ── "Your hum model" lab — watch your own native model + calibration improve ──
+const NATIVE_TREND_COPY: Record<string, string> = {
+  improving: "getting better — your read tracks your feeling more closely than before",
+  steady: "holding steady",
+  worsening: "a little noisier lately — keep logging how you feel",
+  insufficient: "still gathering enough of your feedback to tell",
+};
+
+function nativeAxisLine(label: string, s: HumNativeAxisStatus): string {
+  // Qualitative only — no accuracy percentages in user copy (ADR-0008). `s.n` is a hum
+  // COUNT (not a confidence/accuracy number), like the eligible-hum counts shown elsewhere.
+  if (s.decision === "promote") {
+    return `<li><span class="chip chip-on">✓ ${esc(label)}</span> live hum-native model — learned from ${s.n} of your confirmed hums; it now reads your hums more closely than the generic acoustic mapping does.</li>`;
+  }
+  return `<li><span class="chip chip-forming">○ ${esc(label)} · forming</span> <span class="muted small">keep confirming reads to train it</span></li>`;
+}
+
+export function renderModelLab(corpus: NativeCorpus, artifact: HumNativeArtifact | null): void {
+  const card = $("model-lab");
+  if (!card) return;
+  const stats = corpusStats(corpus);
+  const cal = corpusCalibration(corpus);
+  const ready = corpusReadiness(corpus);
+  const hint = nextCollectionHint(corpus);
+
+  const modelLines = artifact
+    ? `${nativeAxisLine("Mood", artifact.manifest.valence)}${nativeAxisLine("Energy", artifact.manifest.arousal)}`
+    : `<li class="muted small">No retrain yet — confirm a few reads to get started.</li>`;
+
+  const trendLine = (axis: "valence" | "arousal", label: string): string => {
+    const t = calibrationTrend(corpus, axis);
+    return `<li><strong>${esc(label)}:</strong> ${esc(NATIVE_TREND_COPY[t.direction] ?? "")}</li>`;
+  };
+
+  const calBlock =
+    cal.n >= 4
+      ? `<p class="muted small">How well your read matches your self-reports (a higher agreement, lower error read is a better one):</p>
+         <ul class="model-trend">${trendLine("valence", "Mood")}${trendLine("arousal", "Energy")}</ul>`
+      : `<p class="muted small">Calibration starts once you've confirmed a few reads.</p>`;
+
+  const hintBlock = hint ? `<p class="model-hint">${esc(hint)}</p>` : ready.anyReady ? `<p class="muted small">Enough data to retrain — your model updates as you go.</p>` : "";
+
+  card.innerHTML = `
+    <h3>Your hum model <span class="muted small">(learns from your feedback — non-diagnostic)</span></h3>
+    <p class="muted small">${stats.total} labelled hum${stats.total === 1 ? "" : "s"} so far · ${stats.quadrantsCovered}/4 mood-energy regions covered.</p>
+    <ul class="model-status-list">${modelLines}</ul>
+    ${calBlock}
+    ${hintBlock}
+    <p class="disclaimer">Research-stage and non-clinical. This model reflects how your hums map to how you say you feel — it is not a diagnosis.</p>
+  `;
 }
 
 // ── intervention of the day (richer guided step; strings already safety-screened) ──
@@ -420,7 +574,7 @@ export function renderProvenance(read: OrchestratedRead, prior: LoadedPrior | nu
   const mp = read.internal.modelProvenance;
   const affectLine =
     mp.kind === "learned_affect_prior"
-      ? `Secondary affect-label hint from the trained 6-class prior${mp.gatePassed === false ? " (below the 80% gate; far-domain, penalized)" : ""}.`
+      ? `Secondary affect-label hint from the trained 6-class prior${mp.gatePassed === false ? " (below its promotion gate; far-domain, penalized)" : ""}.`
       : "Secondary affect-label hint from the heuristic ensemble (no trained model present).";
   const gate = prior?.promotion.evaluated ? `<span class="muted small">${esc(prior.promotion.note)}</span>` : "";
   el.innerHTML = `

@@ -15,6 +15,7 @@ import { stagePolicy } from "./ladder";
 import { newRegimeState, type RegimeState } from "./changepoint";
 import type { InterventionPolicy } from "./bandit";
 import { newContextualCenters, type ContextualCenters } from "./context";
+import { newAxisCalibration, type PersonalAxisCalibration } from "./axis-calibration";
 
 /** Per-feature robust baseline: feature name → robust stats over eligible hums. */
 export type BaselineVector = Record<string, RobustStats>;
@@ -80,6 +81,14 @@ export interface UserModelProfile {
    * well-sampled; falls back to the global baseline otherwise.
    */
   readonly contextual_centers?: ContextualCenters;
+  /**
+   * Learned PERSONAL AXIS CALIBRATION (`axis-calibration.ts`) — the online offset the
+   * user's HiTL corrections impose on the population acoustic valence/arousal read, so
+   * the dimensional read re-centres on THIS person. The fast, within-user complement to
+   * the batch-retrained global hum-native model (`@hum-ai/native-corpus`). Sync-safe
+   * (fixed keys). Empty until the first correction.
+   */
+  readonly axis_calibration?: PersonalAxisCalibration;
 }
 
 /**
@@ -137,5 +146,6 @@ export function newUserProfile(
     regime: newRegimeState(),
     adaptation_rate: 0,
     contextual_centers: newContextualCenters(),
+    axis_calibration: newAxisCalibration(),
   };
 }

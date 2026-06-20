@@ -53,6 +53,20 @@ test("an in-domain trained prior REFINES the axis read and lifts confidence; an 
   assert.equal(ood.arousal.value, acoustic.arousal.value, "an OOD prior leaves the acoustic read unchanged");
 });
 
+test("a NATIVE in-domain prior nudges the read more than a far-domain one with the same lean (ADR-0011)", () => {
+  const features = cleanHumFeatures();
+  const acoustic = resolveAxisRead(features).arousal.value;
+  const pred = { value: 0.95, ood: 0.05, inDomain: true, confidence: 0.9 } as const;
+
+  const far = resolveAxisRead(features, { arousal: { ...stubPrior("arousal", pred), nativeDomain: false } });
+  const native = resolveAxisRead(features, { arousal: { ...stubPrior("arousal", pred), nativeDomain: true } });
+
+  assert.ok(native.arousal.value > far.arousal.value, "native prior earns a larger nudge");
+  // Both still bounded below the prior's raw lean — the acoustic read remains the backbone.
+  assert.ok(native.arousal.value < pred.value, "even a native prior never fully overrides the acoustic read");
+  assert.ok(far.arousal.value > acoustic, "the far-domain prior still refines");
+});
+
 test("a clear signal alone earns at most Medium; only in-domain trained agreement reaches High", () => {
   const features = cleanHumFeatures();
   const acousticConf = axisReadConfidence(resolveAxisRead(features));

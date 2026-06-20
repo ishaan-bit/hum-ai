@@ -39,6 +39,8 @@ export interface HumCycleInput {
   readonly prior: LearnedAffectPrior | null;
   /** Trained coarse valence / arousal axis priors that refine the axis read (when in-domain). */
   readonly axisPriors?: AffectAxisPriors;
+  /** HiTL per-feature importance (which features track this user's reported affect) → salience blend. */
+  readonly featureImportance?: Record<string, number>;
 }
 
 export type HumCycleResult =
@@ -81,7 +83,9 @@ export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult>
   }
 
   // 2. Project the persisted baseline into read-time history, then run the full spine.
-  const history = humHistoryFromState(input.state, now);
+  //    The HiTL feature-importance hint (when present) is merged so personalization weights
+  //    the features that track this user's reported affect.
+  const history = { ...humHistoryFromState(input.state, now), featureImportance: input.featureImportance };
   const read = await orchestrateHumRead({
     features,
     consent: input.consent,

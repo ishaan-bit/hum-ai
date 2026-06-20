@@ -147,6 +147,19 @@ export interface LongitudinalStateInputs {
   readonly driftEvidenceFeatures: readonly string[];
   /** Consecutive drifting hums through the PREVIOUS read (this read may extend it). */
   readonly priorConsecutiveDriftHums: number;
+  /**
+   * Optional ROBUST trend over the user's recent within-user series (Theil–Sen slope +
+   * Mann–Kendall significance, see `trend.ts`), already mapped by the caller to a
+   * longitudinal direction. When significant, it refines a weak single-comparison verdict
+   * (an uncertain/stable verdict becomes improving/worsening) — data-driven and additive.
+   * Omitted ⇒ behaviour is identical to before (verdict-only). It never overrides a
+   * relapse "worsening" verdict (the verdict is the stronger within-user evidence).
+   */
+  readonly seriesTrend?: {
+    readonly direction: LongitudinalTrendDirection;
+    readonly confidence: UnitInterval;
+    readonly significant: boolean;
+  };
 }
 
 /**
@@ -178,7 +191,7 @@ export function assessLongitudinalState(inp: LongitudinalStateInputs): Longitudi
     currentHum: true,
     populationPrior: !inp.baselineActive,
     personalBaseline: inp.baselineActive,
-    longitudinalTrend: inp.anchoredActive,
+    longitudinalTrend: inp.anchoredActive || !!inp.seriesTrend?.significant,
     relapseModel: inp.relapseModelActive && inp.relapse !== null,
     highRiskSignature: inp.highRiskAlignment !== null,
     recoverySignature: inp.recoveryAlignment !== null,
@@ -228,6 +241,19 @@ export function assessLongitudinalState(inp: LongitudinalStateInputs): Longitudi
         ? "worsening"
         : "stable"
       : "uncertain";
+  }
+
+  // ROBUST SERIES TREND (additive): a significant Theil–Sen/Mann–Kendall trend over the
+  // user's recent series upgrades a WEAK single-comparison verdict (uncertain/stable) to a
+  // data-driven improving/worsening. It never overrides a worsening relapse verdict.
+  const st = inp.seriesTrend;
+  if (
+    st &&
+    st.significant &&
+    (st.direction === "improving" || st.direction === "worsening") &&
+    (trendDirection === "uncertain" || trendDirection === "stable")
+  ) {
+    trendDirection = st.direction;
   }
 
   // RISK HYPOTHESIS — within-user: high current risk OR a worsening verdict.

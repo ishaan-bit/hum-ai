@@ -7,7 +7,7 @@
  * resilient: with no mic, no cloud, or no model artifact, it still runs honestly.
  */
 import "./styles.css";
-import { newPersonalizationState, stagePolicy } from "@hum-ai/personalization-engine";
+import { newPersonalizationState, stagePolicy, ingestFeedback } from "@hum-ai/personalization-engine";
 import {
   asIsoTimestamp,
   asModelVersion,
@@ -18,7 +18,25 @@ import {
   type ModelVersion,
 } from "@hum-ai/shared-types";
 import type { AudioInput } from "@hum-ai/audio-features";
-import type { OrchestratedRead, PersonalizationState } from "@hum-ai/orchestrator";
+import type { HumSelfReport } from "@hum-ai/affect-model-contracts";
+import {
+  buildFeedbackRequest,
+  applyFeedback,
+  type OrchestratedRead,
+  type PersonalizationState,
+  type AffectAxisPriors,
+} from "@hum-ai/orchestrator";
+import {
+  emptyCorpus,
+  appendExample,
+  buildHumNativeArtifact,
+  axisPriorsFromArtifact,
+  corpusReadiness,
+  hasPromotedNativeModel,
+  combinedFeatureImportance,
+  type NativeCorpus,
+  type HumNativeArtifact,
+} from "@hum-ai/native-corpus";
 import { loadConsent, setScope, isGranted, type ToggleableScope } from "./consent";
 import { loadBrowserPrior, type LoadedPrior } from "./prior";
 import { recordHum, synthesize, type SynthKind } from "./capture";
@@ -31,6 +49,16 @@ import {
   saveStateCloud,
   appendHumCloud,
 } from "./store";
+import {
+  loadCorpusLocal,
+  saveCorpusLocal,
+  loadArtifactLocal,
+  saveArtifactLocal,
+  appendLabelCloud,
+  loadCorpusCloud,
+  saveArtifactCloud,
+  mergeCorpora,
+} from "./corpus-store";
 import { signInAnon, getFirebase } from "./firebase";
 import { HUM_AGAIN_MESSAGE, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import {
@@ -42,6 +70,9 @@ import {
   renderPersonalization,
   renderHistory,
   renderCaptureRejected,
+  renderFeedbackPrompt,
+  clearFeedbackPrompt,
+  renderModelLab,
   setCaptureStatus,
   setLiveMeter,
   setSyncStatus,
@@ -53,6 +84,23 @@ const MODEL_VERSION: ModelVersion = asModelVersion(import.meta.env.HUM_AI_MODEL_
 
 const nowTs = (): IsoTimestamp => asIsoTimestamp(new Date().toISOString());
 
+/** crypto.randomUUID needs a secure context; fall back so the simulate-hum path works on plain HTTP. */
+function safeUuid(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  } catch {
+    /* fall through */
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** A captured hum awaiting (optional) HiTL feedback — features live in `read.internal`. */
+interface PendingHum {
+  readonly id: string;
+  readonly capturedAt: IsoTimestamp;
+  readonly read: OrchestratedRead;
+}
+
 interface Session {
   state: PersonalizationState;
   consent: ConsentState;
@@ -61,6 +109,16 @@ interface Session {
   localId: string;
   lastRead: OrchestratedRead | null;
   log: HistoryEntry[];
+  /** The user's accumulated native-hum corpus (derived features + self-report labels). */
+  corpus: NativeCorpus;
+  /** The retrained hum-native model artifact (manifest + promoted models), or null. */
+  artifact: HumNativeArtifact | null;
+  /** HiTL per-feature importance (which features track this user's reported affect). */
+  featureImportance: Record<string, number>;
+  /** The most recent accepted hum, available for the feedback step. */
+  pending: PendingHum | null;
+  /** Corpus size at the last retrain — gates how often we re-evaluate promotion. */
+  lastRetrainSize: number;
 }
 
 const session: Session = {
@@ -71,7 +129,27 @@ const session: Session = {
   localId: "local-anon",
   lastRead: null,
   log: [],
+  corpus: emptyCorpus(),
+  artifact: null,
+  featureImportance: {},
+  pending: null,
+  lastRetrainSize: 0,
 };
+
+/** Re-evaluate the hum-native model after this many new labels (kept cheap + responsive). */
+const RETRAIN_EVERY = 4;
+
+/**
+ * The axis priors actually fed to the read: a PROMOTED hum-native model (in-domain,
+ * no far-domain penalty) takes precedence per axis; otherwise the far-domain acted-speech
+ * prior (which abstains OOD on hums) is used. As the user's model is promoted, the read
+ * stops leaning on the far-domain prior and starts using their own hum-native one.
+ */
+function effectiveAxisPriors(): AffectAxisPriors {
+  const far = session.prior?.axisPriors ?? {};
+  const native = axisPriorsFromArtifact(session.artifact);
+  return { valence: native.valence ?? far.valence, arousal: native.arousal ?? far.arousal };
+}
 
 function syncEnabled(): boolean {
   return isGranted(session.consent, "derived_feature_sync") && session.uid !== null;
@@ -101,6 +179,19 @@ async function boot(): Promise<void> {
   // discoverable from the first visit, before any hum. The data stays consent-gated.
   renderLongitudinal(null, session.consent, session.state.eligibleHumCount);
 
+  // Load the user's NATIVE-HUM corpus + retrained model (local; merge cloud when consented).
+  // This is the HiTL asset: their own confirmed hums and the model trained on them (ADR-0011).
+  session.corpus = loadCorpusLocal(session.localId);
+  if (session.uid) {
+    const cloudCorpus = await loadCorpusCloud(session.uid);
+    session.corpus = mergeCorpora(session.corpus, cloudCorpus);
+    saveCorpusLocal(session.localId, session.corpus);
+  }
+  session.artifact = loadArtifactLocal(session.localId);
+  session.featureImportance = combinedFeatureImportance(session.corpus);
+  session.lastRetrainSize = session.corpus.examples.length;
+  renderModelLab(session.corpus, session.artifact);
+
   // Load the trained prior (non-blocking for the rest of the UI).
   session.prior = await loadBrowserPrior();
   setModelStatus();
@@ -120,11 +211,18 @@ function renderLadderForState(state: PersonalizationState): void {
 function setModelStatus(): void {
   const el = document.getElementById("model-status");
   if (!el) return;
+  // A promoted hum-native model (trained on the user's own confirmed hums) leads the line.
+  if (session.artifact && hasPromotedNativeModel(session.artifact)) {
+    el.textContent =
+      "A hum-native model trained on YOUR confirmed hums is now steering your read — in-domain, no far-domain penalty. It keeps improving as you give feedback. Non-clinical.";
+    return;
+  }
   if (session.prior) {
     const meta = session.prior.axisMeta;
+    // Qualitative provenance only — no accuracy % in user copy (ADR-0008).
     const axisBits: string[] = [];
-    if (meta.arousal) axisBits.push(`arousal ${Math.round(meta.arousal.balancedAccuracy * 100)}%${meta.arousal.passedGate ? " (gate-passed)" : ""}`);
-    if (meta.valence) axisBits.push(`valence ${Math.round(meta.valence.balancedAccuracy * 100)}%`);
+    if (meta.arousal) axisBits.push(`arousal${meta.arousal.passedGate ? " (gate-passed)" : ""}`);
+    if (meta.valence) axisBits.push(`valence${meta.valence.passedGate ? " (gate-passed)" : ""}`);
     const axes = axisBits.length ? `Trained axis priors loaded (${axisBits.join(", ")}) — far-domain acted speech, used only when in-domain. ` : "";
     el.textContent = `${axes}Your read leads with an on-device acoustic valence + arousal mapping, available from hum #1.`;
   } else {
@@ -181,7 +279,10 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
     consent: session.consent,
     modelVersion: MODEL_VERSION,
     prior: session.prior?.prior ?? null,
-    axisPriors: session.prior?.axisPriors,
+    // A promoted hum-native axis model takes precedence over the far-domain prior.
+    axisPriors: effectiveAxisPriors(),
+    // Personalize which features the read leans on, from the user's own labels.
+    featureImportance: session.featureImportance,
   });
 
   // STAGE ① — a rejected capture is never read for affect. Show "hum again", surface NO
@@ -189,6 +290,7 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
   if (!result.accepted) {
     session.state = result.nextState;
     session.lastRead = null;
+    session.pending = null;
     renderCaptureRejected(result.captureGate);
     return result.captureGate;
   }
@@ -202,6 +304,16 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
   renderLongitudinal(result.read, session.consent, result.read.internal.eligibleHumCount);
   renderProvenance(result.read, session.prior, syncEnabled());
+
+  // HiTL: stash this hum and ask whether the read matched, so a confirm/adjust mints a
+  // native-hum training row + a personal calibration correction (ADR-0011).
+  session.pending = { id: safeUuid(), capturedAt: result.now, read: result.read };
+  if (!result.read.userFacing.abstained) {
+    renderFeedbackPrompt(result.read, buildFeedbackRequest(result.read), (report) => void onFeedback(report));
+  } else {
+    clearFeedbackPrompt();
+  }
+
   session.log.push({
     at: result.now,
     stage: result.read.internal.stage,
@@ -218,6 +330,58 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
     await appendHumCloud(session.uid, result.syncPayload);
   }
   return result.captureGate;
+}
+
+// ── HiTL feedback: one user confirmation → personal calibration + global corpus ──
+async function onFeedback(report: HumSelfReport): Promise<void> {
+  const pending = session.pending;
+  if (!pending) return;
+  const { example, correction } = applyFeedback(pending.read, report, {
+    id: pending.id,
+    capturedAt: pending.capturedAt,
+    modelVersion: MODEL_VERSION,
+  });
+
+  // 1. GLOBAL track — append one row of native-hum truth to the retraining corpus.
+  session.corpus = appendExample(session.corpus, example);
+  saveCorpusLocal(session.localId, session.corpus);
+  // Recompute which features track this user's reported affect (feeds the next read's salience).
+  session.featureImportance = combinedFeatureImportance(session.corpus);
+
+  // 2. PERSONAL track — fold the correction into the within-user axis calibration NOW
+  //    (the read re-centres on this person immediately, before any retrain).
+  session.state = ingestFeedback(session.state, correction);
+  saveStateLocal(session.localId, session.state);
+
+  // 3. Cloud backup of both (derived-only, owner-scoped) when consented.
+  if (syncEnabled() && session.uid) {
+    await appendLabelCloud(session.uid, example);
+    await saveStateCloud(session.uid, session.state);
+  }
+
+  // 4. Retrain the hum-native model when there's enough fresh data.
+  maybeRetrain();
+  renderModelLab(session.corpus, session.artifact);
+}
+
+/** Re-evaluate the hum-native model when ready + enough new labels. Promotion is the goal. */
+function maybeRetrain(): void {
+  const size = session.corpus.examples.length;
+  if (!corpusReadiness(session.corpus).anyReady) return;
+  if (session.artifact && size - session.lastRetrainSize < RETRAIN_EVERY) return;
+  const wasPromoted = hasPromotedNativeModel(session.artifact);
+  try {
+    session.artifact = buildHumNativeArtifact(session.corpus, nowTs());
+    session.lastRetrainSize = size;
+    saveArtifactLocal(session.localId, session.artifact);
+    if (syncEnabled() && session.uid) void saveArtifactCloud(session.uid, session.artifact);
+    if (!wasPromoted && hasPromotedNativeModel(session.artifact)) {
+      setCaptureStatus("🎉 Your hum-native model just went live — your read now uses a model trained on your own hums.");
+      setModelStatus();
+    }
+  } catch (err) {
+    console.warn("[retrain] failed:", err);
+  }
 }
 
 async function runSynth(kind: SynthKind): Promise<void> {

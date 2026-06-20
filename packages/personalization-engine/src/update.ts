@@ -17,6 +17,7 @@ import { updateSignatureCentroid } from "./signatures";
 import { featureSalience } from "./salience";
 import { newRegimeState, updateRegime } from "./changepoint";
 import { updateArm, type InterventionPolicy } from "./bandit";
+import { newAxisCalibration, updateAxisCalibration, type PersonalAxisCorrection } from "./axis-calibration";
 import { DEVIATION_WINSOR_Z } from "./deviation";
 import { newContextualCenters, timeBucket, updateContextualCenters } from "./context";
 import {
@@ -246,5 +247,31 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     relapseHistory,
     eligibleHumCount,
     consecutiveDriftHums: obs.consecutiveDriftHums ?? state.consecutiveDriftHums,
+  };
+}
+
+/**
+ * THE HiTL FEEDBACK STEP — fold ONE user correction into the per-user model.
+ *
+ * Distinct from `ingestHum` (which learns self-supervised from the model's own
+ * outputs on every eligible hum): this folds an EXPLICIT human signal — the user's
+ * reported valence/arousal vs what the model read — into the personal axis
+ * calibration, re-centring future reads on this person immediately. It updates ONLY
+ * the calibration on the profile; baselines, signatures, ladder, and counts are
+ * untouched (a correction is not a new hum). Pure: a new state is returned.
+ *
+ * Corrections on rejected/ineligible captures should not be submitted here — the
+ * caller gates on an accepted read — but a correction does not itself advance the
+ * baseline/ladder regardless, so it can never let a non-hum shape the model.
+ */
+export function ingestFeedback(
+  state: PersonalizationState,
+  correction: PersonalAxisCorrection,
+): PersonalizationState {
+  const prevCal = state.profile.axis_calibration ?? newAxisCalibration();
+  const axis_calibration = updateAxisCalibration(prevCal, correction);
+  return {
+    ...state,
+    profile: { ...state.profile, axis_calibration },
   };
 }

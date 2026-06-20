@@ -1,5 +1,5 @@
 {
-  "name": "@hum-ai/affect-model-contracts",
+  "name": "@hum-ai/native-corpus",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,9 @@
   },
   "dependencies": {
     "@hum-ai/shared-types": "*",
-    "@hum-ai/audio-features": "*"
+    "@hum-ai/audio-features": "*",
+    "@hum-ai/affect-model-contracts": "*",
+    "@hum-ai/orchestrator": "*",
+    "@hum-ai/signal-lab": "*"
   }
 }

@@ -5,3 +5,4 @@ export * from "./confidence";
 export * from "./intervention-types";
 export * from "./inference";
 export * from "./two-head";
+export * from "./feedback";

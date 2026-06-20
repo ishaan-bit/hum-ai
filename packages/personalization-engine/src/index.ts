@@ -4,6 +4,7 @@ export * from "./changepoint";
 export * from "./bandit";
 export * from "./context";
 export * from "./profile";
+export * from "./axis-calibration";
 export * from "./dual-baseline";
 export * from "./signatures";
 export * from "./salience";

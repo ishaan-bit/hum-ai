@@ -46,10 +46,17 @@ export interface AxisPrediction {
  */
 export interface AffectAxisPrior {
   readonly axis: "valence" | "arousal";
-  /** Honest balanced accuracy on the (far-domain) validation set — provenance only. */
+  /** Honest balanced accuracy on the validation set — provenance only. */
   readonly balancedAccuracy: number;
-  /** Whether this axis cleared the experimental promotion gate (ADR-0005). */
+  /** Whether this axis cleared its promotion gate (ADR-0005 far-domain, or ADR-0011 native). */
   readonly passedGate: boolean;
+  /**
+   * Whether this prior was trained on NATIVE hums (ADR-0011) rather than far-domain acted
+   * speech. A native, in-domain prior is allowed a LARGER (but still bounded) nudge on the
+   * read than a far-domain one — it is on-domain hum truth, not a penalized cold-start prior.
+   * Omitted/false ⇒ far-domain (the conservative 0.5 cap applies).
+   */
+  readonly nativeDomain?: boolean;
   predict(features: AcousticFeatures): AxisPrediction;
 }
 
@@ -86,6 +93,11 @@ export interface AxisRead {
   readonly signalStrength: UnitInterval;
 }
 
+/** Max nudge weight for a far-domain (acted-speech) prior — refines, never overrides (ADR-0005). */
+export const FAR_DOMAIN_AXIS_NUDGE_CAP = 0.5;
+/** Max nudge weight for a NATIVE in-domain prior (ADR-0011) — leads more, still bounded < 1. */
+export const NATIVE_AXIS_NUDGE_CAP = 0.75;
+
 /** Map a possibly-null feature to a unit value, using `fallback` when not computable. */
 function unit(value: number | null | undefined, low: number, high: number, fallback: number): number {
   if (value === null || value === undefined || !Number.isFinite(value)) return fallback;
@@ -107,18 +119,39 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   signalStrength: UnitInterval;
 } {
   // --- arousal: activation level ---
+  // Energy, voiced activity, brightness and pitch height set the level; pitch MOVEMENT
+  // (melodic range) and spectral FLUX (how much the timbre changes) add the "animation"
+  // an activated hum carries beyond raw loudness. Weights sum to 1; all on-domain.
   const energyN = unit(f.meanRms, 0.006, 0.06, 0); // near-silence → strong
   const activeN = clamp01(f.activeFrameRatio);
   const brightN = unit(f.spectralCentroidHz, 250, 2600, 0.3);
   const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5);
-  const arousal01 = clamp01(0.34 * energyN + 0.26 * activeN + 0.2 * brightN + 0.2 * pitchN);
+  const pitchMoveN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // more melodic movement → more activated
+  const fluxN = unit(f.spectralFlux, 0.01, 0.3, 0.2); // more spectral change → more activated
+  const arousal01 = clamp01(
+    0.3 * energyN + 0.22 * activeN + 0.16 * brightN + 0.14 * pitchN + 0.1 * pitchMoveN + 0.08 * fluxN,
+  );
 
   // --- valence: pleasant / settled vs subdued / rough ---
+  // Clarity, smoothness and steadiness lift it; roughness/instability/breathiness lower
+  // it; MUSICALITY, CONTROLLED expression and a REGULAR vibrato add the "ease" of a
+  // pleasant, in-control hum. Weights sum to 1; all on-domain, never a clinical label.
   const clarityN = clamp01(f.clarityScore);
   const smoothN = f.smoothnessScore === null ? 0.5 : clamp01(f.smoothnessScore);
   const stabilityN = clamp01(0.5 * f.amplitudeStability + 0.5 * (f.pitchStability ?? 0.5));
   const roughN = clamp01(0.6 * f.residualInstabilityScore + 0.4 * f.breathinessProxy);
-  const valence01 = clamp01(0.32 * clarityN + 0.24 * smoothN + 0.24 * stabilityN + 0.2 * (1 - roughN));
+  const musicalN = clamp01(f.musicalityScore);
+  const controlN = clamp01(f.controlledExpressionScore);
+  const vibratoN = f.vibratoRegularity === null ? 0.5 : clamp01(f.vibratoRegularity);
+  const valence01 = clamp01(
+    0.24 * clarityN +
+      0.18 * smoothN +
+      0.18 * stabilityN +
+      0.16 * (1 - roughN) +
+      0.12 * musicalN +
+      0.08 * controlN +
+      0.04 * vibratoN,
+  );
 
   // --- signal strength: how much clear, voiced, loud-enough audio we actually had ---
   const loudN = unit(f.rmsEnergy, 0.006, 0.05, 0);
@@ -167,13 +200,21 @@ function resolveAxis(
     trainedPassedGate = prior.passedGate;
     if (pred.inDomain) {
       trainedContribution = "in_domain";
-      // Weight the nudge by the prior's self-confidence and its honest accuracy,
-      // capped at 0.5 so the far-domain prior refines, never overrides (ADR-0005).
-      const w = clamp01(pred.confidence * clamp01(prior.balancedAccuracy)) * 0.5;
+      // Weight the nudge by the prior's self-confidence and its honest accuracy. A
+      // far-domain prior is capped at 0.5 (refines, never overrides — ADR-0005); a
+      // NATIVE in-domain prior (ADR-0011) earns a larger cap since it is on-domain hum
+      // truth, but is still bounded below 1 so the transparent acoustic read remains the
+      // backbone of every read.
+      const cap = prior.nativeDomain ? NATIVE_AXIS_NUDGE_CAP : FAR_DOMAIN_AXIS_NUDGE_CAP;
+      const w = clamp01(pred.confidence * clamp01(prior.balancedAccuracy)) * cap;
       value = clamp(acousticValue * (1 - w) + pred.value * w, -1, 1);
-      // A gate-passing in-domain agreement modestly lifts confidence.
+      // Signed confidence adjustment: an in-domain prior that AGREES with the acoustic read
+      // lifts confidence; one that strongly DISAGREES (conflicting evidence) lowers it — the
+      // read is genuinely more ambiguous when the backbone and the prior point apart. `agree`
+      // is 1 at identical leans, 0.5 at a full-scale (|Δ|=1) split, 0 at opposite poles.
       const agree = 1 - Math.abs(acousticValue - pred.value) / 2;
-      confidence = clamp01(confidence + (prior.passedGate ? 0.15 : 0.08) * pred.confidence * agree);
+      const lift = prior.passedGate ? 0.15 : 0.08;
+      confidence = clamp01(confidence + lift * pred.confidence * (agree - 0.5) * 2);
     } else {
       trainedContribution = "abstained_ood";
     }

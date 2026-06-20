@@ -83,7 +83,18 @@ They do **not** add validity.
 
 ## 3. Tier B — the data + model program (the real work)
 
-### B1 — Native hum corpus *(root blocker)*
+> **Progress (2026-06-20, ADR-0011).** The root blocker now has a *bootstrap path that does not
+> wait on an external study*: a **human-in-the-loop** ([ADR-0011](../adr/0011-hitl-native-hum-retraining-loop.md))
+> grows the `native_hum` corpus one self-report at a time, on-device. The `native_hum` **dataset
+> entry now exists** in `dataset-registry` (`native_hum_self_report_corpus`), an on-device store +
+> retrainer ships (`@hum-ai/native-corpus`), and a hum-native axis model is promoted only when it
+> beats the acoustic backbone on held-out hums — at which point it is **in-domain** and contributes
+> (no far-domain penalty). This is a **partial** B1 + a first cut of B3/B4's affect track: *benign
+> valence/arousal self-report*, on-device, non-clinical. It does **not** deliver B2 (clinical PHI
+> labels, IRB), the longitudinal/relapse corpus (C2), pooled cross-user training, or any of the
+> Tier-C validation studies. Those remain as written below.
+
+### B1 — Native hum corpus *(root blocker — bootstrap path now live; full study still required)*
 - Standardised 12-second hum capture protocol (already specced: `hum_legacy_spec`), across
   representative demographics and devices (phones/laptops/headsets).
 - Longitudinal: repeated daily hums per consenting participant over a multi-month horizon

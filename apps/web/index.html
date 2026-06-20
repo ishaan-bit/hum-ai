@@ -75,6 +75,16 @@
           <p class="muted">Record or simulate a hum to see your reflective read.</p>
         </div>
         <div id="axes-card" class="bands-card"></div>
+        <!-- HiTL feedback: confirm/adjust the read → one row of native-hum truth (ADR-0011) -->
+        <div id="feedback-card" class="feedback-card" hidden></div>
+      </section>
+
+      <!-- your hum-native model: learns from your confirmations over time -->
+      <section class="card">
+        <div id="model-lab" class="model-lab">
+          <h3>Your hum model <span class="muted small">(learns from your feedback — non-diagnostic)</span></h3>
+          <p class="muted">Confirm or adjust your reads and Hum AI trains a model on <em>your own hums</em>, so the read fits you better over time.</p>
+        </div>
       </section>
 
       <!-- intervention of the day -->

@@ -14,6 +14,8 @@ A free-speech sample is confounded by language, content, and privacy exposure. A
 
 The read **leads with a valence + arousal axis read, available from the first hum** ([ADR-0010](docs/adr/0010-model-led-read-from-first-hum.md)). The backbone is the transparent, on-domain **acoustic axes** (energy/brightness/pitch/clarity/stability → valence/arousal). Trained **far-domain priors refine that read silently**: each carries an OOD distance and **abstains when the hum is outside its acted-speech domain** (the common case), nudging the acoustic value only when in-domain (weight capped at 0.5 — it never overrides). A secondary 6-way affect-label hint rides alongside but is no longer the dimensional read.
 
+**The product grows past the far-domain ceiling via a human-in-the-loop** ([ADR-0011](docs/adr/0011-hitl-native-hum-retraining-loop.md)). After a read the user confirms or adjusts how they actually feel; each confirmation pairs the hum's derived features with a **benign valence/arousal self-report** — one row of native-hum truth. That single signal feeds two tracks: a **within-user axis calibration** that re-centres the read on this person immediately, and the **native-hum corpus** that a **browser-runnable retrain** fits a hum-native model on. A retrained model is promoted only when it **beats the transparent acoustic backbone on held-out hums** — and because its standardizer is fit on hums, it is **in-domain** and contributes with **no far-domain penalty** (the far-domain prior abstains; the user's own model does not). The corpus is the first real `native_hum` data ([dataset-registry](packages/dataset-registry/src/entries.ts) `native_hum_self_report_corpus`), stored derived-only and on-device.
+
 Under that axis read sits expert-based **late fusion** with a deterministic reliability-weighted meta-learner over per-expert probability vectors, adapted from the TriSense FER+SER+TER design [trisense_architecture]. Hum's online path runs SER-family experts on the hum; FER/TER experts exist as optional, off-domain inputs.
 
 **Models today (honest reconciliation):** the shipped browser priors are **trained-but-far-domain** classical JSON models (RAVDESS acted speech, penalized as priors, never hum truth — [ADR-0005](docs/adr/0005-public-datasets-as-priors-not-truth.md)): the 6-class `model.json` and the `model.valence_binary.json` are **below the experimental ~80% gate** (valence "developing"), while `model.arousal_binary.json` **cleared the gate at ~83%** — surfaced as an auxiliary prior that does **not** steer the affect/intervention read. The newer **mel-CNN hum model (~84.2% arousal on hum)** is a **Python-CLI-only research checkpoint** — not browser-servable and **not promoted** (below its own 85% gate). The `LogisticRegressionMetaLearner` remains the drop-in target once weights are fit on native hum data; its `combine` throws until then.
@@ -55,7 +57,8 @@ npm workspaces; one concern per package. All packages are `@hum-ai/*`.
 | `relapse-engine` | `RelapseSample`, `RELAPSE_CLASSES`, `classifyComparison`, `assessRelapse` → `RelapseVerdict`. |
 | `intervention-engine` | `selectIntervention`, `InterventionContext` → `InterventionSuggestion`. |
 | `safety-language` | `FORBIDDEN_PHRASES`, `validateUserFacingText`, `assertSafeUserFacingText`, `INTERNAL_TO_USER_FACING`, `userFacingLabel`. |
-| `orchestrator` | End-to-end read path: `orchestrateHumRead`/`orchestrateHumAudio` — two-head split + consent gate, dual baseline, qualitative confidence, raw-audio/clinical-leak guards on the sync payload. |
+| `orchestrator` | End-to-end read path: `orchestrateHumRead`/`orchestrateHumAudio` — two-head split + consent gate, dual baseline, qualitative confidence, raw-audio/clinical-leak guards on the sync payload. Plus the **HiTL feedback seam** (`buildFeedbackRequest` active-learning, `applyFeedback`) and personal axis-calibration in the read. |
+| `native-corpus` | The **human-in-the-loop retraining loop** ([ADR-0011](docs/adr/0011-hitl-native-hum-retraining-loop.md)): the on-device `NativeCorpus` of `{derived features, benign self-report}` rows, read-calibration/ECE tracking, active-learning readiness, a **browser-runnable** retrain→gate→promote (reuses signal-lab's `trainLogReg`), and the in-domain hum-native `AffectAxisPrior` wrapper. Pure TS; no raw audio ever stored. |
 | `qa-gates` | The `npm run qa` gates: `no-clinical-leak`, `no-camera-deps`, `no-raw-confidence-copy`, `forbidden-files`. |
 | `dataset-harness` | Local-only dataset manifest/validate CLI (`data:manifest`, `data:validate`); no audio ever written into the repo. |
 | `naming-check` | Enforces the Hum AI / `@hum-ai` naming constitution (ADR-0000). |
@@ -103,6 +106,7 @@ The 10 required test areas and where each is covered:
 
 ## Documentation index
 
+- **Architecture & tech spec (latest):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · **All-layers revamp plan:** [docs/REVAMP_PLAN.md](docs/REVAMP_PLAN.md)
 - Source manifest & provenance: [docs/source/INDEX.md](docs/source/INDEX.md) (source binaries are local-only — see [docs/source/README.md](docs/source/README.md))
 - Architecture: [docs/architecture/](docs/architecture/) (pipeline, fusion, personalization, relapse, [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md))
 - Claims ladder & non-claims: [docs/claims/CLAIMS_LADDER.md](docs/claims/CLAIMS_LADDER.md)
@@ -115,7 +119,7 @@ The 10 required test areas and where each is covered:
 ## Next steps
 
 1. Replace heuristic experts with trained SER/embedding models; register every dataset in `dataset-registry` before use [ser_mental_health_review].
-2. Fit and calibrate the `LogisticRegressionMetaLearner` on native hum data; evaluate abstention and reliability.
+2. **In progress — the native-hum loop ships ([ADR-0011](docs/adr/0011-hitl-native-hum-retraining-loop.md)).** A human-in-the-loop now grows the `native_hum` corpus on-device and retrains a hum-native axis model that beats the acoustic backbone before it steers the read. Next: pool the (consented, derived-only) corpus into a governed backend, raise the promotion gate toward the rigorous 0.80 / p<.01 / ECE bar as `n` grows, and fit/calibrate the `LogisticRegressionMetaLearner` on the accumulated hum data.
 3. Stand up within-user DVDSA-style longitudinal evaluation for the relapse engine [longitudinal_voice_treatment_response_source].
 4. Ground intervention suggestions in the music-stress evidence base as **support, not diagnosis** [intervention_support_source].
 5. **Done — the browser capture surface ships.** `apps/web` is a deployed local-first SPA: `getUserMedia({ audio })` (no camera) feeds the full client-side spine — Stage ① acceptance gate → axis read → personalization → longitudinal — with the classical JSON priors served from `apps/web/public/models/` (ADR-0006/0007/0008/0009/0010). Next: port the mel-CNN to a browser-runnable form (mel filterbank + conv1d) or stand up a hum-native dataset so a genuinely model-led read can be served, not just refined.

@@ -10,9 +10,25 @@ import {
   type DatasetRegistryEntry,
 } from "@hum-ai/dataset-registry";
 
-test("all seven source entries are present and govern-valid", () => {
-  assert.equal(REGISTRY.length, 7);
+test("all source entries are present and govern-valid", () => {
+  assert.equal(REGISTRY.length, 8);
   assert.doesNotThrow(() => assertValidRegistry(REGISTRY));
+});
+
+test("the native-hum self-report corpus (HiTL) is a dataset that may serve hum truth, but not clinical/relapse", () => {
+  const native = REGISTRY.find((e) => e.id === "native_hum_self_report_corpus")!;
+  assert.equal(native.kind, "dataset");
+  assert.equal(native.domain, "native_hum");
+  assert.equal(native.domain_gap_to_hum, "none");
+  assert.equal(native.clinical_status, "non_clinical");
+  assert.equal(native.label_type, "dimensional_va");
+  // It IS the source of hum truth for the affect/personalization track.
+  assert.equal(isUseAllowed(native, "hum_finetune"), true);
+  assert.equal(isUseAllowed(native, "personalization"), true);
+  assert.equal(isUseAllowed(native, "affect_prior"), true);
+  // But benign self-report affect is NOT a clinical prior or a relapse corpus.
+  assert.equal(isUseAllowed(native, "clinical_prior"), false);
+  assert.equal(isUseAllowed(native, "relapse_tracking"), false);
 });
 
 test("music-emotion dataset cannot be used as user-state diagnosis", () => {

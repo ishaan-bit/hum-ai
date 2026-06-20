@@ -22,6 +22,37 @@ import type { BaselineVector } from "./profile";
  * read cheaply at inference time — the personal deviation weights z-deltas by it.
  */
 
+/**
+ * Blend a learned variance-based salience with an EXTERNAL per-feature importance hint
+ * (e.g. HiTL-derived `personalFeatureImportance` — which features actually track the
+ * user's reported affect). Multiplicative-ish: a feature's blended salience is its base
+ * salience scaled up toward the importance signal, so a feature that is BOTH well-evidenced
+ * AND predictive of how the user says they feel gets the most weight. `weight` ∈ [0,1]
+ * controls how much the hint pulls (0 = ignore the hint → base unchanged). Pure; when the
+ * hint is empty the base salience is returned verbatim (so it is a no-op without HiTL data).
+ */
+export function blendSalience(
+  base: Record<string, number> | undefined,
+  importance: Record<string, number> | undefined,
+  weight = 0.4,
+): Record<string, number> | undefined {
+  // No hint ⇒ return the base VERBATIM (preserving `undefined`) so this is a true no-op:
+  // `model.salience` must stay absent when there is no salience, not become an empty map.
+  if (!importance || Object.keys(importance).length === 0 || weight <= 0) return base;
+  const b = base ?? {};
+  const w = Math.max(0, Math.min(1, weight));
+  const out: Record<string, number> = { ...b };
+  for (const [feature, imp] of Object.entries(importance)) {
+    if (!Number.isFinite(imp)) continue;
+    const baseVal = out[feature] ?? 0;
+    // Scale the base up toward (1 + imp): a feature predictive of the user's reported
+    // affect is amplified, never zeroed — and a feature with no base salience still gains
+    // a small floor from a strong importance signal.
+    out[feature] = baseVal * (1 + w * imp) + w * imp * 0.25;
+  }
+  return out;
+}
+
 /** n at which a feature reaches half of its coverage weight (n/(n+K)). */
 export const SALIENCE_COVERAGE_K = 6;
 /** |correlation| at/above which two features are treated as mutually redundant. */

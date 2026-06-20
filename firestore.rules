@@ -15,6 +15,15 @@ service cloud.firestore {
         allow read, write: if request.auth != null
                            && request.auth.uid == userId;
       }
+
+      // Native-hum self-report training rows (ADR-0011). Derived features + a benign
+      // valence/arousal label only — raw audio and clinical labels are stripped /
+      // structurally impossible before any write reaches here (assertValidNativeHumExample
+      // = assertNoRawAudioFields + assertNoClinicalLeak). Owner-scoped to the user's own space.
+      match /labels/{labelId} {
+        allow read, write: if request.auth != null
+                           && request.auth.uid == userId;
+      }
     }
 
     // Deny all other paths.

@@ -96,6 +96,18 @@ or treat** (CLAIMS_LADDER). Consent for research ≠ consent to be diagnosed.
 
 ## 6. Dataset-registry entry (how `native_hum` becomes real)
 
+> **Status update (2026-06-20, [ADR-0011](../adr/0011-hitl-native-hum-retraining-loop.md)).** A
+> `kind: "dataset"` `native_hum` entry now exists — `native_hum_self_report_corpus` — populated by
+> the in-app human-in-the-loop: derived features + a **benign valence/arousal self-report** label,
+> stored on-device (`local_processing`) and backed up to the user's own private space under
+> `derived_feature_sync`. It allows `hum_finetune` / `personalization` / `affect_prior` / `evaluation`
+> and forbids `clinical_prior` / `relapse_tracking`. This covers the **affect/calibration** track of
+> §1 (b)/(e) at the self-report level; it does **not** cover the **clinical-label** components below
+> (§7's PHQ/GAD/CES-DC and the §2 longitudinal/relapse cohort), which still require
+> `clinical_label_capture`, IRB, and the §10 collaborators. Cross-user **pooling** of the self-report
+> corpus into a shared model is likewise a separate, consent-and-IRB-gated backend step.
+
+
 Register the collected corpus as a `native_hum` entry in `@hum-ai/dataset-registry` so the code gates
 open lawfully:
 

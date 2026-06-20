@@ -39,10 +39,14 @@ export default defineConfig({
       { find: "@hum-ai/intervention-engine", replacement: pkg("intervention-engine") },
       { find: "@hum-ai/safety-language", replacement: pkg("safety-language") },
       { find: "@hum-ai/orchestrator", replacement: pkg("orchestrator") },
+      // native-corpus: the HiTL retraining loop — pure TS (reaches signal-lab ONLY via its
+      // pure deep modules below), so no Node builtin enters the bundle.
+      { find: "@hum-ai/native-corpus", replacement: pkg("native-corpus") },
       // signal-lab: ONLY the pure modules, never the (Node-tainted) barrel.
       { find: "@hum-ai/signal-lab/model", replacement: resolve(repoRoot, "packages/signal-lab/src/model.ts") },
       { find: "@hum-ai/signal-lab/expert", replacement: resolve(repoRoot, "packages/signal-lab/src/expert.ts") },
       { find: "@hum-ai/signal-lab/axis-prior", replacement: resolve(repoRoot, "packages/signal-lab/src/axis-prior.ts") },
+      { find: "@hum-ai/signal-lab/feature-schema", replacement: resolve(repoRoot, "packages/signal-lab/src/feature-schema.ts") },
       // Stage ① capture-acceptance gate: a PURE module (imports only the AcousticFeatures
       // type), so it is browser-safe via the same deep-alias pattern as the prior modules.
       { find: "@hum-ai/signal-lab/capture-gate", replacement: resolve(repoRoot, "packages/signal-lab/src/capture-gate.ts") },

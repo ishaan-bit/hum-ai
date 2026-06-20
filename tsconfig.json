@@ -43,7 +43,9 @@
       "@hum-ai/signal-lab": ["packages/signal-lab/src/index.ts"],
       "@hum-ai/signal-lab/model": ["packages/signal-lab/src/model.ts"],
       "@hum-ai/signal-lab/expert": ["packages/signal-lab/src/expert.ts"],
-      "@hum-ai/signal-lab/axis-prior": ["packages/signal-lab/src/axis-prior.ts"]
+      "@hum-ai/signal-lab/axis-prior": ["packages/signal-lab/src/axis-prior.ts"],
+      "@hum-ai/signal-lab/feature-schema": ["packages/signal-lab/src/feature-schema.ts"],
+      "@hum-ai/native-corpus": ["packages/native-corpus/src/index.ts"]
     }
   },
   "//": "The browser SPA under apps/web/src/app is typechecked by apps/web/tsconfig.json (DOM lib); excluded here so the engine packages stay DOM-free.",

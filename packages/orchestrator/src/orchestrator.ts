@@ -18,8 +18,11 @@ import { defaultAudioExperts } from "@hum-ai/expert-ser";
 import { FusionEngine, combineCaps, modalityReliability } from "@hum-ai/fusion-engine";
 import type { FusionContext } from "@hum-ai/fusion-engine";
 import {
+  applyAxisCalibration,
   applyPersonalization,
+  axisCalibrationEngaged,
   baselineDivergence,
+  blendSalience,
   buildDualBaseline,
   buildRelapseReferences,
   contextAdjustedBaseline,
@@ -37,16 +40,19 @@ import type {
   DualBaseline,
   HumObservation,
   InterventionPolicy,
+  PersonalAxisCalibration,
   PersonalizationApplication,
   PersonalizationStage,
   PersonalizationState,
 } from "@hum-ai/personalization-engine";
-import { assessLongitudinalState, assessRelapse } from "@hum-ai/relapse-engine";
+import { assessLongitudinalState, assessRelapse, estimateTrend } from "@hum-ai/relapse-engine";
 import type {
   LongitudinalDiagnosticState,
+  LongitudinalTrendDirection,
   RelapseReferenceKind,
   RelapseSample,
   RelapseVerdict,
+  SeriesPoint,
 } from "@hum-ai/relapse-engine";
 import {
   selectInterventionFromView,
@@ -140,6 +146,26 @@ export interface HumHistory {
   readonly interventionPolicy?: InterventionPolicy;
   /** Per-time-of-day feature centers (v2) — re-references against "your usual at this time of day". */
   readonly contextualCenters?: ContextualCenters;
+  /**
+   * Learned PERSONAL AXIS CALIBRATION (HiTL) — the user's own corrections re-centre the
+   * population acoustic valence/arousal read on THIS person. Applied to the axis read
+   * before personalization re-reference (silent within-user refinement; never amplifies).
+   */
+  readonly axisCalibration?: PersonalAxisCalibration;
+  /**
+   * Recent within-user RISK SERIES (most-recent last; `t` = capturedAt ms, `value` =
+   * composite risk score) for the robust longitudinal trend (Theil–Sen + Mann–Kendall).
+   * The current hum's point is appended by the read. Omitted ⇒ no series trend (the
+   * single-comparison verdict stands).
+   */
+  readonly recentRiskSeries?: readonly SeriesPoint[];
+  /**
+   * HiTL-derived PER-FEATURE IMPORTANCE (`@hum-ai/native-corpus` `combinedFeatureImportance`)
+   * — which derived features actually track THIS user's reported valence/arousal. Blended
+   * into the personalization salience so the read leans on the axes that are predictive for
+   * them. Omitted ⇒ salience is unchanged (no-op without HiTL data).
+   */
+  readonly featureImportance?: Record<string, number>;
 }
 
 /**
@@ -353,6 +379,23 @@ function longitudinalTrend(divergence: BaselineDivergence): number {
   return divergence.anchored ? clamp01(divergence.magnitude / 2.5) : 0;
 }
 
+/**
+ * Apply the user's learned PERSONAL AXIS CALIBRATION (HiTL) to a freshly-resolved axis
+ * read: shift the surfaced valence/arousal values + dimensional point toward the user's
+ * own self-reports, while PRESERVING each axis's transparent `acousticValue` provenance
+ * and its confidence. Returns the read unchanged until a calibration has been earned.
+ */
+function applyAxisCalibrationToRead(read: AxisRead, calibration?: PersonalAxisCalibration): AxisRead {
+  if (!axisCalibrationEngaged(calibration)) return read;
+  const dim = applyAxisCalibration(calibration, read.dimensional);
+  return {
+    ...read,
+    dimensional: dim,
+    valence: { ...read.valence, value: dim.valence },
+    arousal: { ...read.arousal, value: dim.arousal },
+  };
+}
+
 /** The `n` features with the largest |z-delta| (explainability: what drove the read). */
 function topFeaturesByAbsZ(zDeltas: Record<string, number>, n: number): string[] {
   return Object.entries(zDeltas)
@@ -442,7 +485,12 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   //     real audio); the trained far-domain axis priors REFINE it only when in-domain
   //     and abstain otherwise (ADR-0005). This replaces the neutral-washed fused
   //     dimensional point as the read the rest of the spine reasons over.
-  const axisRead = resolveAxisRead(features, input.axisPriors);
+  const acousticAxisRead = resolveAxisRead(features, input.axisPriors);
+  // PERSONAL AXIS CALIBRATION (HiTL): re-centre the population acoustic read on THIS
+  // person from their accumulated corrections. The transparent `acousticValue` provenance
+  // on each axis is preserved; only the surfaced `value`/`dimensional` shift. No-op until
+  // the user has corrected a read (engaged === false ⇒ identical read).
+  const axisRead = applyAxisCalibrationToRead(acousticAxisRead, history.axisCalibration);
   const readAbstained = quality.decision === "rejected" || axisRead.signalStrength < MIN_READ_SIGNAL;
   const axisConfidence = axisReadConfidence(axisRead);
   const axisLedInf: MultiHeadAffectInference = {
@@ -481,8 +529,10 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     stage,
     {
       // v2 personal model: circadian-, salience-weighted, evidence-gated, regime-aware re-reference.
+      // The salience is BLENDED with the HiTL per-feature importance (which features track
+      // THIS user's reported affect) so the read leans on what's predictive for them (ADR-0011).
       model: {
-        salience: history.salience,
+        salience: blendSalience(history.salience, history.featureImportance),
         baseline: personalBaseline,
         regimeShift: history.regimeShift,
       },
@@ -563,6 +613,23 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     hasPersonalZ && Object.keys(recoverySignature).length > 0
       ? signatureAlignment(personalZDeltas, recoverySignature)
       : null;
+  // ROBUST LONGITUDINAL TREND — Theil–Sen slope + Mann–Kendall over the recent risk
+  // series (prior eligible hums + this hum). A significant RISING risk trend reads as
+  // worsening; FALLING as improving. Refines a weak single-comparison verdict; never
+  // overrides a worsening verdict (handled in assessLongitudinalState). Non-diagnostic.
+  const riskSeries: SeriesPoint[] = [
+    ...(history.recentRiskSeries ?? []),
+    { t: Date.parse(now), value: currentRiskScore },
+  ].filter((p) => Number.isFinite(p.t));
+  const trend = estimateTrend(riskSeries);
+  const trendDirection: LongitudinalTrendDirection =
+    trend.significant && trend.direction === "rising"
+      ? "worsening"
+      : trend.significant && trend.direction === "falling"
+        ? "improving"
+        : "uncertain";
+  const seriesTrend = { direction: trendDirection, confidence: trend.confidence, significant: trend.significant };
+
   const longitudinal = assessLongitudinalState({
     relapseModelActive: stage.relapseModelActive,
     baselineActive: stage.baselineActive,
@@ -577,6 +644,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     recoveryAlignment,
     driftEvidenceFeatures: topFeaturesByAbsZ(personalZDeltas, 3),
     priorConsecutiveDriftHums: history.priorConsecutiveDriftHums ?? 0,
+    seriesTrend,
   });
 
   // 9. Two-head split with the consent gate (clinical head withheld by default).
@@ -759,6 +827,10 @@ export function humHistoryFromState(state: PersonalizationState, now: IsoTimesta
     regimeShift: recentRegimeShift(state),
     interventionPolicy: state.profile.intervention_policy,
     contextualCenters: state.profile.contextual_centers,
+    axisCalibration: state.profile.axis_calibration,
+    recentRiskSeries: state.relapseHistory
+      .map((s) => ({ t: Date.parse(s.capturedAt), value: s.riskScore }))
+      .filter((p) => Number.isFinite(p.t)),
   };
 }
 

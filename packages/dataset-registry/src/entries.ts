@@ -52,6 +52,34 @@ export const REGISTRY: readonly DatasetRegistryEntry[] = [
       "Defines the 12s protocol, acoustic feature dictionary, quality gate, robust rolling baseline, and confidence caps. Heuristic and explicitly NOT clinically validated.",
   },
   {
+    id: "native_hum_self_report_corpus",
+    name: "Native-hum self-report corpus (in-app HiTL)",
+    kind: "dataset",
+    role: "dataset",
+    source_path_or_url:
+      "local-first://native-hum-corpus (on-device @hum-ai/native-corpus; derived features + benign valence/arousal self-report; see docs/validation/NATIVE_HUM_DATA_SPEC.md)",
+    domain: "native_hum",
+    task_type: "voice_biomarker",
+    label_type: "dimensional_va",
+    recording_context:
+      "Production 12-second hum capture (apps/web → audio-features → quality-gate); a capture enters the corpus only after passing the Stage ① gate AND being baseline-eligible. Derived features only — raw audio never stored.",
+    population: "general self-tracking users (non-clinical); the user labels their OWN hums",
+    clinical_status: "non_clinical",
+    language: "any",
+    modality: ["audio"],
+    domain_gap_to_hum: "none",
+    // native_hum is the only source of hum truth (ADR-0005). This corpus serves the
+    // affect/personalization track: it finetunes the hum-native axis model, drives the
+    // personal calibration, and is eval-able. It is NOT a relapse-tracking or clinical
+    // corpus — that needs clinician-anchored longitudinal events + IRB (NATIVE_HUM_DATA_SPEC C2).
+    allowed_model_use: ["hum_finetune", "personalization", "affect_prior", "evaluation"],
+    prohibited_model_use: ["clinical_prior", "relapse_tracking", "recommendation", "market_research_only", "pretraining"],
+    consent_notes:
+      "Labels are BENIGN affect self-report (valence/arousal), NOT clinical instruments (PHQ/GAD/CES-DC). Stored on-device under local_processing (default on); backed up to the user's OWN private space under derived_feature_sync. Pooling across users into a shared corpus is a separate backend step requiring its own research consent + IRB. No raw audio; no PHI.",
+    validation_notes:
+      "Created by the human-in-the-loop loop (ADR-0011): after a read the user confirms/adjusts the valence/arousal, minting one {derived features, self-report} row. A hum-native model retrained on it is IN-DOMAIN for hums (no far-domain penalty) and is promoted only when it beats the transparent acoustic backbone on held-out hums. Convergent-validity (correlation) signal, NOT a diagnostic classifier; non-clinical and not clinically validated.",
+  },
+  {
     id: "voice_depression_systematic_review",
     name: "Speech & Voice Quality as Digital Biomarkers in Depression (systematic review)",
     kind: "reference",
