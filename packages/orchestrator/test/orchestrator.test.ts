@@ -90,20 +90,25 @@ test("orchestrator produces a stable output shape for first / early / post basel
   }
 });
 
-test("first hum and early baseline read as 'Early baseline'; post-baseline does not", async () => {
+test("the read works from hum #1: a real evidence band from the first hum; early-baseline is informational only", async () => {
   const first = await orchestrateHumRead(firstHumInput());
+  // The model speaks from hum #1: a real earned band, NOT forced to "early_baseline".
+  assert.notEqual(first.userFacing.confidence.evidenceLevel, "early_baseline");
+  assert.ok(["high", "medium", "low"].includes(first.userFacing.confidence.evidenceLevel));
+  // …but the personal baseline is still forming — surfaced as an informational flag only.
   assert.equal(first.userFacing.isEarlyBaseline, true);
-  assert.equal(first.userFacing.confidence.evidenceLevel, "early_baseline");
   assert.equal(first.internal.stage, "population_prior");
   assert.equal(first.internal.eligibleHumCount, 1);
+  // A clean hum reads with a real dimensional axis read (not a neutral wash).
+  assert.equal(typeof first.internal.axis.dimensional.valence, "number");
+  assert.equal(typeof first.internal.axis.dimensional.arousal, "number");
 
   const early = await orchestrateHumRead({ ...firstHumInput(), history: earlyBaselineHistory });
-  assert.equal(early.userFacing.isEarlyBaseline, true);
-  assert.equal(early.userFacing.confidence.evidenceLevel, "early_baseline");
+  assert.equal(early.userFacing.isEarlyBaseline, true); // 4 eligible hums < 5
 
   const post = await orchestrateHumRead({ ...firstHumInput(), history: postBaselineHistory });
   assert.equal(post.userFacing.isEarlyBaseline, false);
-  assert.notEqual(post.userFacing.confidence.evidenceLevel, "early_baseline");
+  assert.ok(["high", "medium", "low"].includes(post.userFacing.confidence.evidenceLevel));
   assert.equal(post.internal.stage, "relapse_model");
 });
 

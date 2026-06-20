@@ -31,6 +31,7 @@ import { toFeatureVector } from "./feature-schema";
 import { featureContributions, type LogRegParams } from "./model";
 import { LearnedAffectPriorExpert } from "./expert";
 import { predictNeuralFromFeatures, type NeuralFeatureModel } from "./neural-feature-model";
+import { notEvaluatedPromotion } from "./manifest";
 
 /**
  * Inference adapter: run a NEW hum (raw audio OR already-derived features) through
@@ -326,21 +327,7 @@ export async function inferFromHum(input: InferHumInput): Promise<InferenceRepor
     : null;
 
   const nullFeatureCount = countNullFeatures(features);
-  const promotion: InferencePromotion = input.promotion ?? {
-    evaluated: false,
-    gateMetric: "balanced_accuracy",
-    gateThreshold: 0.8,
-    affectTargetId: "affect_fusion_label",
-    affectBalancedAccuracy: null,
-    affectPassedGate: false,
-    affectModelRole: input.model
-      ? "learned 6-class affect prior used as a population prior (no gate manifest supplied)"
-      : "heuristic fallback (no learned model)",
-    promotedAuxTarget: null,
-    promotedAuxBalancedAccuracy: null,
-    datasetsUsed: input.model ? ["ravdess"] : [],
-    note: "No promotion-gate manifest supplied; the affect read is a population prior (or fallback), not a gate-validated model.",
-  };
+  const promotion: InferencePromotion = input.promotion ?? notEvaluatedPromotion({ hasModel: !!input.model });
   const warnings = buildWarnings(inference, quality, domain, fallbackUsed, eligibleHumCount);
   if (promotion.evaluated && !promotion.affectPassedGate) {
     const ba = promotion.affectBalancedAccuracy;

@@ -50,6 +50,7 @@ import {
   toRecommendationView,
 } from "@hum-ai/affect-model-contracts";
 import type {
+  AffectExpert,
   AffectStateHead,
   InterventionType,
   MultiHeadAffectInference,
@@ -63,7 +64,8 @@ import {
 } from "@hum-ai/safety-language";
 import type { UserFacingConfidence } from "@hum-ai/safety-language";
 import { clinicalRiskScore } from "./risk";
-import { INTERVENTION_COPY, broadHeadline, readNote } from "./copy";
+import { INTERVENTION_COPY, axisHeadline, readNote } from "./copy";
+import { resolveAxisRead, axisReadConfidence, type AffectAxisPriors, type AxisRead } from "./axis-read";
 
 /**
  * END-TO-END ORCHESTRATOR (NEXT_PROMPT goal; composes ADR-0006/0007/0008/0009).
@@ -73,6 +75,16 @@ import { INTERVENTION_COPY, broadHeadline, readNote } from "./copy";
  *   audio-features → quality-gate → domain-classifier → expert-ser →
  *   fusion-engine → personalization (dual baseline) → relapse-engine →
  *   intervention-engine → safety-language
+ *
+ * **Pretrained/model inference (optional, governed).** A trained affect-PRIOR
+ * expert (e.g. signal-lab's `LearnedAffectPriorExpert`) may be injected through
+ * the standard `AffectExpert` contract via `input.learnedAffectPrior`. It is a
+ * DROP-IN for the off-domain `SpeechEmotionExpert` stub (same acted-speech role),
+ * fused — not trusted as truth — and it contributes a far-domain confidence cap
+ * (ADR-0005). When absent, the deterministic heuristic ensemble runs unchanged
+ * (honest fallback — no trained model is required to run the spine). The
+ * orchestrator stays decoupled from signal-lab: only the contract crosses the
+ * seam, so the trained model is loaded and constructed by the caller/bridge.
  *
  * and enforces the three closed architecture decisions at the seams:
  *
@@ -108,6 +120,57 @@ export interface HumHistory {
   readonly priorConsecutiveDriftHums?: number;
 }
 
+/**
+ * An optional pretrained affect-PRIOR expert injected into the read. Consumed
+ * through the standard `AffectExpert` contract, so the orchestrator never needs
+ * to know about signal-lab or model artifacts — the caller (or signal-lab's
+ * runtime bridge) loads the model and constructs the expert.
+ *
+ * Governance (ADR-0005): a public-data prior is NEVER hum truth. It is fused as a
+ * drop-in for the off-domain speech-emotion stub and contributes a far-domain
+ * confidence cap (`confidenceCap`, e.g. 0.45) that the strictest-cap rule honours.
+ */
+export interface LearnedAffectPrior {
+  /** The trained prior, behind the same contract as the heuristic experts. */
+  readonly expert: AffectExpert;
+  /** Far-domain confidence cap this prior contributes (ADR-0005); strictest wins. */
+  readonly confidenceCap: UnitInterval;
+  /** Reason surfaced in the binding-cap provenance (defaulted when omitted). */
+  readonly capReason?: string;
+  /** Artifact path the prior was loaded from (provenance only; never synced). */
+  readonly artifact?: string;
+  /**
+   * Whether this prior's affect target passed the promotion gate, sourced from the
+   * loader's model manifest (ADR-0005 / signal-lab `model_manifest.json`). `undefined`
+   * when no manifest accompanied the artifact. Recorded in provenance so a consumer can
+   * never mistake a kept-but-unpromoted population prior for a gate-validated model — the
+   * fused read is identical either way (the prior is always penalized + capped).
+   */
+  readonly gatePassed?: boolean;
+  /** Honest one-line gate/promotion note for provenance (never rendered/synced). */
+  readonly gateNote?: string;
+}
+
+/** Which model produced this read (internal transparency — never rendered/synced). */
+export interface ModelProvenance {
+  readonly kind: "learned_affect_prior" | "heuristic_ensemble";
+  /** Expert id that supplied the learned prior, or null for the heuristic ensemble. */
+  readonly expertId: string | null;
+  /** Artifact path the learned prior came from, or null. */
+  readonly artifact: string | null;
+  /** Number of experts fused this read. */
+  readonly expertCount: number;
+  /**
+   * Whether the prior's affect target passed its promotion gate (manifest-sourced), or
+   * `null` when unknown / heuristic fallback. The read is identical regardless — the
+   * prior is always far-domain-penalized and capped; this is honesty metadata only.
+   */
+  readonly gatePassed: boolean | null;
+  /** Honest gate/promotion note (manifest-sourced), or `null`. Never rendered/synced. */
+  readonly gateNote: string | null;
+  readonly note: string;
+}
+
 export interface OrchestratorInput {
   /** Derived features for the current hum. Raw audio never enters the orchestrator. */
   readonly features: AcousticFeatures;
@@ -116,6 +179,50 @@ export interface OrchestratorInput {
   readonly modelVersion: ModelVersion;
   readonly now: IsoTimestamp;
   readonly history?: HumHistory;
+  /**
+   * Optional pretrained affect-PRIOR expert (drop-in for the speech-emotion stub).
+   * Omit to run the deterministic heuristic ensemble (honest fallback).
+   */
+  readonly learnedAffectPrior?: LearnedAffectPrior;
+  /**
+   * Optional trained coarse VALENCE / AROUSAL axis priors. When supplied they REFINE
+   * the transparent on-domain acoustic axis read when in-domain, and abstain when the
+   * hum is outside their (far-domain acted-speech) training distribution (ADR-0005).
+   * The axis read leads the dimensional read from the first hum either way.
+   */
+  readonly axisPriors?: AffectAxisPriors;
+}
+
+/** The off-domain stub slot a trained acted-speech prior is a drop-in for. */
+const SPEECH_EMOTION_EXPERT_ID = "expert-ser:speech-emotion";
+
+/**
+ * Minimum axis signal strength for a read to be shown. Below this the hum carried
+ * too little clear, voiced audio to read (near-silent / unclear), so we abstain
+ * honestly rather than surface a confident-looking zero.
+ */
+const MIN_READ_SIGNAL = 0.1;
+
+/**
+ * Assemble the audio-stream expert ensemble. With a learned affect prior supplied
+ * it REPLACES the off-domain `SpeechEmotionExpert` stub (same acted-speech role),
+ * so the far-domain view is upgraded, not double-counted; if that slot is somehow
+ * absent the prior is appended. With no prior, the heuristic ensemble is returned
+ * unchanged — the spine runs identically with or without a trained model.
+ */
+function buildExpertEnsemble(prior?: LearnedAffectPrior): AffectExpert[] {
+  const base: AffectExpert[] = defaultAudioExperts();
+  if (!prior) return base;
+  let replaced = false;
+  const ensemble = base.map((e) => {
+    if (e.expertId === SPEECH_EMOTION_EXPERT_ID) {
+      replaced = true;
+      return prior.expert;
+    }
+    return e;
+  });
+  if (!replaced) ensemble.push(prior.expert);
+  return ensemble;
 }
 
 /**
@@ -156,6 +263,12 @@ export interface InternalRead {
   /** How the read was re-referenced against the user's own baseline (transparency). */
   readonly personalization: PersonalizationApplication;
   /**
+   * Which model produced the affective read — a learned prior (drop-in for the
+   * speech-emotion stub) or the heuristic fallback ensemble. Transparency/eval
+   * only; carries no raw-audio-like or clinical-risk key, and is never synced.
+   */
+  readonly modelProvenance: ModelProvenance;
+  /**
    * Per-modality reliability fusion observed this hum, in `MODALITIES` order
    * `[audio, face, text]` (feeds reliability learning). An ARRAY, not an object,
    * so the read carries no `audio`-keyed field through the raw-audio name guard.
@@ -165,6 +278,14 @@ export interface InternalRead {
   readonly domainMatch: UnitInterval;
   readonly stage: PersonalizationStage;
   readonly eligibleHumCount: number;
+  /**
+   * The dimensional axis read this hum led with: the transparent on-domain acoustic
+   * valence/arousal, each optionally refined by an in-domain trained prior (or noting
+   * the prior abstained OOD). Carries per-axis confidence + provenance for the UI.
+   */
+  readonly axis: AxisRead;
+  /** Secondary 6-way affect-label hint (most-likely benign broad state), or null. */
+  readonly affectHint: AffectStateHead | null;
 }
 
 export interface OrchestratedRead {
@@ -244,17 +365,28 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   const domain = new HeuristicDomainClassifier().classify(features);
   const domainAdaptation = new HumDomainAdapter().scoreCapture(domain);
 
-  // 4. Audio-stream experts.
+  // 4. Audio-stream experts. A trained affect prior, when supplied, drops into the
+  //    speech-emotion slot (pretrained/model inference); otherwise the heuristic
+  //    ensemble runs unchanged (honest fallback — no trained model required).
+  const ensemble = buildExpertEnsemble(input.learnedAffectPrior);
   const meta = { modality: "audio" as const, captureQuality: quality.captureQualityScore };
-  const experts = await Promise.all(defaultAudioExperts().map((e) => e.predict(features, meta)));
+  const experts = await Promise.all(ensemble.map((e) => e.predict(features, meta)));
   const observedModalityReliability = modalityReliability(experts);
 
-  // 5. Strictest of the personalization-stage, capture-quality and domain caps.
-  const caps = combineCaps([
+  // 5. Strictest of the personalization-stage, capture-quality, domain, and (when a
+  //    trained prior is fused) the prior's far-domain caps (ADR-0005). Strictest wins.
+  const capParts = [
     { cap: stage.confidenceCap, reason: stage.capReason },
     { cap: quality.confidenceCap, reason: `capture quality (${quality.captureQuality})` },
     { cap: domainAdaptation.confidencePenalty, reason: `domain match (heard ${domain.predicted})` },
-  ]);
+  ];
+  if (input.learnedAffectPrior) {
+    capParts.push({
+      cap: input.learnedAffectPrior.confidenceCap,
+      reason: input.learnedAffectPrior.capReason ?? "learned affect prior far-domain penalty (ADR-0005)",
+    });
+  }
+  const caps = combineCaps(capParts);
 
   // 6. Late fusion → calibrated multi-head inference.
   const fusionCtx: FusionContext = {
@@ -267,17 +399,39 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   };
   const baseInf = new FusionEngine().fuse(experts, fusionCtx);
 
-  // 6b. PERSONALIZATION — re-reference the population-prior read against the user's
-  //     OWN rolling baseline so the read is INDIVIDUAL, not population-derived. The
-  //     more this hum matches the user's usual, the more it reads as their usual;
-  //     the more it departs, the more the prior is preserved. Influence is 0 until
-  //     the baseline is active and grows up the ladder (`applyPersonalization`).
+  // 6a. AXIS READ — lead with VALENCE + AROUSAL from the first hum. A transparent,
+  //     on-domain acoustic mapping produces the dimensional read (always meaningful on
+  //     real audio); the trained far-domain axis priors REFINE it only when in-domain
+  //     and abstain otherwise (ADR-0005). This replaces the neutral-washed fused
+  //     dimensional point as the read the rest of the spine reasons over.
+  const axisRead = resolveAxisRead(features, input.axisPriors);
+  const readAbstained = quality.decision === "rejected" || axisRead.signalStrength < MIN_READ_SIGNAL;
+  const axisConfidence = axisReadConfidence(axisRead);
+  const axisLedInf: MultiHeadAffectInference = {
+    ...baseInf,
+    dimensional: axisRead.dimensional,
+    abstained: readAbstained,
+    abstainReason: readAbstained
+      ? quality.decision === "rejected"
+        ? "poor_capture_quality"
+        : baseInf.abstained
+          ? baseInf.abstainReason
+          : "low_margin"
+      : "none",
+  };
+
+  // 6b. PERSONALIZATION — re-reference the axis read against the user's OWN rolling
+  //     baseline so the read is INDIVIDUAL, not population-derived. The more this hum
+  //     matches the user's usual, the more it reads as their usual; the more it
+  //     departs, the more the read is preserved. SILENT progressive refinement — it
+  //     never gates or hides the read, and has nothing to act on until a baseline
+  //     forms (`applyPersonalization`).
   const currentSamples = humFeatureSamples(features);
   const personalZDeltas = stage.baselineActive
     ? zDeltasAgainstBaseline(currentSamples, dualBaseline.rolling.vector)
     : {};
   const { inference: personalizedInf, application: personalization } = applyPersonalization(
-    baseInf,
+    axisLedInf,
     personalZDeltas,
     stage,
   );
@@ -360,14 +514,20 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   // 9. Two-head split with the consent gate (clinical head withheld by default).
   const twoHead = splitInference(inference, consent);
 
-  // 10. Qualitative confidence + plain copy, then SCREEN everything.
-  const confidence = userFacingConfidence(inference.confidence, eligibleHumCount);
-  const dominant = inference.abstained ? null : dominantBroadState(twoHead.broad.states);
+  // 10. Qualitative confidence + plain copy, then SCREEN everything. The user-facing
+  //     confidence is EARNED FROM THIS HUM'S axis read (signal clarity + in-domain
+  //     trained agreement) — NOT gated behind a multi-hum calibration count. The
+  //     internal fusion confidence still drives the longitudinal / risk path.
+  const confidence = userFacingConfidence(
+    { confidence: axisConfidence, abstained: inference.abstained },
+    eligibleHumCount,
+  );
+  const affectHint = inference.abstained ? null : dominantBroadState(twoHead.broad.states);
   const userFacing: UserFacingRead = {
     abstained: inference.abstained,
     isEarlyBaseline: confidence.isEarlyBaseline,
     confidence,
-    headline: broadHeadline(dominant, inference.abstained),
+    headline: axisHeadline(inference.dimensional.valence, inference.dimensional.arousal, inference.abstained),
     note: readNote({
       abstained: inference.abstained,
       isEarlyBaseline: confidence.isEarlyBaseline,
@@ -389,6 +549,28 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   // Structural backstop: no clinical-risk marker key may appear in the rendered object.
   assertNoClinicalLeak(userFacing);
 
+  const modelProvenance: ModelProvenance = input.learnedAffectPrior
+    ? {
+        kind: "learned_affect_prior",
+        expertId: input.learnedAffectPrior.expert.expertId,
+        artifact: input.learnedAffectPrior.artifact ?? null,
+        expertCount: experts.length,
+        gatePassed: input.learnedAffectPrior.gatePassed ?? null,
+        gateNote: input.learnedAffectPrior.gateNote ?? null,
+        note:
+          "Trained affect PRIOR fused as a drop-in for the off-domain speech-emotion stub; " +
+          "far-domain (acted speech), penalized, never hum truth (ADR-0005).",
+      }
+    : {
+        kind: "heuristic_ensemble",
+        expertId: null,
+        artifact: null,
+        expertCount: experts.length,
+        gatePassed: null,
+        gateNote: null,
+        note: "Deterministic heuristic SER-family experts (no trained model supplied; honest fallback).",
+      };
+
   return {
     userFacing,
     recommendationView,
@@ -403,10 +585,13 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       quality,
       domain,
       personalization,
+      modelProvenance,
       observedModalityReliabilityByOrder: MODALITIES.map((m) => observedModalityReliability[m]),
       domainMatch: domainAdaptation.domainMatch,
       stage: stage.stage,
       eligibleHumCount,
+      axis: axisRead,
+      affectHint,
     },
   };
 }
@@ -419,6 +604,10 @@ export interface AudioOrchestratorInput {
   readonly modelVersion: ModelVersion;
   readonly now: IsoTimestamp;
   readonly history?: HumHistory;
+  /** Optional pretrained affect-PRIOR expert (drop-in); omit for heuristic fallback. */
+  readonly learnedAffectPrior?: LearnedAffectPrior;
+  /** Optional trained coarse valence / arousal axis priors (refine the axis read). */
+  readonly axisPriors?: AffectAxisPriors;
 }
 
 /**
@@ -436,6 +625,8 @@ export async function orchestrateHumAudio(input: AudioOrchestratorInput): Promis
     modelVersion: input.modelVersion,
     now: input.now,
     history: input.history,
+    learnedAffectPrior: input.learnedAffectPrior,
+    axisPriors: input.axisPriors,
   });
 }
 

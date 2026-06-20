@@ -32,6 +32,30 @@ export function broadHeadline(dominant: AffectStateHead | null, abstained: boole
 }
 
 /**
+ * Headline from the leading VALENCE + AROUSAL axis read (the dimensional read the
+ * runtime now leads with). Reflective and non-diagnostic — describes how the hum
+ * SOUNDED, never a state label or a clinical claim. Screened at the boundary like
+ * all user copy.
+ */
+export function axisHeadline(valence: number, arousal: number, abstained: boolean): string {
+  if (abstained) return "We couldn't get a clear read from this hum.";
+  const T = 0.2;
+  const hiA = arousal > T;
+  const loA = arousal < -T;
+  const hiV = valence > T;
+  const loV = valence < -T;
+  if (hiA && hiV) return "This hum sounded bright and energized.";
+  if (hiA && loV) return "This hum sounded tense and activated.";
+  if (loA && hiV) return "This hum sounded calm and settled.";
+  if (loA && loV) return "This hum sounded subdued and low in energy.";
+  if (hiA) return "This hum sounded activated.";
+  if (loA) return "This hum sounded quiet and settled.";
+  if (hiV) return "This hum sounded warm and even.";
+  if (loV) return "This hum sounded a little flat.";
+  return "This hum sounded steady and close to neutral.";
+}
+
+/**
  * A gentle, NON-ALARMING note. Baseline divergence may nudge the wording toward
  * "a little different from your recent usual" — but never names a risk, never
  * diagnoses, and never raises an alarm (ADR-0006 / ADR-0008 framing).

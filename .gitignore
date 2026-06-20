@@ -14,6 +14,10 @@ dist/
 build/
 *.tsbuildinfo
 
+# --- Web client: model artifacts staged from the git-ignored data/ tree at build
+#     time (derived priors served as static assets; never committed) ---
+apps/web/public/models/
+
 # --- Extraction scratch (local source-text caches; never committed) ---
 .extract/
 
@@ -134,3 +138,4 @@ Thumbs.db
 
 # --- Coverage ---
 coverage/
+.env*.local

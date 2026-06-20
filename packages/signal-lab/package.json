@@ -19,6 +19,7 @@
     "@hum-ai/fusion-engine": "*",
     "@hum-ai/personalization-engine": "*",
     "@hum-ai/intervention-engine": "*",
-    "@hum-ai/safety-language": "*"
+    "@hum-ai/safety-language": "*",
+    "@hum-ai/orchestrator": "*"
   }
 }

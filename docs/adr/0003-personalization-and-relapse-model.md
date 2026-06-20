@@ -1,6 +1,8 @@
 # ADR-0003: Personalization and Relapse Model
 
-- **Status:** Accepted
+> **Superseded in part by [ADR-0010](0010-model-led-read-from-first-hum.md) (2026-06-20).** The 5-stage ladder below is retained, but it is **no longer a gate that hides the read**: the read leads with an immediate valence + arousal axis read from hum #1, and the personal baseline / relapse model are *silent progressive refinement*. The relapse engine still legitimately requires 20+ hums of history (it abstains otherwise). The 88% clinical cap + consent gate (ADR-0006) are unchanged.
+
+- **Status:** Accepted (personalization ladder demoted from read-gate to refinement by ADR-0010)
 - **Date:** 2026-06-18
 - **Packages:** `@hum-ai/personalization-engine`, `@hum-ai/relapse-engine` (with `@hum-ai/shared-types`, `@hum-ai/affect-model-contracts`, `@hum-ai/quality-gate`)
 - **Related:** [Personalization and Relapse Architecture](../architecture/PERSONALIZATION_AND_RELAPSE_ARCHITECTURE.md), [Claims Ladder](../claims/CLAIMS_LADDER.md), [Validation Plan](../validation/VALIDATION_PLAN.md)

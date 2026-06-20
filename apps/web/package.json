@@ -2,12 +2,27 @@
   "name": "@hum-ai/app-web",
   "version": "0.0.0",
   "private": true,
-  "description": "Placeholder for the Hum web app (capture → read → song). UI is intentionally not built in this pass.",
+  "description": "Hum AI web client — a barebones, local-first SPA that drives the full hum read spine on-device (capture → features → spine → safe read), grows a personal baseline across hums, and optionally syncs derived-only summaries to Firebase.",
   "type": "module",
+  "scripts": {
+    "prebuild": "node scripts/copy-model.mjs",
+    "predev": "node scripts/copy-model.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
+    "@hum-ai/affect-model-contracts": "*",
     "@hum-ai/audio-features": "*",
     "@hum-ai/orchestrator": "*",
+    "@hum-ai/personalization-engine": "*",
+    "@hum-ai/relapse-engine": "*",
     "@hum-ai/shared-types": "*",
+    "@hum-ai/signal-lab": "*",
     "firebase": "^12.15.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
   }
 }

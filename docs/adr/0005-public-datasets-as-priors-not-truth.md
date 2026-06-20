@@ -1,6 +1,8 @@
 # ADR-0005: Public Datasets as Priors, Not Truth
 
-- **Status:** Accepted
+> **Refined by [ADR-0010](0010-model-led-read-from-first-hum.md) (2026-06-20).** The "priors only, never hum truth" governance here is fully retained. ADR-0010 adds the operational consequence that, because the far-domain priors **saturate / go out-of-distribution on real hums**, they are NOT the primary read: the read leads with a transparent on-domain acoustic valence/arousal mapping, and a trained prior contributes only when it is in-domain (it abstains otherwise). Far-domain penalty + gate-honesty are unchanged.
+
+- **Status:** Accepted (operationalized by ADR-0010)
 - **Date:** 2026-06-18
 - **Deciders:** ML architecture, clinical review, data governance
 - **Related:** [ADR-0002 — Domain-Aware Audio Modeling](./0002-domain-aware-audio-modeling.md) ·

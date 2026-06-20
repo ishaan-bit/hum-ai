@@ -8,9 +8,14 @@
  * accuracy the system does not have.
  *
  * Instead, users see qualitative, honest language:
- *  - **Signal clarity** — High / Medium / Low evidence, or "Early baseline".
+ *  - **Signal clarity** — High / Medium / Low evidence, EARNED from this hum's own
+ *    read (signal clarity + in-domain trained agreement), available from the FIRST
+ *    hum. It is NOT gated behind a multi-hum calibration count (redo direction): the
+ *    model speaks from hum #1.
  *  - **Based on N clean hums** — grounds the read in how much the system knows.
- *  - **Early baseline** — explicit while the personal baseline is still forming.
+ *  - **Early baseline** — an INFORMATIONAL flag while the personal baseline is still
+ *    forming (the read is population-level, not yet personalized). It no longer
+ *    overrides the evidence level — it is surfaced as a gentle secondary note.
  *
  * This module is the one-way translation from internal confidence → user copy.
  * It takes a structural confidence input (so it stays free of the model-contract
@@ -27,19 +32,24 @@ export interface ConfidenceLike {
 export const EVIDENCE_LEVELS = ["early_baseline", "low", "medium", "high"] as const;
 export type EvidenceLevel = (typeof EVIDENCE_LEVELS)[number];
 
-/** Eligible hums below which the read is always framed as "Early baseline". */
-export const EARLY_BASELINE_HUMS = 5; // baseline activates at 5 (hum_spec §4.6)
+/** Eligible hums below which the personal baseline is still forming (informational). */
+export const EARLY_BASELINE_HUMS = 5; // personal baseline matures around here (hum_spec §4.6)
 
-/** Confidence bands (internal number → qualitative level), once baseline-active. */
-export const EVIDENCE_BANDS = { high: 0.8, medium: 0.6 } as const;
+/** Confidence bands (internal number → qualitative level). */
+export const EVIDENCE_BANDS = { high: 0.72, medium: 0.5 } as const;
+
+/** True while the personal baseline is still forming (read is population-level). */
+export function isStillFormingBaseline(eligibleHumCount: number): boolean {
+  return Math.floor(eligibleHumCount) < EARLY_BASELINE_HUMS;
+}
 
 /**
- * Map internal confidence + maturity to a qualitative evidence level. Pre-baseline
- * accounts are always "early_baseline" regardless of the number; abstaining reads
- * are "low".
+ * Map the read's EARNED confidence to a qualitative evidence level — from the FIRST
+ * hum. Abstaining reads are "low". The evidence level is no longer forced to
+ * "early_baseline" by a low hum count (redo direction: the model speaks from hum #1);
+ * `eligibleHumCount` is accepted for signature stability but no longer gates the level.
  */
-export function evidenceLevelFromConfidence(c: ConfidenceLike, eligibleHumCount: number): EvidenceLevel {
-  if (eligibleHumCount < EARLY_BASELINE_HUMS) return "early_baseline";
+export function evidenceLevelFromConfidence(c: ConfidenceLike, _eligibleHumCount = Number.POSITIVE_INFINITY): EvidenceLevel {
   if (c.abstained) return "low";
   if (c.confidence >= EVIDENCE_BANDS.high) return "high";
   if (c.confidence >= EVIDENCE_BANDS.medium) return "medium";
@@ -85,14 +95,16 @@ export interface UserFacingConfidence {
  * includes the raw numeric confidence.
  */
 export function userFacingConfidence(c: ConfidenceLike, eligibleHumCount: number): UserFacingConfidence {
-  const evidenceLevel = evidenceLevelFromConfidence(c, eligibleHumCount);
+  const evidenceLevel = evidenceLevelFromConfidence(c);
   const signalClarity = signalClarityLabel(evidenceLevel);
   const basedOn = basedOnCleanHums(eligibleHumCount);
   return {
     evidenceLevel,
     signalClarity,
     basedOn,
-    isEarlyBaseline: evidenceLevel === "early_baseline",
+    // Informational only now (does NOT force the evidence level): the personal
+    // baseline is still forming, so the read is population-level, not personalized.
+    isEarlyBaseline: isStillFormingBaseline(eligibleHumCount),
     summary: `Signal clarity: ${signalClarity} · ${basedOn}`,
   };
 }

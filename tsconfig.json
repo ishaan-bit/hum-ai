@@ -40,9 +40,13 @@
       "@hum-ai/orchestrator": ["packages/orchestrator/src/index.ts"],
       "@hum-ai/naming-check": ["packages/naming-check/src/index.ts"],
       "@hum-ai/qa-gates": ["packages/qa-gates/src/index.ts"],
-      "@hum-ai/signal-lab": ["packages/signal-lab/src/index.ts"]
+      "@hum-ai/signal-lab": ["packages/signal-lab/src/index.ts"],
+      "@hum-ai/signal-lab/model": ["packages/signal-lab/src/model.ts"],
+      "@hum-ai/signal-lab/expert": ["packages/signal-lab/src/expert.ts"],
+      "@hum-ai/signal-lab/axis-prior": ["packages/signal-lab/src/axis-prior.ts"]
     }
   },
-  "include": ["packages/**/*.ts", "apps/web/src/**/*.ts", "apps/web/demo/**/*.ts"],
-  "exclude": ["node_modules", "**/dist", "**/*.d.ts"]
+  "//": "The browser SPA under apps/web/src/app is typechecked by apps/web/tsconfig.json (DOM lib); excluded here so the engine packages stay DOM-free.",
+  "include": ["packages/**/*.ts", "apps/web/src/firebase.ts", "apps/web/demo/**/*.ts"],
+  "exclude": ["node_modules", "**/dist", "**/*.d.ts", "apps/web/src/app"]
 }

@@ -3,358 +3,115 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hum AI — preview placeholder</title>
+    <title>Hum AI — daily voice ritual (research preview)</title>
     <meta
       name="description"
-      content="Hum AI — voice-first, local-first affective modeling around a standardized 12-second hum. Non-clinical, research-stage. This page is a preview placeholder; the product UI is not built yet."
+      content="Hum AI — a private, local-first daily 12-second hum. The full affective read spine runs on-device; raw audio never leaves your device. Non-clinical, research-stage, not a diagnosis."
     />
     <meta name="robots" content="noindex" />
-    <style>
-      :root { color-scheme: dark; }
-
-      *, *::before, *::after { box-sizing: border-box; }
-
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        background: #0b0c10;
-        color: #e8e8ea;
-        padding: 0 1.25rem 3rem;
-      }
-
-      /* ── layout ── */
-      .page {
-        max-width: 42rem;
-        margin: 0 auto;
-      }
-
-      /* ── top badge bar ── */
-      .topbar {
-        padding: 1.1rem 0 0;
-        display: flex;
-        gap: 0.5rem;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-
-      .badge {
-        display: inline-block;
-        font-size: 0.7rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        font-weight: 700;
-        padding: 0.2rem 0.6rem;
-        border-radius: 999px;
-      }
-      .badge-preview { background: #f5c518; color: #0b0c10; }
-      .badge-research { background: #1e2a3a; color: #7eb8f7; border: 1px solid #2c3f57; }
-      .badge-nonclinical { background: #1e2a1e; color: #6fcf7c; border: 1px solid #2a3f2a; }
-
-      /* ── hero ── */
-      .hero {
-        padding: 3.5rem 0 2.5rem;
-        border-bottom: 1px solid #1e2028;
-      }
-
-      .hero-eyebrow {
-        font-size: 0.8rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: #6b7178;
-        margin: 0 0 0.75rem;
-      }
-
-      h1 {
-        font-size: clamp(2rem, 5vw, 3rem);
-        font-weight: 800;
-        letter-spacing: -0.03em;
-        margin: 0 0 0.6rem;
-        line-height: 1.1;
-        color: #f0f0f2;
-      }
-
-      .hero-sub {
-        font-size: 1.1rem;
-        color: #9aa0a6;
-        margin: 0 0 1.5rem;
-        max-width: 34rem;
-        line-height: 1.55;
-      }
-
-      .hero-note {
-        font-size: 0.85rem;
-        color: #6b7178;
-        background: #13151a;
-        border: 1px solid #1e2028;
-        border-radius: 6px;
-        padding: 0.65rem 0.9rem;
-        display: inline-block;
-        max-width: 34rem;
-      }
-
-      /* ── sections ── */
-      section {
-        padding: 2.25rem 0;
-        border-bottom: 1px solid #1e2028;
-      }
-
-      h2 {
-        font-size: 1rem;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        color: #7eb8f7;
-        margin: 0 0 1.1rem;
-      }
-
-      /* ── what-it-is / what-it-is-not grid ── */
-      .two-col {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 1.5rem;
-      }
-
-      @media (max-width: 540px) {
-        .two-col { grid-template-columns: 1fr; }
-      }
-
-      .col-card {
-        background: #13151a;
-        border: 1px solid #1e2028;
-        border-radius: 8px;
-        padding: 1.1rem 1.2rem 1.3rem;
-      }
-
-      .col-card h3 {
-        font-size: 0.8rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        margin: 0 0 0.85rem;
-      }
-      .col-card.is h3 { color: #6fcf7c; }
-      .col-card.isnot h3 { color: #e07070; }
-
-      .col-card ul {
-        margin: 0;
-        padding-left: 1.1rem;
-        color: #c7cad1;
-        font-size: 0.93rem;
-        line-height: 1.7;
-      }
-
-      /* ── how-it-works list ── */
-      .how-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.6rem;
-      }
-
-      .how-list li {
-        display: flex;
-        gap: 0.75rem;
-        align-items: flex-start;
-        color: #c7cad1;
-        font-size: 0.95rem;
-        line-height: 1.55;
-      }
-
-      .step-num {
-        flex-shrink: 0;
-        width: 1.5rem;
-        height: 1.5rem;
-        border-radius: 50%;
-        background: #1e2a3a;
-        border: 1px solid #2c3f57;
-        color: #7eb8f7;
-        font-size: 0.7rem;
-        font-weight: 700;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-top: 0.1rem;
-      }
-
-      /* ── privacy callout ── */
-      .privacy-box {
-        background: #0f1a0f;
-        border: 1px solid #2a3f2a;
-        border-radius: 8px;
-        padding: 1.1rem 1.25rem;
-        color: #b8d4b8;
-        font-size: 0.92rem;
-        line-height: 1.6;
-      }
-
-      .privacy-box strong { color: #6fcf7c; }
-
-      /* ── architecture note ── */
-      .arch-note {
-        color: #9aa0a6;
-        font-size: 0.93rem;
-        line-height: 1.65;
-      }
-
-      .arch-note code {
-        font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-        font-size: 0.85em;
-        background: #1a1c23;
-        border: 1px solid #2a2c35;
-        border-radius: 4px;
-        padding: 0.1em 0.35em;
-        color: #c7cad1;
-      }
-
-      /* ── footer ── */
-      footer {
-        padding: 1.75rem 0 0;
-        color: #454a52;
-        font-size: 0.8rem;
-        line-height: 1.7;
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-      }
-
-      footer a { color: #6b7178; text-decoration: none; }
-      footer a:hover { color: #9aa0a6; }
-    </style>
   </head>
   <body>
     <div class="page">
-
-      <!-- top badge bar -->
       <div class="topbar">
-        <span class="badge badge-preview">Preview placeholder</span>
-        <span class="badge badge-research">Research stage</span>
-        <span class="badge badge-nonclinical">Non-clinical</span>
+        <span class="badge badge-research">Research preview</span>
+        <span class="badge badge-nonclinical">Non-clinical · not a diagnosis</span>
+        <span class="badge badge-local">Local-first</span>
       </div>
 
-      <!-- hero -->
       <header class="hero">
         <p class="hero-eyebrow">Hum AI</p>
         <h1>Your voice, once a day.</h1>
         <p class="hero-sub">
-          A private, standardized 12-second hum as a daily ritual.
-          Voice-first affective modeling that runs on-device, surfaces
-          reflective signals, and never tells you what you have.
+          Hum for ~12 seconds and get a read <strong>from your very first hum</strong> —
+          a valence + arousal reflection computed <strong>on your device</strong>. Trained
+          priors refine it where they're in-domain; over time it quietly learns <em>your</em>
+          baseline and adds a longitudinal view. No 5-hum calibration wall. Raw audio never
+          leaves your device. Reflective and non-diagnostic.
         </p>
-        <span class="hero-note">
-          This page is a <strong>preview placeholder</strong> — the product UI is not
-          built yet. The intelligence core lives in the <code>packages/*</code>
-          workspaces. Nothing on this page is a finished or validated product.
-        </span>
+        <p id="model-status" class="model-status">Loading model…</p>
       </header>
 
-      <!-- what it is / what it is not -->
-      <section aria-label="What Hum AI is and is not">
-        <h2>What it is &amp; what it is not</h2>
-        <div class="two-col">
-          <div class="col-card is">
-            <h3>What it is</h3>
-            <ul>
-              <li>A private daily voice ritual — one hum, about 12 seconds</li>
-              <li>Voice-first affective signal modeling, on-device</li>
-              <li>Reflective markers and longitudinal patterns over time</li>
-              <li>Local-first: raw audio stays on your device by default</li>
-              <li>A research architecture in progress</li>
-            </ul>
-          </div>
-          <div class="col-card isnot">
-            <h3>What it is not</h3>
-            <ul>
-              <li>Not a medical device or diagnostic tool</li>
-              <li>Does not produce a diagnosis, ever</li>
-              <li>Not clinically validated</li>
-              <li>Not FDA-cleared or regulated</li>
-              <li>Not a finished or shipped product</li>
-            </ul>
-          </div>
+      <!-- consent -->
+      <section class="card">
+        <h2>Consent</h2>
+        <p class="muted small">
+          On-device processing is always local. Everything that leaves the device is opt-in.
+        </p>
+        <label class="toggle">
+          <input type="checkbox" id="consent-sync" />
+          <span>Back up <strong>derived-only</strong> summaries to my private cloud space (Firebase). No raw audio, ever.</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="consent-clinical" />
+          <span>Surface the consent-gated <strong>longitudinal / risk-marker</strong> view (non-diagnostic, ADR-0006).</span>
+        </label>
+        <p id="sync-status" class="sync-status muted small">Local-only.</p>
+      </section>
+
+      <!-- capture -->
+      <section class="card">
+        <h2>Record a hum</h2>
+        <div class="controls">
+          <button id="btn-record" data-capture class="btn btn-primary">🎙 Record 12s hum</button>
+          <button id="btn-clean" data-capture class="btn">Simulate clean hum</button>
+          <button id="btn-noisy" data-capture class="btn">Simulate noisy</button>
+          <button id="btn-silence" data-capture class="btn">Simulate silence</button>
+          <button id="btn-week" data-capture class="btn btn-ghost">Simulate a week (×7)</button>
+          <button id="btn-reset" class="btn btn-ghost">Reset baseline</button>
+        </div>
+        <div id="live-meter" class="live-meter" hidden>
+          <div class="live-track"><span class="live-fill"></span></div>
+          <p class="live-read muted small"></p>
+        </div>
+        <div id="capture-progress" class="capture-progress" hidden><span></span></div>
+        <p id="capture-status" class="capture-status muted small">Ready. No mic? Use a simulated hum.</p>
+      </section>
+
+      <!-- read -->
+      <section class="card read">
+        <h2>Today's read</h2>
+        <div id="read-card" class="read-card">
+          <p class="muted">Record or simulate a hum to see your reflective read.</p>
+        </div>
+        <div id="axes-card" class="bands-card"></div>
+      </section>
+
+      <!-- personalization status -->
+      <section class="card">
+        <div id="personalization-card" class="personalization-card">
+          <h3>Personalization <span class="muted small">(silent refinement — never gates the read)</span></h3>
+          <p class="muted">Your personal baseline forms as you hum. The read works from hum #1 regardless.</p>
         </div>
       </section>
 
-      <!-- how it works (future pipeline) -->
-      <section aria-label="How Hum AI works">
-        <h2>How it works (when built)</h2>
-        <ol class="how-list" aria-label="Pipeline steps">
-          <li>
-            <span class="step-num" aria-hidden="true">1</span>
-            <span>Record a ~12-second hum — a short, consistent vocal gesture, nothing more.</span>
-          </li>
-          <li>
-            <span class="step-num" aria-hidden="true">2</span>
-            <span>Extract audio features entirely on-device. Raw audio never moves.</span>
-          </li>
-          <li>
-            <span class="step-num" aria-hidden="true">3</span>
-            <span>Gate quality — if the hum is too noisy or short, ask again.</span>
-          </li>
-          <li>
-            <span class="step-num" aria-hidden="true">4</span>
-            <span>Run voice-affect experts (speech emotion, text emotion, optionally face expression) and fuse signals with calibrated, capped confidence.</span>
-          </li>
-          <li>
-            <span class="step-num" aria-hidden="true">5</span>
-            <span>Compare against your personal baseline — no population norms imposed on you.</span>
-          </li>
-          <li>
-            <span class="step-num" aria-hidden="true">6</span>
-            <span>Return plain-language reflective copy. No raw scores shown. No diagnosis. No clinical language.</span>
-          </li>
-        </ol>
+      <!-- maturity / ladder -->
+      <section class="card">
+        <div id="ladder-card" class="ladder-card"></div>
       </section>
 
-      <!-- privacy -->
-      <section aria-label="Privacy">
-        <h2>Privacy</h2>
-        <div class="privacy-box">
-          <strong>Raw audio never leaves your device by default.</strong>
-          Only derived, numerical features can sync — and the sync payload is
-          validated at the type level to assert no raw audio fields are present
-          (<code>assertNoRawAudioFields</code>). Your hum stays yours.
-          Camera input is not part of this design.
+      <!-- consent-gated longitudinal -->
+      <section class="card" id="longitudinal-card" hidden></section>
+
+      <!-- history -->
+      <section class="card">
+        <h2>This session</h2>
+        <ul id="history-list" class="history-list"></ul>
+      </section>
+
+      <!-- provenance + privacy -->
+      <section class="card provenance-card">
+        <h2>Provenance &amp; privacy</h2>
+        <div id="provenance" class="provenance">
+          <p class="muted small">Run a hum to see which model produced the read.</p>
         </div>
       </section>
 
-      <!-- architecture -->
-      <section aria-label="Architecture">
-        <h2>Architecture &amp; status</h2>
-        <p class="arch-note">
-          The intelligence core — audio feature extraction, quality gating, domain
-          classification, expert models, fusion engine, personalization, relapse
-          detection, intervention engine, and safety-language rendering — is
-          implemented as a set of typed TypeScript packages under
-          <code>packages/*</code> in this monorepo.
-        </p>
-        <p class="arch-note">
-          The hum-only <strong>voice core is now real and runnable locally</strong>:
-          a pure-TypeScript DSP feature extractor feeds the quality gate, domain
-          classifier, experts, fusion, personalization and safety-language layers
-          end to end. Run <code>npm run demo:voice</code> to drive synthetic hums
-          through the whole pipeline (no microphone, no camera). It is still
-          research-stage and non-clinical — deterministic signal processing, not a
-          trained or validated model.
-        </p>
-        <p class="arch-note">
-          The browser client (this surface) is <strong>intentionally not built in
-          this pass</strong>. Wiring a real capture surface → pipeline → display is
-          a later step. This placeholder exists so the Vercel project can be linked
-          and previewed without fabricating a product page.
-        </p>
-      </section>
-
-      <!-- footer -->
       <footer>
-        <span>Hum AI &middot; foundation 0.0.0 &middot; preview placeholder — not production</span>
-        <span>
-          Not a medical device. Not clinically validated. Does not provide diagnosis or medical advice.
-        </span>
+        <span>Hum AI · research preview — not production, not a medical device.</span>
+        <span>Does not provide a diagnosis or medical advice. Not clinically validated. Not FDA-cleared.</span>
       </footer>
-
     </div>
+
+    <script type="module" src="/src/app/main.ts"></script>
   </body>
 </html>

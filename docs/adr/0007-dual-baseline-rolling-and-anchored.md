@@ -1,6 +1,8 @@
 # ADR-0007: Dual Baseline — Rolling Short-Term and Anchored Long-Term
 
-- **Status:** Accepted
+> **Refined by [ADR-0010](0010-model-led-read-from-first-hum.md) (2026-06-20).** The dual baseline and its activation thresholds are retained, but baseline activation **no longer gates the user-facing read** — it silently *refines* an axis read that is already shown from hum #1. The divergence/relapse signals still legitimately require accumulated history.
+
+- **Status:** Accepted (baseline demoted from read-gate to refinement by ADR-0010)
 - **Date:** 2026-06-18
 - **Deciders:** ML architecture, eng leads
 - **Packages:** `@hum-ai/personalization-engine`, `@hum-ai/relapse-engine`, `@hum-ai/shared-types`

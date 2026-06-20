@@ -1,12 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
+import type { AcousticFeatures } from "@hum-ai/audio-features";
 import { synthHum, synthSpeechLike } from "@hum-ai/audio-features";
+import type { FusionLabel } from "@hum-ai/affect-model-contracts";
 import { buildAvailabilityReport } from "./datasets";
 import { runPipeline } from "./pipeline";
 import { runExperiment } from "./experiment";
 import { runNeuralExport } from "./export-neural";
-import { deserializeModel, type LogRegParams } from "./model";
-import { inferFromHum, type InferencePromotion } from "./inference";
-import { parseNeuralFeatureModel, type NeuralFeatureModel } from "./neural-feature-model";
+import { deserializeModel, serializeModel, trainLogReg, type LogRegParams } from "./model";
+import { featureVectorNames, toFeatureVector } from "./feature-schema";
+import { AROUSAL_BINARY_TARGET, VALENCE_BINARY_TARGET, type TargetDef } from "./targets";
+import { inferFromHum } from "./inference";
+import { loadNeuralAuxModel, loadPromotionManifest } from "./manifest";
 import { artifactPath } from "./paths";
 import {
   buildAvailabilityMarkdown,
@@ -39,54 +43,10 @@ function loadModel(env?: NodeJS.ProcessEnv): { model: LogRegParams | null; path:
   return { model: null, path: null };
 }
 
-/** Load the experiment's gate manifest (if present) into an honest promotion block. */
-function loadPromotion(env?: NodeJS.ProcessEnv): InferencePromotion | undefined {
-  const p = artifactPath("model_manifest.json", env);
-  if (!existsSync(p)) return undefined;
-  try {
-    const m = JSON.parse(readFileSync(p, "utf8"));
-    return {
-      evaluated: true,
-      gateMetric: m.gate?.metric ?? "balanced_accuracy",
-      gateThreshold: m.gate?.threshold ?? 0.8,
-      affectTargetId: m.priorAffectModel?.target ?? "affect_fusion_label",
-      affectBalancedAccuracy: m.priorAffectModel?.balancedAccuracy ?? null,
-      affectPassedGate: m.priorAffectModel?.passedGate ?? false,
-      affectModelRole: m.priorAffectModel?.role ?? "population prior",
-      promotedAuxTarget: m.promoted?.targetId ?? null,
-      promotedAuxBalancedAccuracy: m.promoted?.balancedAccuracy ?? null,
-      datasetsUsed: m.datasets?.supervised ?? [],
-      note: m.inferenceImpact ?? "",
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Load a promoted feature-space NEURAL model (gate-passed coarse prior) if its
- * git-ignored artifact exists. Pure-TS op-graph — no Python/ONNX/GPU at runtime.
- * Returns null (and the runtime keeps its classical/fallback behavior) when the
- * artifact is absent or the feature contract has drifted.
- */
-function loadNeuralAux(env?: NodeJS.ProcessEnv): { model: NeuralFeatureModel | null; path: string | null } {
-  for (const name of ["neural/model.neural.arousal_binary.json", "neural/model.neural.valence_binary.json"]) {
-    const p = artifactPath(name, env);
-    if (existsSync(p)) {
-      try {
-        return { model: parseNeuralFeatureModel(readFileSync(p, "utf8")), path: p };
-      } catch (e) {
-        out(`warning: neural aux model at ${p} not loadable: ${(e as Error).message}`);
-      }
-    }
-  }
-  return { model: null, path: null };
-}
-
 async function runInfer(env?: NodeJS.ProcessEnv, kind: "hum" | "speech" = "hum"): Promise<void> {
   const { model, path } = loadModel(env);
-  const promotion = loadPromotion(env);
-  const neural = loadNeuralAux(env);
+  const promotion = loadPromotionManifest({ env });
+  const neural = loadNeuralAuxModel({ env, onWarn: (m) => out(`warning: ${m}`) });
   const audio = kind === "speech" ? synthSpeechLike({ seed: 11 }) : synthHum({ seed: 7 });
   out(`\ninfer: demo capture = synthetic ${kind} (deterministic; no audio committed). Model: ${model ? "trained" : "FALLBACK (none found)"}${neural.model ? `; +neural aux '${neural.model.target}'` : ""}`);
   const report = await inferFromHum({
@@ -101,6 +61,77 @@ async function runInfer(env?: NodeJS.ProcessEnv, kind: "hum" | "speech" = "hum")
   ensureArtifactsDir(env);
   writeArtifactJson(`inference_demo.${kind}.json`, report, env);
   writeArtifactText(`INFERENCE_DEMO.${kind}.md`, buildInferenceMarkdown(report), env);
+}
+
+/** A persisted RAVDESS feature row (subset we need): the derived features + its fusion label. */
+interface PersistedFeatureRow {
+  readonly fusionLabel?: string | null;
+  readonly features: AcousticFeatures;
+}
+
+/** Read `features.ravdess.jsonl` into rows (only those carrying a fusion label). */
+function loadLabelledFeatureRows(env?: NodeJS.ProcessEnv): PersistedFeatureRow[] {
+  const p = artifactPath("features.ravdess.jsonl", env);
+  if (!existsSync(p)) return [];
+  const rows: PersistedFeatureRow[] = [];
+  for (const line of readFileSync(p, "utf8").split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    try {
+      const r = JSON.parse(s) as PersistedFeatureRow;
+      if (r.fusionLabel && r.features) rows.push(r);
+    } catch {
+      // Skip a partway-written line; never throw on a malformed row.
+    }
+  }
+  return rows;
+}
+
+/**
+ * Train + persist the browser-runnable COARSE AXIS priors (valence + arousal binary
+ * LogReg over `AcousticFeatures`). These are the gate-relevant axes the runtime LEADS
+ * with from the first hum (arousal cleared the 80% gate; valence is a developing,
+ * below-gate prior). Same deterministic recipe as the experiment's promoted artifact;
+ * honest accuracy + gate status come from the co-located `model_manifest.json`.
+ */
+function runAxes(env?: NodeJS.ProcessEnv, log: (s: string) => void = out): number {
+  const rows = loadLabelledFeatureRows(env);
+  if (rows.length === 0) {
+    log(
+      "axes: no labelled feature rows found at data/processed/signal-lab/features.ravdess.jsonl — " +
+        "run `npm run signal:extract` (or `signal:experiment`) first.",
+    );
+    return 1;
+  }
+  const featureNames = featureVectorNames();
+  ensureArtifactsDir(env);
+  const written: string[] = [];
+  for (const target of [AROUSAL_BINARY_TARGET, VALENCE_BINARY_TARGET] as TargetDef[]) {
+    const X: number[][] = [];
+    const y: string[] = [];
+    const counts: Record<string, number> = {};
+    for (const r of rows) {
+      const cls = target.classOf(r.fusionLabel as FusionLabel);
+      if (cls === null) continue;
+      X.push(toFeatureVector(r.features));
+      y.push(cls);
+      counts[cls] = (counts[cls] ?? 0) + 1;
+    }
+    if (X.length < 60 || new Set(y).size < 2) {
+      log(`  ${target.id}: only ${X.length} usable samples / ${new Set(y).size} classes — skipped.`);
+      continue;
+    }
+    const model = trainLogReg(X, y, {
+      labels: target.classes.filter((c) => counts[c] !== undefined),
+      featureNames,
+      version: `signal-lab-${target.id}/0.1.0`,
+    });
+    const path = writeArtifactText(`model.${target.id}.json`, serializeModel(model), env);
+    written.push(path);
+    log(`  ${target.id}: trained on ${X.length} samples (${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ")}) → ${path}`);
+  }
+  log(`\naxes: wrote ${written.length} axis model artifact(s). Honest accuracy + gate status live in model_manifest.json.`);
+  return written.length > 0 ? 0 : 1;
 }
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -144,6 +175,11 @@ async function main(argv: readonly string[]): Promise<number> {
       for (const a of res.artifacts) out(`  ${a}`);
       return 0;
     }
+    case "axes": {
+      // Train + persist the browser-runnable coarse VALENCE + AROUSAL axis priors
+      // (the dimensional read the runtime leads with from the first hum).
+      return runAxes(env);
+    }
     case "export-neural": {
       // Dump the labelled RAVDESS training set (features + label + actor group +
       // per-target classes) to a git-ignored JSONL for the Python neural harness.
@@ -166,6 +202,7 @@ async function main(argv: readonly string[]): Promise<number> {
       out("  train | eval  extract + train baseline + evaluate (calibration + significance)");
       out("  infer [speech] run a synthetic new hum through the learned (or fallback) pipeline");
       out("  experiment    multi-dataset model cohort × targets + 80% gate + cross-corpus domain/OOD");
+      out("  axes          train + persist the browser-runnable valence + arousal axis priors");
       out("  all           train then infer");
       return cmd === "help" ? 0 : 1;
   }

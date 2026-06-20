@@ -9,15 +9,19 @@ import {
   validateUserFacingText,
 } from "@hum-ai/safety-language";
 
-test("pre-baseline accounts are always framed as early baseline", () => {
-  assert.equal(evidenceLevelFromConfidence({ confidence: 0.95, abstained: false }, 1), "early_baseline");
-  assert.equal(evidenceLevelFromConfidence({ confidence: 0.95, abstained: false }, 4), "early_baseline");
+test("the model speaks from hum #1 — evidence level is EARNED, not gated by hum count", () => {
+  // A confident read on the FIRST hum reads at its earned band, not forced to "early baseline".
+  assert.equal(evidenceLevelFromConfidence({ confidence: 0.85, abstained: false }, 1), "high");
+  assert.equal(evidenceLevelFromConfidence({ confidence: 0.6, abstained: false }, 1), "medium");
+  // …but the still-forming personal baseline is surfaced as an informational flag.
+  assert.equal(userFacingConfidence({ confidence: 0.85, abstained: false }, 1).isEarlyBaseline, true);
+  assert.equal(userFacingConfidence({ confidence: 0.85, abstained: false }, 8).isEarlyBaseline, false);
 });
 
-test("baseline-active confidence maps to high/medium/low bands", () => {
+test("confidence maps to high/medium/low bands (from any hum count)", () => {
   assert.equal(evidenceLevelFromConfidence({ confidence: 0.85, abstained: false }, 10), "high");
-  assert.equal(evidenceLevelFromConfidence({ confidence: 0.65, abstained: false }, 10), "medium");
-  assert.equal(evidenceLevelFromConfidence({ confidence: 0.5, abstained: false }, 10), "low");
+  assert.equal(evidenceLevelFromConfidence({ confidence: 0.6, abstained: false }, 10), "medium");
+  assert.equal(evidenceLevelFromConfidence({ confidence: 0.4, abstained: false }, 10), "low");
 });
 
 test("abstaining reads are low evidence even when baseline-active", () => {
