@@ -22,15 +22,21 @@ import {
   baselineDivergence,
   buildDualBaseline,
   buildRelapseReferences,
+  contextAdjustedBaseline,
   ingestHum,
+  policyConfidence,
+  selectByUCB,
   signatureAlignment,
   stagePolicy,
+  timeBucket,
   zDeltasAgainstBaseline,
 } from "@hum-ai/personalization-engine";
 import type {
   BaselineDivergence,
+  ContextualCenters,
   DualBaseline,
   HumObservation,
+  InterventionPolicy,
   PersonalizationApplication,
   PersonalizationStage,
   PersonalizationState,
@@ -42,7 +48,14 @@ import type {
   RelapseSample,
   RelapseVerdict,
 } from "@hum-ai/relapse-engine";
-import { selectInterventionFromView, selectInterventionOfDay, interventionOfDayStrings } from "@hum-ai/intervention-engine";
+import {
+  selectInterventionFromView,
+  selectInterventionOfDay,
+  interventionOfDayStrings,
+  supportiveCandidates,
+  buildSupportiveSuggestion,
+  isSupportiveIntervention,
+} from "@hum-ai/intervention-engine";
 import type { InterventionContext, InterventionOfDay } from "@hum-ai/intervention-engine";
 import {
   assertNoClinicalLeak,
@@ -123,6 +136,10 @@ export interface HumHistory {
   readonly salience?: Record<string, number>;
   /** Recently-detected baseline REGIME shift direction (v2), if any — enables regime-aware adaptation. */
   readonly regimeShift?: "none" | "up" | "down";
+  /** Learned per-intervention BANDIT policy (v2) — personalizes the supportive suggestion. */
+  readonly interventionPolicy?: InterventionPolicy;
+  /** Per-time-of-day feature centers (v2) — re-references against "your usual at this time of day". */
+  readonly contextualCenters?: ContextualCenters;
 }
 
 /**
@@ -441,18 +458,25 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   //     never gates or hides the read, and has nothing to act on until a baseline
   //     forms (`applyPersonalization`).
   const currentSamples = humFeatureSamples(features);
+  // Circadian: re-reference against "your usual at this time of day" when the
+  // matching bucket is well-sampled; otherwise this is the global rolling baseline.
+  const personalBaseline = contextAdjustedBaseline(
+    dualBaseline.rolling.vector,
+    history.contextualCenters,
+    timeBucket(now),
+  );
   const personalZDeltas = stage.baselineActive
-    ? zDeltasAgainstBaseline(currentSamples, dualBaseline.rolling.vector)
+    ? zDeltasAgainstBaseline(currentSamples, personalBaseline)
     : {};
   const { inference: personalizedInf, application: personalization } = applyPersonalization(
     axisLedInf,
     personalZDeltas,
     stage,
     {
-      // v2 personal model: salience-weighted, evidence-gated, regime-aware re-reference.
+      // v2 personal model: circadian-, salience-weighted, evidence-gated, regime-aware re-reference.
       model: {
         salience: history.salience,
-        baseline: dualBaseline.rolling.vector,
+        baseline: personalBaseline,
         regimeShift: history.regimeShift,
       },
     },
@@ -491,7 +515,22 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     // clinical-risk surfacing. Conservative by design (never alarm the unconsented).
     safetyAllowsEscalation: hasConsent(consent, "clinical_risk_surfacing"),
   };
-  const suggestion = selectInterventionFromView(recommendationView, interventionCtx);
+  let suggestion = selectInterventionFromView(recommendationView, interventionCtx);
+
+  // PERSONALIZED INTERVENTION POLICY (v2): once the user is established and has real
+  // intervention history, let the bandit choose among the SAFE supportive options for
+  // this V-A region (what has helped them / is worth trying). The safety-gated
+  // none / escalation / abstain decisions above are never overridden.
+  if (isSupportiveIntervention(suggestion.type) && stage.personalizedFusionActive) {
+    const policy: InterventionPolicy = history.interventionPolicy ?? {};
+    const candidates = supportiveCandidates(recommendationView);
+    if (candidates.length > 1 && policyConfidence(policy, candidates) > 0) {
+      const pick = selectByUCB(policy, candidates);
+      if (pick && pick.best.type !== suggestion.type) {
+        suggestion = buildSupportiveSuggestion(pick.best.type, recommendationView);
+      }
+    }
+  }
 
   const inference: MultiHeadAffectInference = {
     ...inferenceWithLongitudinal,
@@ -705,6 +744,8 @@ export function humHistoryFromState(state: PersonalizationState, now: IsoTimesta
     priorConsecutiveDriftHums: state.consecutiveDriftHums,
     salience: state.profile.salience_vector,
     regimeShift: recentRegimeShift(state),
+    interventionPolicy: state.profile.intervention_policy,
+    contextualCenters: state.profile.contextual_centers,
   };
 }
 

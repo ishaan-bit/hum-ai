@@ -18,6 +18,7 @@ import { featureSalience } from "./salience";
 import { newRegimeState, updateRegime } from "./changepoint";
 import { updateArm, type InterventionPolicy } from "./bandit";
 import { DEVIATION_WINSOR_Z } from "./deviation";
+import { newContextualCenters, timeBucket, updateContextualCenters } from "./context";
 import {
   FEATURE_HISTORY_LIMIT,
   HIGH_RISK_MIN,
@@ -199,6 +200,14 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     intervention_policy[ir.type] = updateArm(intervention_policy[ir.type], -ir.riskDelta);
   }
 
+  // 12. CIRCADIAN CONTEXT: fold this hum into its time-of-day bucket center so the
+  //     read can be re-referenced against "your usual at this time of day".
+  const contextual_centers = updateContextualCenters(
+    state.profile.contextual_centers ?? newContextualCenters(),
+    timeBucket(obs.capturedAt),
+    obs.features,
+  );
+
   // 8. Bounded relapse history (used to build relapse references next read).
   const relapseHistory: readonly RelapseSample[] =
     obs.dimensional && obs.riskScore !== undefined
@@ -225,6 +234,7 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     intervention_policy,
     regime,
     adaptation_rate,
+    contextual_centers,
     calibration_maturity: policy.calibrationMaturity,
     confidence_cap: policy.confidenceCap,
     last_updated_at: obs.capturedAt,

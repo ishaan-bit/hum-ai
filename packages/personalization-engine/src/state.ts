@@ -83,6 +83,7 @@ export function syncableProfile(state: PersonalizationState): UserModelProfile {
     recovery_signature_vector: p.recovery_signature_vector,
     high_risk_signature_vector: p.high_risk_signature_vector,
     salience_vector: p.salience_vector,
+    contextual_centers: p.contextual_centers,
   });
   return p;
 }

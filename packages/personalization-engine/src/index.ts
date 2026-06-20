@@ -2,6 +2,7 @@ export * from "./ladder";
 export * from "./shrinkage";
 export * from "./changepoint";
 export * from "./bandit";
+export * from "./context";
 export * from "./profile";
 export * from "./dual-baseline";
 export * from "./signatures";

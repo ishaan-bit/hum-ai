@@ -14,6 +14,7 @@ import { ROLLING_WINDOW } from "./dual-baseline";
 import { stagePolicy } from "./ladder";
 import { newRegimeState, type RegimeState } from "./changepoint";
 import type { InterventionPolicy } from "./bandit";
+import { newContextualCenters, type ContextualCenters } from "./context";
 
 /** Per-feature robust baseline: feature name → robust stats over eligible hums. */
 export type BaselineVector = Record<string, RobustStats>;
@@ -73,6 +74,12 @@ export interface UserModelProfile {
    * shift so the personal model re-centers on the new normal, then relaxes.
    */
   readonly adaptation_rate?: UnitInterval;
+  /**
+   * Per-time-of-day feature centers (`context.ts`) — "your usual at this time of
+   * day". Re-references the read against the matching circadian bucket once it is
+   * well-sampled; falls back to the global baseline otherwise.
+   */
+  readonly contextual_centers?: ContextualCenters;
 }
 
 /**
@@ -129,5 +136,6 @@ export function newUserProfile(
     intervention_policy: {},
     regime: newRegimeState(),
     adaptation_rate: 0,
+    contextual_centers: newContextualCenters(),
   };
 }

@@ -156,3 +156,72 @@ export function selectInterventionFromView(
 
   return none("close to usual — no intervention needed");
 }
+
+/**
+ * PERSONALIZED INTERVENTION SELECTION (v2).
+ *
+ * `selectInterventionFromView` stays the single safety authority — it decides the
+ * V-A region and owns the gated `escalation_suggestion` / `none` / abstain
+ * decisions. The personalization policy (the bandit in `@hum-ai/personalization-engine`)
+ * is allowed to choose ONLY among the safe SUPPORTIVE options for the same region,
+ * so "which supportive step" becomes individual ("what has helped you before, and
+ * what's worth trying") without ever touching the safety gates.
+ */
+
+const SUPPORTIVE_TYPES: ReadonlySet<InterventionType> = new Set<InterventionType>([
+  "music_recommendation",
+  "breath_regulation",
+  "journaling_prompt",
+  "rest_recovery",
+  "social_check_in",
+]);
+
+/** True for a supportive intervention the policy may re-rank (never none/escalation). */
+export function isSupportiveIntervention(type: InterventionType): boolean {
+  return SUPPORTIVE_TYPES.has(type);
+}
+
+/**
+ * The supportive interventions plausible for the current V-A region — the safe
+ * option set a personalized policy may choose among. Mirrors the regions of
+ * `selectInterventionFromView`; the rule's own pick is always included. Returns
+ * `[]` for the abstain / "close to usual" cases (nothing to personalize).
+ */
+export function supportiveCandidates(view: RecommendationView): InterventionType[] {
+  if (view.abstained) return [];
+  const { valence, arousal } = view.dimensional;
+  if (arousal >= 0.25 && valence < 0) return ["breath_regulation", "music_recommendation"];
+  if (arousal < 0 && valence < 0) return ["rest_recovery", "social_check_in", "music_recommendation"];
+  if (view.mixedOrUncertain) return ["journaling_prompt", "music_recommendation"];
+  if (valence >= 0.2) return ["music_recommendation", "journaling_prompt"];
+  return [];
+}
+
+const SUPPORTIVE_TARGET: Record<
+  InterventionType,
+  { readonly va: (va: ValenceArousal) => ValenceArousal | null; readonly intensity: number; readonly refs: readonly string[] }
+> = {
+  breath_regulation: { va: ({ valence, arousal }) => ({ valence: valence + 0.2, arousal: arousal - 0.5 }), intensity: 0.7, refs: ["intervention_support_source"] },
+  rest_recovery: { va: ({ valence, arousal }) => ({ valence: valence + 0.2, arousal: arousal + 0.1 }), intensity: 0.6, refs: [] },
+  social_check_in: { va: ({ valence, arousal }) => ({ valence: valence + 0.4, arousal: arousal + 0.2 }), intensity: 0.6, refs: [] },
+  music_recommendation: { va: ({ valence, arousal }) => ({ valence: valence + 0.4, arousal: arousal + 0.3 }), intensity: 0.5, refs: ["intervention_support_source"] },
+  journaling_prompt: { va: () => null, intensity: 0.4, refs: [] },
+  escalation_suggestion: { va: () => null, intensity: 1, refs: [] },
+  none: { va: () => null, intensity: 0, refs: [] },
+};
+
+/**
+ * Build a suggestion for a supportive `type` the personalization policy chose among
+ * `supportiveCandidates`. The V-A target nudges toward regulation exactly as the rule
+ * policy would; the rationale is honest about being a personalized pick.
+ */
+export function buildSupportiveSuggestion(type: InterventionType, view: RecommendationView): InterventionSuggestion {
+  const spec = SUPPORTIVE_TARGET[type];
+  return {
+    type,
+    rationale: "personalized support: chosen from your safe options by what has helped you before (and what's worth trying)",
+    vaTarget: spec.va(view.dimensional),
+    intensity: spec.intensity,
+    sourceRefs: spec.refs,
+  };
+}
