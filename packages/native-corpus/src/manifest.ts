@@ -25,6 +25,12 @@ export interface HumNativeAxisStatus {
   readonly challengerBalancedAccuracy: number;
   readonly backboneBalancedAccuracy: number;
   readonly margin: number;
+  /** Label-permutation p-value on the held-out accuracy (null when not computed). */
+  readonly pValue: number | null;
+  /** Held-out calibration error (null when not computed). */
+  readonly ece: number | null;
+  /** Bootstrap 95% CI on the held-out balanced accuracy (null when not computed). */
+  readonly accuracyCI95: { readonly lo: number; readonly hi: number } | null;
   readonly reasons: readonly string[];
   /** One honest provenance line for the read/UI. */
   readonly note: string;
@@ -48,9 +54,11 @@ export interface HumNativeArtifact {
 
 function statusFrom(p: AxisPromotion): HumNativeAxisStatus {
   const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+  const ci = p.accuracyCI95 ? ` (95% CI ${pct(p.accuracyCI95.lo)}–${pct(p.accuracyCI95.hi)})` : "";
+  const sig = p.pValue != null ? `, significant (p<${p.pValue < 0.05 ? "0.05" : p.pValue.toFixed(2)})` : "";
   const note =
     p.decision === "promote"
-      ? `Hum-native ${p.axis} model active — learned from ${p.n} of your confirmed hums; ${pct(p.challengerBalancedAccuracy)} held-out vs ${pct(p.backboneBalancedAccuracy)} for the acoustic read. Non-clinical.`
+      ? `Hum-native ${p.axis} model active — learned from ${p.n} of your confirmed hums; ${pct(p.challengerBalancedAccuracy)} held-out${ci} vs ${pct(p.backboneBalancedAccuracy)} for the acoustic read${sig}. Non-clinical.`
       : `Hum-native ${p.axis} model not yet promoted: ${p.reasons.join("; ") || "insufficient data"}.`;
   return {
     axis: p.axis,
@@ -60,6 +68,9 @@ function statusFrom(p: AxisPromotion): HumNativeAxisStatus {
     challengerBalancedAccuracy: p.challengerBalancedAccuracy,
     backboneBalancedAccuracy: p.backboneBalancedAccuracy,
     margin: p.margin,
+    pValue: p.pValue,
+    ece: p.ece,
+    accuracyCI95: p.accuracyCI95,
     reasons: p.reasons,
     note,
   };

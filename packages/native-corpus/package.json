@@ -12,6 +12,8 @@
     "@hum-ai/audio-features": "*",
     "@hum-ai/affect-model-contracts": "*",
     "@hum-ai/orchestrator": "*",
+    "@hum-ai/expert-ser": "*",
+    "@hum-ai/fusion-engine": "*",
     "@hum-ai/signal-lab": "*"
   }
 }

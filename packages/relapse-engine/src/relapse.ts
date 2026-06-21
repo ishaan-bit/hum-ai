@@ -1,4 +1,4 @@
-﻿import { clamp01, mean, type IsoTimestamp, type ValenceArousal } from "@hum-ai/shared-types";
+﻿import { clamp, clamp01, computeRobustStats, mean, type IsoTimestamp, type ValenceArousal } from "@hum-ai/shared-types";
 import type { DvdsaClass } from "@hum-ai/affect-model-contracts";
 
 /**
@@ -52,9 +52,36 @@ export interface RelapseVerdict {
 export interface RelapseOptions {
   /** Risk-delta band within which a change is considered "stable/unchanged". */
   readonly stableBand?: number;
+  /**
+   * Cosine alignment of this hum's z-delta pattern with the user's LEARNED signatures
+   * (from personalization). Drift that matches the user's own high-risk pattern is
+   * up-weighted; drift that matches their recovery pattern is damped. Omit ⇒ no scaling.
+   */
+  readonly signatureAlignment?: { readonly highRisk: number; readonly recovery: number };
 }
 
 const DEFAULT_STABLE_BAND = 0.12;
+/** Bounds for a personalized stable band — never tighter than 0.08, never wider than 0.25. */
+export const STABLE_BAND_MIN = 0.08;
+export const STABLE_BAND_MAX = 0.25;
+/** Up-weight drift that matches the user's learned high-risk signature. */
+export const SIGNATURE_DRIFT_HIGH_RISK_GAIN = 0.3;
+/** Down-weight drift that matches the user's learned recovery signature. */
+export const SIGNATURE_DRIFT_RECOVERY_GAIN = 0.15;
+
+/**
+ * A PER-USER stable band derived from the user's OWN risk-score noise. A user whose
+ * risk score naturally varies a lot (high robust scale) gets a WIDER tolerance, so their
+ * normal swings aren't read as drift; a steady user gets a TIGHTER band, so a real change
+ * is caught sooner. Falls back to the uniform default below ~4 samples. Clamped to a sane
+ * range. Pure — pass the result via `RelapseOptions.stableBand`.
+ */
+export function personalStableBand(riskScores: readonly number[]): number {
+  const finite = riskScores.filter((r) => Number.isFinite(r));
+  if (finite.length < 4) return DEFAULT_STABLE_BAND;
+  const stats = computeRobustStats(finite);
+  return clamp(Number.isFinite(stats.robustStd) ? stats.robustStd : DEFAULT_STABLE_BAND, STABLE_BAND_MIN, STABLE_BAND_MAX);
+}
 
 /** Classify a single paired comparison. Semantics depend on the reference kind. */
 export function classifyComparison(
@@ -121,7 +148,14 @@ export function assessRelapse(
 
   // Drift = average of POSITIVE risk deltas (worsening pressure), normalized.
   const positiveDeltas = comparisons.map((c) => Math.max(0, c.riskDelta));
-  const drift = clamp01(mean(positiveDeltas) / 0.5);
+  const baseDrift = clamp01(mean(positiveDeltas) / 0.5);
+  // SIGNATURE-WEIGHTED drift: if this hum's z-delta pattern matches the user's OWN learned
+  // high-risk signature, the drift is a stronger early-warning (up-weight); if it matches
+  // their recovery signature, it's likely benign variation (down-weight). Bounded [0,1].
+  const sig = options.signatureAlignment;
+  const drift = sig
+    ? clamp01(baseDrift * (1 + SIGNATURE_DRIFT_HIGH_RISK_GAIN * clamp(sig.highRisk, -1, 1) - SIGNATURE_DRIFT_RECOVERY_GAIN * clamp(sig.recovery, -1, 1)))
+    : baseDrift;
 
   const worseningVotes = (counts.worsening ?? 0) + (counts.relapse_drift ?? 0);
   const recoveryVotes = counts.recovery ?? 0;

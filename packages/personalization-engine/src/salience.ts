@@ -53,6 +53,18 @@ export function blendSalience(
   return out;
 }
 
+/**
+ * EVIDENCE-AWARE blend weight for the HiTL feature-importance hint. A thin personal
+ * baseline (few eligible hums) makes the salience itself unreliable, so the importance
+ * hint is heavily discounted; the weight grows with baseline evidence toward `base`. This
+ * prevents a single outlier-shifted thin baseline from over-weighting a feature the corpus
+ * flagged as important. Pure; pass the result as `blendSalience`'s third argument.
+ */
+export function adaptiveBlendWeight(nPersonal: number, base = 0.4): number {
+  const n = Math.max(0, nPersonal);
+  return Math.max(0, Math.min(1, base * (n / (n + 5))));
+}
+
 /** n at which a feature reaches half of its coverage weight (n/(n+K)). */
 export const SALIENCE_COVERAGE_K = 6;
 /** |correlation| at/above which two features are treated as mutually redundant. */

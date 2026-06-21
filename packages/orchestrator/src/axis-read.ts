@@ -80,6 +80,13 @@ export interface AxisResolution {
   readonly trainedValue: number | null;
   readonly trainedBalancedAccuracy: number | null;
   readonly trainedPassedGate: boolean | null;
+  /**
+   * Continuous OOD distance [0,1] of the trained prior for THIS hum (0 = squarely in its
+   * training domain, 1 = far outside). `null` when no prior fired. Exposed for transparency
+   * and to drive the evidence-proportional nudge fade — a near-boundary prior degrades
+   * smoothly instead of an all-or-nothing cliff.
+   */
+  readonly oodDistance: number | null;
 }
 
 export interface AxisRead {
@@ -97,6 +104,8 @@ export interface AxisRead {
 export const FAR_DOMAIN_AXIS_NUDGE_CAP = 0.5;
 /** Max nudge weight for a NATIVE in-domain prior (ADR-0011) — leads more, still bounded < 1. */
 export const NATIVE_AXIS_NUDGE_CAP = 0.75;
+/** Decay rate of the evidence-proportional OOD nudge fade (exp(−λ·ood)); ≈50% fade at ood≈0.46. */
+export const OOD_FADE_LAMBDA = 1.5;
 
 /** Map a possibly-null feature to a unit value, using `fallback` when not computable. */
 function unit(value: number | null | undefined, low: number, high: number, fallback: number): number {
@@ -192,21 +201,28 @@ function resolveAxis(
   let trainedValue: number | null = null;
   let trainedBalancedAccuracy: number | null = null;
   let trainedPassedGate: boolean | null = null;
+  let oodDistance: number | null = null;
 
   if (prior) {
     const pred = prior.predict(features);
     trainedValue = pred.value;
     trainedBalancedAccuracy = prior.balancedAccuracy;
     trainedPassedGate = prior.passedGate;
+    oodDistance = pred.ood;
     if (pred.inDomain) {
       trainedContribution = "in_domain";
       // Weight the nudge by the prior's self-confidence and its honest accuracy. A
       // far-domain prior is capped at 0.5 (refines, never overrides — ADR-0005); a
       // NATIVE in-domain prior (ADR-0011) earns a larger cap since it is on-domain hum
       // truth, but is still bounded below 1 so the transparent acoustic read remains the
-      // backbone of every read.
+      // backbone of every read. A smooth OOD FADE (exp(−λ·ood)) softens the nudge as the
+      // hum nears the prior's domain boundary — evidence-proportional, not an on/off cliff.
+      // The weight uses the prior's LEAN STRENGTH (|value|) × its accuracy × cap × the fade —
+      // a SINGLE OOD decay (the fade). `pred.confidence` already folds in an OOD factor, so it
+      // is kept OUT of the weight (to avoid double-discounting) and used only for the lift below.
       const cap = prior.nativeDomain ? NATIVE_AXIS_NUDGE_CAP : FAR_DOMAIN_AXIS_NUDGE_CAP;
-      const w = clamp01(pred.confidence * clamp01(prior.balancedAccuracy)) * cap;
+      const fade = Math.exp(-OOD_FADE_LAMBDA * pred.ood);
+      const w = clamp01(Math.abs(pred.value) * clamp01(prior.balancedAccuracy)) * cap * fade;
       value = clamp(acousticValue * (1 - w) + pred.value * w, -1, 1);
       // Signed confidence adjustment: an in-domain prior that AGREES with the acoustic read
       // lifts confidence; one that strongly DISAGREES (conflicting evidence) lowers it — the
@@ -229,6 +245,7 @@ function resolveAxis(
     trainedValue,
     trainedBalancedAccuracy,
     trainedPassedGate,
+    oodDistance,
   };
 }
 

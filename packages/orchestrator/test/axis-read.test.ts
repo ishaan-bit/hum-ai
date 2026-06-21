@@ -53,6 +53,21 @@ test("an in-domain trained prior REFINES the axis read and lifts confidence; an 
   assert.equal(ood.arousal.value, acoustic.arousal.value, "an OOD prior leaves the acoustic read unchanged");
 });
 
+test("the nudge fades smoothly as the prior's OOD distance rises; oodDistance is surfaced", () => {
+  const features = cleanHumFeatures();
+  const acoustic = resolveAxisRead(features).arousal.value;
+  const near = resolveAxisRead(features, { arousal: stubPrior("arousal", { value: 0.95, ood: 0.1, inDomain: true, confidence: 0.8 }) });
+  const far = resolveAxisRead(features, { arousal: stubPrior("arousal", { value: 0.95, ood: 0.8, inDomain: true, confidence: 0.8 }) });
+
+  // Both nudge upward, but the near-boundary (higher-ood) prior nudges LESS.
+  assert.ok(near.arousal.value > acoustic && far.arousal.value > acoustic);
+  assert.ok(near.arousal.value > far.arousal.value, "higher OOD ⇒ smaller nudge (evidence fade)");
+  // The continuous OOD distance is surfaced for transparency; null with no prior.
+  assert.equal(near.arousal.oodDistance, 0.1);
+  assert.equal(far.arousal.oodDistance, 0.8);
+  assert.equal(resolveAxisRead(features).arousal.oodDistance, null);
+});
+
 test("a NATIVE in-domain prior nudges the read more than a far-domain one with the same lean (ADR-0011)", () => {
   const features = cleanHumFeatures();
   const acoustic = resolveAxisRead(features).arousal.value;

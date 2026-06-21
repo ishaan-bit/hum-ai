@@ -53,3 +53,42 @@ export function featureRatio(current: number, stats: RobustStats): number | null
   if (!(stats.median > 0)) return null;
   return current / stats.median;
 }
+
+/** A closed-form confidence interval on a z-delta, accounting for finite-sample uncertainty. */
+export interface ZDeltaCI {
+  /** Lower CI bound on the z-delta. */
+  readonly lo: number;
+  /** Point estimate (the z-delta itself). */
+  readonly center: number;
+  /** Upper CI bound. */
+  readonly hi: number;
+  /** Half-width of the interval (the finite-sample uncertainty in σ units). */
+  readonly halfWidth: number;
+}
+
+/**
+ * One-sided 95% confidence interval on a z-delta from the baseline's own robust
+ * stats ALONE — no Monte Carlo. The baseline center/scale are estimated from `n`
+ * samples, so the standardized deviation carries sampling error `SE ≈ √(1.5/n)`
+ * (the robust-scale finite-sample factor); the CI half-width is `z × SE`. A thin
+ * baseline (small n) yields a WIDE interval, so a small deviation cannot be claimed
+ * as a confident drift. Deterministic + pure.
+ */
+export function zDeltaCI(current: number, stats: RobustStats, z = 1.645): ZDeltaCI {
+  const center = zDelta(current, stats);
+  const n = Math.max(1, stats.n);
+  const halfWidth = z * Math.sqrt(1.5 / n);
+  return { lo: center - halfWidth, center, hi: center + halfWidth, halfWidth };
+}
+
+/**
+ * The EFFECTIVE drift magnitude of a deviation after accounting for its CI overlap
+ * with a stable band: if the interval overlaps `[-band, band]` the deviation is not
+ * significant, so the magnitude is shrunk to `max(0, |center| − halfWidth)`; once the
+ * whole interval clears the band the full `|center|` stands. Never negative. Pure.
+ */
+export function ciShrunkMagnitude(ci: ZDeltaCI, band: number): number {
+  const overlapsBand = ci.lo <= band && ci.hi >= -band;
+  if (!overlapsBand) return Math.abs(ci.center);
+  return Math.max(0, Math.abs(ci.center) - ci.halfWidth);
+}

@@ -11,6 +11,7 @@
  */
 import { doc, collection, getDocs, setDoc, serverTimestamp } from "firebase/firestore";
 import type { NativeHumExample } from "@hum-ai/affect-model-contracts";
+import type { LogisticRegressionParams } from "@hum-ai/fusion-engine";
 import {
   appendExample,
   emptyCorpus,
@@ -24,6 +25,7 @@ import { getFirebase } from "./firebase";
 
 const corpusKey = (userId: string) => `hum.corpus.v1.${userId}`;
 const artifactKey = (userId: string) => `hum.nativeModel.v1.${userId}`;
+const fusionKey = (userId: string) => `hum.fusionMeta.v1.${userId}`;
 
 /** Strip undefined / class instances so the object is Firestore- and JSON-safe. */
 function plain<T>(value: T): T {
@@ -59,6 +61,24 @@ export function loadArtifactLocal(userId: string): HumNativeArtifact | null {
 export function saveArtifactLocal(userId: string, artifact: HumNativeArtifact): void {
   try {
     localStorage.setItem(artifactKey(userId), serializeArtifact(artifact));
+  } catch {
+    /* ignore */
+  }
+}
+
+// ── fusion meta-learner params (localStorage) ─────────────────────────────────
+export function loadFusionParamsLocal(userId: string): LogisticRegressionParams | null {
+  try {
+    const raw = localStorage.getItem(fusionKey(userId));
+    return raw ? (JSON.parse(raw) as LogisticRegressionParams) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveFusionParamsLocal(userId: string, params: LogisticRegressionParams): void {
+  try {
+    localStorage.setItem(fusionKey(userId), JSON.stringify(params));
   } catch {
     /* ignore */
   }

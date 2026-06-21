@@ -3,7 +3,7 @@ import { trainLogReg, predictProba, type LogRegParams } from "@hum-ai/signal-lab
 import { toFeatureVector, featureVectorNames } from "@hum-ai/signal-lab/feature-schema";
 import { acousticAffectAxes } from "@hum-ai/orchestrator";
 import { trainableExamples, type NativeCorpus } from "./corpus";
-import { CALIBRATION_DEADZONE, type Axis } from "./calibration";
+import { CALIBRATION_DEADZONE, calibrationTrend, type Axis } from "./calibration";
 
 /**
  * THE RETRAINING LOOP — fit a HUM-NATIVE valence/arousal model on the accumulated
@@ -47,6 +47,30 @@ export const NATIVE_TRAIN_ITERATIONS = 300;
  * training window is capped.
  */
 export const NATIVE_TRAIN_MAX_ROWS = 600;
+/**
+ * SIGNIFICANCE thresholds for the on-device promotion gate (mirrors the offline harness's
+ * permutation + ECE gate, with within-user, small-n-appropriate values). The permutation
+ * test only runs to CONFIRM a would-be promotion (it is the expensive step), so its cost is
+ * bounded to rare events.
+ */
+export const NATIVE_MAX_P_VALUE = 0.05; // looser than the offline 0.01 — small on-device n
+export const NATIVE_ECE_CAP = 0.2; // the held-out read must not be confidently wrong
+// ≥24 permutations so the minimum achievable p = 1/(perms+1) = 0.04 can actually clear 0.05.
+export const NATIVE_PERMUTATIONS = 24; // label-shuffles for the null distribution
+export const NATIVE_PERMUTATION_ITERATIONS = 120; // lighter, matched fits for observed + null (converges fast)
+export const NATIVE_PERMUTATION_MAX_ROWS = 250; // bound the (expensive) permutation test's row count
+export const NATIVE_BOOTSTRAP = 200; // resamples for the held-out accuracy CI
+
+/** mulberry32 deterministic PRNG (no global RNG; seeded for reproducibility). */
+function makeRng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 interface AxisRow {
   readonly example: NativeHumExample;
@@ -126,25 +150,105 @@ function backbonePredHigh(example: NativeHumExample, axis: Axis): boolean {
   return acousticAffectAxes(example.features)[axis] >= 0;
 }
 
-/** k-fold balanced accuracy of the trained challenger over held-out rows. */
-function crossValChallenger(rows: readonly AxisRow[], axis: Axis, k: number, iterations: number): number {
-  const conf: { trueHigh: boolean; predHigh: boolean }[] = [];
+/** One held-out prediction: truth, predicted pole, and P(high pole) for ECE. */
+interface CvPred {
+  readonly trueHigh: boolean;
+  readonly predHigh: boolean;
+  readonly pHigh: number;
+}
+
+/** k-fold cross-validation collecting per-row held-out predictions (truth + pred + P(high)). */
+function crossValPredictions(rows: readonly AxisRow[], axis: Axis, k: number, iterations: number): CvPred[] {
+  const poles = AXIS_POLE_LABELS[axis];
+  const preds: CvPred[] = [];
   for (let f = 0; f < k; f++) {
     const train = rows.filter((r) => foldOf(r.example.id, k) !== f);
     const test = rows.filter((r) => foldOf(r.example.id, k) === f);
     if (test.length === 0) continue;
-    // Need both poles in the training split for a meaningful fit; else skip the fold.
     const tc = classCounts(train);
-    if (tc.low === 0 || tc.high === 0) continue;
+    if (tc.low === 0 || tc.high === 0) continue; // need both poles to fit a meaningful model
     const model = trainOn(train, axis, iterations);
-    for (const r of test) conf.push({ trueHigh: r.high, predHigh: challengerPredHigh(model, axis, r.vector) });
+    for (const r of test) {
+      const dist = predictProba(model, r.vector);
+      const pHigh = dist[poles.high] ?? 0;
+      preds.push({ trueHigh: r.high, predHigh: pHigh >= (dist[poles.low] ?? 0), pHigh });
+    }
   }
-  return balancedAccuracy(conf);
+  return preds;
+}
+
+/** k-fold balanced accuracy of the trained challenger over held-out rows. */
+function crossValChallenger(rows: readonly AxisRow[], axis: Axis, k: number, iterations: number): number {
+  return balancedAccuracy(crossValPredictions(rows, axis, k, iterations));
 }
 
 /** Balanced accuracy of the fixed acoustic backbone over the same rows (no training). */
 function backboneBalancedAccuracy(rows: readonly AxisRow[], axis: Axis): number {
   return balancedAccuracy(rows.map((r) => ({ trueHigh: r.high, predHigh: backbonePredHigh(r.example, axis) })));
+}
+
+/** Expected calibration error of the held-out predictions (10-bin, on the predicted pole's confidence). */
+function eceFromPreds(preds: readonly CvPred[], bins = 10): number {
+  const n = preds.length;
+  if (n === 0) return 0;
+  const binConf = new Array<number>(bins).fill(0);
+  const binAcc = new Array<number>(bins).fill(0);
+  const binN = new Array<number>(bins).fill(0);
+  for (const p of preds) {
+    const conf = p.predHigh ? p.pHigh : 1 - p.pHigh; // confidence in the PREDICTED pole
+    const b = Math.min(bins - 1, Math.max(0, Math.floor(conf * bins)));
+    binN[b]!++;
+    binConf[b]! += conf;
+    if (p.predHigh === p.trueHigh) binAcc[b]!++;
+  }
+  let ece = 0;
+  for (let b = 0; b < bins; b++) {
+    if (binN[b] === 0) continue;
+    ece += (binN[b]! / n) * Math.abs(binAcc[b]! / binN[b]! - binConf[b]! / binN[b]!);
+  }
+  return ece;
+}
+
+/** Bootstrap 95% CI on the held-out balanced accuracy (deterministic resampling). */
+function bootstrapAccuracyCI(preds: readonly CvPred[], B: number, seed: number): { lo: number; hi: number } {
+  const n = preds.length;
+  if (n < 4) return { lo: 0, hi: 1 };
+  const rng = makeRng(seed);
+  const accs: number[] = [];
+  for (let b = 0; b < B; b++) {
+    const sample: CvPred[] = [];
+    for (let i = 0; i < n; i++) sample.push(preds[Math.floor(rng() * n)]!);
+    accs.push(balancedAccuracy(sample));
+  }
+  accs.sort((a, b) => a - b);
+  const lo = accs[Math.floor(0.025 * (accs.length - 1))]!;
+  const hi = accs[Math.ceil(0.975 * (accs.length - 1))]!;
+  return { lo, hi };
+}
+
+/**
+ * Label-permutation p-value on balanced accuracy. Observed AND null are computed on the
+ * SAME (possibly subsampled) rows at the SAME iteration budget — a fair, conservative
+ * test: shuffle the (high, label) assignment across rows (breaking any feature↔label
+ * link) and ask how often the null CV reaches the observed accuracy.
+ * p = (#null ≥ observed + 1) / (perms + 1). Deterministic.
+ */
+function permutationPValue(rows: readonly AxisRow[], axis: Axis, perms: number, seed: number): number {
+  const iters = NATIVE_PERMUTATION_ITERATIONS;
+  const observed = crossValChallenger(rows, axis, NATIVE_CV_FOLDS, iters);
+  const poles = AXIS_POLE_LABELS[axis];
+  const rng = makeRng(seed);
+  let ge = 0;
+  for (let p = 0; p < perms; p++) {
+    const highs = rows.map((r) => r.high);
+    for (let i = highs.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [highs[i], highs[j]] = [highs[j]!, highs[i]!];
+    }
+    const permuted: AxisRow[] = rows.map((r, i) => ({ ...r, high: highs[i]!, label: highs[i]! ? poles.high : poles.low }));
+    if (crossValChallenger(permuted, axis, NATIVE_CV_FOLDS, iters) >= observed) ge++;
+  }
+  return (ge + 1) / (perms + 1);
 }
 
 export interface AxisPromotion {
@@ -158,6 +262,16 @@ export interface AxisPromotion {
   readonly backboneBalancedAccuracy: number;
   /** challenger − backbone (the honest win margin). */
   readonly margin: number;
+  /**
+   * Label-permutation p-value on the held-out balanced accuracy (is it beyond chance?).
+   * Only computed when the challenger is otherwise promotable (the test is expensive);
+   * `null` otherwise. A promotion requires `pValue < NATIVE_MAX_P_VALUE`.
+   */
+  readonly pValue: number | null;
+  /** Expected calibration error of the held-out read [0,1]; a promotion requires `≤ NATIVE_ECE_CAP`. */
+  readonly ece: number | null;
+  /** Bootstrap 95% CI on the held-out balanced accuracy — honest uncertainty on "X% accurate". */
+  readonly accuracyCI95: { readonly lo: number; readonly hi: number } | null;
   /** Plain reasons for the decision (held: which criteria failed; promote: why it cleared). */
   readonly reasons: readonly string[];
   /** The full-data trained model — present ONLY when `decision === "promote"`. */
@@ -192,24 +306,51 @@ export function evaluateAxisPromotion(corpus: NativeCorpus, axis: Axis): AxisPro
       challengerBalancedAccuracy: 0,
       backboneBalancedAccuracy: 0,
       margin: 0,
+      pValue: null,
+      ece: null,
+      accuracyCI95: null,
       reasons,
       model: null,
     };
   }
 
-  const challenger = crossValChallenger(rows, axis, NATIVE_CV_FOLDS, NATIVE_TRAIN_ITERATIONS);
+  // 1. Held-out cross-validation (the challenger's honest accuracy + calibration).
+  const preds = crossValPredictions(rows, axis, NATIVE_CV_FOLDS, NATIVE_TRAIN_ITERATIONS);
+  const challenger = balancedAccuracy(preds);
+  const ece = eceFromPreds(preds);
   const backbone = backboneBalancedAccuracy(rows, axis);
   const margin = challenger - backbone;
 
+  // 2. Threshold checks (cheap).
   const clearsFloor = challenger >= NATIVE_ABS_FLOOR;
   const beatsBackbone = margin >= NATIVE_PROMOTE_MARGIN;
   if (!clearsFloor) reasons.push(`held-out accuracy ${(challenger * 100).toFixed(0)}% below the ${(NATIVE_ABS_FLOOR * 100).toFixed(0)}% floor`);
   if (!beatsBackbone) reasons.push(`does not beat the acoustic read by ≥${(NATIVE_PROMOTE_MARGIN * 100).toFixed(0)}% (margin ${(margin * 100).toFixed(0)}%)`);
+  const eceOk = ece <= NATIVE_ECE_CAP;
+  if (!eceOk) reasons.push(`calibration error ${ece.toFixed(2)} > ${NATIVE_ECE_CAP} (confidently wrong)`);
+  // Don't promote/keep a model whose recent read accuracy is DEGRADING (regression guard).
+  const trend = calibrationTrend(corpus, axis);
+  const trendOk = trend.direction !== "worsening";
+  if (!trendOk) reasons.push("your recent read accuracy is slipping — holding the model until it stabilizes");
 
-  const promote = clearsFloor && beatsBackbone;
+  // 3. SIGNIFICANCE: only run the expensive permutation test when otherwise promotable.
+  let pValue: number | null = null;
+  let accuracyCI95: { lo: number; hi: number } | null = null;
+  let significant = false;
+  if (clearsFloor && beatsBackbone && eceOk && trendOk) {
+    const seed = (rows.length * 2654435761) >>> 0; // deterministic, varies with corpus size
+    const permRows = rows.length > NATIVE_PERMUTATION_MAX_ROWS ? rows.slice(rows.length - NATIVE_PERMUTATION_MAX_ROWS) : rows;
+    pValue = permutationPValue(permRows, axis, NATIVE_PERMUTATIONS, seed);
+    accuracyCI95 = bootstrapAccuracyCI(preds, NATIVE_BOOTSTRAP, (seed ^ 0x9e3779b9) >>> 0);
+    significant = pValue < NATIVE_MAX_P_VALUE;
+    if (!significant) reasons.push(`accuracy not beyond chance (permutation p=${pValue.toFixed(3)} ≥ ${NATIVE_MAX_P_VALUE})`);
+  }
+
+  const promote = clearsFloor && beatsBackbone && eceOk && trendOk && significant;
   if (promote) {
+    const ci = accuracyCI95 ? ` (95% CI ${(accuracyCI95.lo * 100).toFixed(0)}–${(accuracyCI95.hi * 100).toFixed(0)}%)` : "";
     reasons.push(
-      `beats the acoustic read on your hums (${(challenger * 100).toFixed(0)}% vs ${(backbone * 100).toFixed(0)}% held-out)`,
+      `beats the acoustic read on your hums (${(challenger * 100).toFixed(0)}% vs ${(backbone * 100).toFixed(0)}% held-out${ci}), p<${NATIVE_MAX_P_VALUE}`,
     );
   }
 
@@ -221,6 +362,9 @@ export function evaluateAxisPromotion(corpus: NativeCorpus, axis: Axis): AxisPro
     challengerBalancedAccuracy: challenger,
     backboneBalancedAccuracy: backbone,
     margin,
+    pValue,
+    ece,
+    accuracyCI95,
     reasons,
     model: promote ? trainOn(rows, axis, NATIVE_TRAIN_ITERATIONS) : null,
   };

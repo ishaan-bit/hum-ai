@@ -52,6 +52,18 @@ Concrete, tested changes — one or more per layer — all green under `npm run 
 | **Longitudinal** | **Robust trend module**: Theil–Sen slope, Mann–Kendall significance, and CUSUM drift-onset over the recent within-user risk series, wired to refine a weak single-comparison verdict (never overrides a worsening verdict). | `relapse-engine/src/trend.ts`, `relapse-engine/src/longitudinal.ts`, `orchestrator/src/orchestrator.ts` | The trend is now data-driven over the actual series and robust to a noisy hum, with honest significance — not a single paired comparison. |
 | **Cross-cutting honesty** | Centralized the evidence-band thresholds in the web render layer (import `EVIDENCE_BANDS` instead of re-hardcoding `0.72`/`0.5`). | `apps/web/src/app/render.ts` | One source of truth for the qualitative confidence cutoffs (ADR-0008). |
 
+### Round 2 — significance & accuracy (shipped)
+
+A second pass focused on the user's ask: *statistical significance and accuracy across every layer.* All pure TS, no shipped-artifact break, backbone stays the floor; `npm run check` 497 tests + qa + build green.
+
+| Layer | Change | Files |
+|---|---|---|
+| **Pretraining / gating** | The on-device native-model promotion gate is now **statistically rigorous**: a label-**permutation p-value** (is the accuracy beyond chance? `p<0.05`, gated to run only when otherwise promotable), an **ECE ceiling** (not confidently wrong), a **bootstrap 95% CI** on the held-out accuracy, and a **calibration-trend promotion-HOLD** (don't deploy a model whose recent read accuracy is slipping). | `native-corpus/src/train.ts`, `manifest.ts` |
+| **HiTL / end-to-end** | The trained **fusion meta-learner is wired LIVE**: corpus → run the deterministic experts → map benign V-A to a benign FUSION_LABEL → fit → 5-fold CV vs the stub → **promote only when it beats the stub** on held-out hums (else stub). It sharpens the secondary affect read; the dimensional V-A read still leads from the acoustic backbone. Fallback-safe (a bad meta-learner degrades to the stub). | `native-corpus/src/fusion-train.ts` (new), `fusion-engine/src/fuse.ts`, `orchestrator/src/orchestrator.ts`, `apps/web/src/app/{cycle,main,corpus-store}.ts` |
+| **Diagnosis** | Continuous **per-axis OOD distance** surfaced on `AxisResolution`, and the trained-prior nudge now **fades smoothly** with OOD distance (`exp(−1.5·ood)`) instead of an all-or-nothing in/out cliff — evidence-proportional refinement. | `orchestrator/src/axis-read.ts` |
+| **Longitudinal** | **z-delta confidence intervals** (finite-sample uncertainty: a thin baseline can't claim a small drift), a **personalized stable band** (from the user's own risk-score noise — fewer false alarms for high-variance users), and **signature-weighted drift** (drift matching the user's learned high-risk pattern is a stronger early-warning; recovery-aligned drift is damped). | `shared-types/src/stats.ts`, `relapse-engine/src/relapse.ts`, `orchestrator/src/orchestrator.ts` |
+| **Personalization** | **Evidence-aware salience blend** — the HiTL feature-importance hint is discounted on a thin baseline and grows to full weight as the baseline matures. | `personalization-engine/src/salience.ts`, `orchestrator/src/orchestrator.ts` |
+
 **Preprocessing (L2) — assessed, intentionally not churned.** The DSP is already strong:
 the autocorrelation F0 tracker has **parabolic sub-bin interpolation + alias/edge guards**
 (`audio-features/src/dsp/pitch.ts`), and the noise floor is already **adaptive** (quietest

@@ -27,6 +27,7 @@ import {
   type HumSyncPayload,
   type LearnedAffectPrior,
   type AffectAxisPriors,
+  type MetaLearner,
 } from "@hum-ai/orchestrator";
 import { assessCapture, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import { asIsoTimestamp, type ConsentState, type IsoTimestamp, type ModelVersion } from "@hum-ai/shared-types";
@@ -41,6 +42,8 @@ export interface HumCycleInput {
   readonly axisPriors?: AffectAxisPriors;
   /** HiTL per-feature importance (which features track this user's reported affect) → salience blend. */
   readonly featureImportance?: Record<string, number>;
+  /** Promoted hum-native fusion meta-learner (secondary read only); null ⇒ stub fallback. */
+  readonly metaLearner?: MetaLearner | null;
 }
 
 export type HumCycleResult =
@@ -94,6 +97,7 @@ export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult>
     history,
     learnedAffectPrior: input.prior ?? undefined,
     axisPriors: input.axisPriors,
+    metaLearner: input.metaLearner ?? undefined,
   });
 
   // 3. LEARN: fold this hum into the model (no-op for ineligible/low-quality hums).

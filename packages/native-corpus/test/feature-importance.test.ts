@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blendSalience } from "@hum-ai/personalization-engine";
+import { blendSalience, adaptiveBlendWeight } from "@hum-ai/personalization-engine";
 import { appendExample, emptyCorpus } from "../src/corpus";
 import { personalFeatureImportance, combinedFeatureImportance, IMPORTANCE_MIN_EXAMPLES } from "../src/feature-importance";
 import { makeExample } from "./fixtures";
@@ -49,4 +49,13 @@ test("blendSalience amplifies predictive features and is a no-op without a hint"
   assert.equal(blendSalience(undefined, {}, 0.4), undefined);
   // A feature with no base salience still gains a small floor from a strong hint.
   assert.ok((blendSalience({}, { jitter: 1 }, 0.4)?.jitter ?? 0) > 0);
+});
+
+test("adaptiveBlendWeight discounts the importance hint on a thin baseline, grows with evidence", () => {
+  const thin = adaptiveBlendWeight(1);
+  const mature = adaptiveBlendWeight(40);
+  assert.ok(thin < mature, `thin ${thin} < mature ${mature}`);
+  assert.ok(thin < 0.15, "a 1-hum baseline heavily discounts the hint");
+  assert.ok(mature > 0.3 && mature <= 0.4, "a mature baseline approaches the base weight");
+  assert.equal(adaptiveBlendWeight(0), 0);
 });

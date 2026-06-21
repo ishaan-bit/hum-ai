@@ -102,7 +102,11 @@ expression proxies.
   domain — the common case. Far-domain penalty cap 0.45 (ADR-0005). Honest gate status rides in
   `model_manifest.json` (`arousal_binary` ≈83% gate-passed; 6-class + valence below-gate).
 - **Hum-native model** — the HiTL-trained axis model (`native-corpus`), in-domain on hums
-  (standardizer fit on hums), **no far-domain penalty**, `nativeDomain: true`.
+  (standardizer fit on hums), **no far-domain penalty**, `nativeDomain: true`. Its on-device
+  promotion gate is statistically rigorous, mirroring the offline harness: held-out balanced
+  accuracy must clear a floor **and** beat the acoustic backbone, with a label-**permutation
+  p-value** (`p<0.05`, beyond chance), an **ECE ceiling**, a **bootstrap accuracy CI**, and a
+  **calibration-trend hold** (never promote a model whose recent read accuracy is slipping).
 - **The ranked axis read (`axis-read.ts` `resolveAxis`)** — start from the transparent acoustic
   value; an in-domain prior nudges it, weighted by `confidence × balancedAccuracy × cap`, where
   **`cap = 0.75` for a native prior, `0.5` for far-domain** (`NATIVE_AXIS_NUDGE_CAP` /
@@ -128,9 +132,13 @@ expression proxies.
 - **Late fusion** — a reliability-weighted meta-learner over per-expert probability vectors
   (`FusionEngine.fuse`), calibrated + capped. The strictest of the stage / capture-quality /
   domain / far-domain caps wins (`combineCaps`). The trained `LogisticRegressionMetaLearner` is
-  **implemented** (softmax forward pass + `fitMetaLearner`) and is a tested drop-in; the
-  deterministic `StubWeightedMetaLearner` stays the live default until the trained model is fit
-  on native-hum data and beats it on held-out hums.
+  **wired live** (`native-corpus/fusion-train.ts`): the user's confirmed hums → deterministic
+  experts → a benign V-A→FUSION_LABEL quadrant → `fitMetaLearner` → 5-fold CV vs the stub →
+  **promoted only when it beats the stub** on held-out hums (else the deterministic
+  `StubWeightedMetaLearner`, the honest fallback; a malformed meta-learner degrades to it too).
+  It sharpens the **secondary** affect-state read; the dimensional V-A read still leads from the
+  acoustic backbone. The trained-prior axis nudge fades smoothly with OOD distance
+  (`exp(−1.5·ood)`), and `AxisResolution.oodDistance` surfaces the continuous distance.
 - **Multi-head contract** (`affect-model-contracts`) — a dimensional core, benign affect-state
   heads, clinical-risk-marker heads (gated), longitudinal heads, meta heads. `splitInference`
   applies the consent gate; `toRecommendationView` + `assertNoClinicalLeak` keep clinical labels
@@ -162,6 +170,12 @@ expression proxies.
   detection (early-warning change index against the in-control baseline) over the recent within-user
   risk series. A *significant* rising-risk trend reads as worsening, falling as improving; it refines
   a weak single-comparison verdict and **never overrides a worsening verdict**.
+- **Per-user significance + uncertainty** — the stable band is **personalized** from the user's own
+  risk-score noise (`personalStableBand`: a high-variance voice gets a wider tolerance, fewer false
+  alarms); within-user deviations carry a **finite-sample confidence interval** (`zDeltaCI` +
+  `ciShrunkMagnitude`: a thin baseline can't claim a small drift); and drift is **signature-weighted**
+  (drift matching the user's learned high-risk pattern is a stronger early-warning; recovery-aligned
+  drift is damped).
 - **Longitudinal diagnostic state (`assessLongitudinalState`)** — synthesizes trend direction, a
   consent-gated non-diagnostic risk hypothesis, a SUSTAINED relapse-drift signal (≥ 3 consecutive
   hums), a recovery signal, a monitoring flag + routing action, and source provenance. Confidence is

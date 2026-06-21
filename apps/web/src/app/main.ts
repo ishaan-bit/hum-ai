@@ -34,9 +34,12 @@ import {
   corpusReadiness,
   hasPromotedNativeModel,
   combinedFeatureImportance,
+  trainFusionMetaLearner,
+  metaLearnerFromParams,
   type NativeCorpus,
   type HumNativeArtifact,
 } from "@hum-ai/native-corpus";
+import type { MetaLearner } from "@hum-ai/orchestrator";
 import { loadConsent, setScope, isGranted, type ToggleableScope } from "./consent";
 import { loadBrowserPrior, type LoadedPrior } from "./prior";
 import { recordHum, synthesize, type SynthKind } from "./capture";
@@ -58,6 +61,8 @@ import {
   loadCorpusCloud,
   saveArtifactCloud,
   mergeCorpora,
+  loadFusionParamsLocal,
+  saveFusionParamsLocal,
 } from "./corpus-store";
 import { signInAnon, getFirebase } from "./firebase";
 import { HUM_AGAIN_MESSAGE, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
@@ -115,6 +120,8 @@ interface Session {
   artifact: HumNativeArtifact | null;
   /** HiTL per-feature importance (which features track this user's reported affect). */
   featureImportance: Record<string, number>;
+  /** Promoted hum-native fusion meta-learner (secondary read), or null (stub fallback). */
+  metaLearner: MetaLearner | null;
   /** The most recent accepted hum, available for the feedback step. */
   pending: PendingHum | null;
   /** Corpus size at the last retrain — gates how often we re-evaluate promotion. */
@@ -132,6 +139,7 @@ const session: Session = {
   corpus: emptyCorpus(),
   artifact: null,
   featureImportance: {},
+  metaLearner: null,
   pending: null,
   lastRetrainSize: 0,
 };
@@ -189,6 +197,7 @@ async function boot(): Promise<void> {
   }
   session.artifact = loadArtifactLocal(session.localId);
   session.featureImportance = combinedFeatureImportance(session.corpus);
+  session.metaLearner = metaLearnerFromParams(loadFusionParamsLocal(session.localId));
   session.lastRetrainSize = session.corpus.examples.length;
   renderModelLab(session.corpus, session.artifact);
 
@@ -283,6 +292,8 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
     axisPriors: effectiveAxisPriors(),
     // Personalize which features the read leans on, from the user's own labels.
     featureImportance: session.featureImportance,
+    // A promoted hum-native fusion meta-learner sharpens the secondary affect read.
+    metaLearner: session.metaLearner,
   });
 
   // STAGE ① — a rejected capture is never read for affect. Show "hum again", surface NO
@@ -359,18 +370,19 @@ async function onFeedback(report: HumSelfReport): Promise<void> {
     await saveStateCloud(session.uid, session.state);
   }
 
-  // 4. Retrain the hum-native model when there's enough fresh data.
-  maybeRetrain();
+  // 4. Retrain the hum-native model(s) when there's enough fresh data.
+  await maybeRetrain();
   renderModelLab(session.corpus, session.artifact);
 }
 
-/** Re-evaluate the hum-native model when ready + enough new labels. Promotion is the goal. */
-function maybeRetrain(): void {
+/** Re-evaluate the hum-native model(s) when ready + enough new labels. Promotion is the goal. */
+async function maybeRetrain(): Promise<void> {
   const size = session.corpus.examples.length;
   if (!corpusReadiness(session.corpus).anyReady) return;
   if (session.artifact && size - session.lastRetrainSize < RETRAIN_EVERY) return;
   const wasPromoted = hasPromotedNativeModel(session.artifact);
   try {
+    // (a) Axis models (valence/arousal) — the dimensional read.
     session.artifact = buildHumNativeArtifact(session.corpus, nowTs());
     session.lastRetrainSize = size;
     saveArtifactLocal(session.localId, session.artifact);
@@ -378,6 +390,16 @@ function maybeRetrain(): void {
     if (!wasPromoted && hasPromotedNativeModel(session.artifact)) {
       setCaptureStatus("🎉 Your hum-native model just went live — your read now uses a model trained on your own hums.");
       setModelStatus();
+    }
+
+    // (b) Fusion meta-learner (secondary affect-state read) — promote only if it beats the
+    //     default fusion on your held-out hums. The dimensional V-A read is unaffected.
+    const hadMeta = session.metaLearner !== null;
+    const fusion = await trainFusionMetaLearner(session.corpus);
+    if (fusion.decision === "promote" && fusion.params) {
+      saveFusionParamsLocal(session.localId, fusion.params);
+      session.metaLearner = metaLearnerFromParams(fusion.params);
+      if (!hadMeta) setCaptureStatus("🎯 Your hum-native fusion model went live — the affect read is now tuned to you.");
     }
   } catch (err) {
     console.warn("[retrain] failed:", err);

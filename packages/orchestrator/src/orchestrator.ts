@@ -16,8 +16,11 @@ import { HeuristicDomainClassifier, HumDomainAdapter } from "@hum-ai/domain-clas
 import type { DomainClassification } from "@hum-ai/domain-classifier";
 import { defaultAudioExperts } from "@hum-ai/expert-ser";
 import { FusionEngine, combineCaps, modalityReliability } from "@hum-ai/fusion-engine";
-import type { FusionContext } from "@hum-ai/fusion-engine";
+import type { FusionContext, MetaLearner } from "@hum-ai/fusion-engine";
+// Re-export so consumers of `OrchestratorInput.metaLearner` get the type from the orchestrator.
+export type { MetaLearner } from "@hum-ai/fusion-engine";
 import {
+  adaptiveBlendWeight,
   applyAxisCalibration,
   applyPersonalization,
   axisCalibrationEngaged,
@@ -45,7 +48,7 @@ import type {
   PersonalizationStage,
   PersonalizationState,
 } from "@hum-ai/personalization-engine";
-import { assessLongitudinalState, assessRelapse, estimateTrend } from "@hum-ai/relapse-engine";
+import { assessLongitudinalState, assessRelapse, estimateTrend, personalStableBand } from "@hum-ai/relapse-engine";
 import type {
   LongitudinalDiagnosticState,
   LongitudinalTrendDirection,
@@ -239,6 +242,13 @@ export interface OrchestratorInput {
    * The axis read leads the dimensional read from the first hum either way.
    */
   readonly axisPriors?: AffectAxisPriors;
+  /**
+   * Optional PROMOTED hum-native fusion meta-learner (trained on the user's own hums,
+   * `@hum-ai/native-corpus` `trainFusionMetaLearner`). Replaces the hand-weighted stub for
+   * the secondary affect-state read only when it beats the stub on held-out hums. Omit ⇒
+   * the deterministic stub (the dimensional V-A read is unaffected either way).
+   */
+  readonly metaLearner?: MetaLearner;
 }
 
 /** The off-domain stub slot a trained acted-speech prior is a drop-in for. */
@@ -453,6 +463,10 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   const meta = { modality: "audio" as const, captureQuality: quality.captureQualityScore };
   const experts = await Promise.all(ensemble.map((e) => e.predict(features, meta)));
   const observedModalityReliability = modalityReliability(experts);
+  // A PROMOTED hum-native fusion meta-learner (trained on the user's own confirmed hums)
+  // replaces the hand-weighted stub for the SECONDARY affect-state read; absent ⇒ stub
+  // (honest fallback). The dimensional V-A read still leads from the acoustic backbone.
+  const fusionEngine = new FusionEngine({ metaLearner: input.metaLearner });
 
   // 5. Strictest of the personalization-stage, capture-quality, domain, and (when a
   //    trained prior is fused) the prior's far-domain caps (ADR-0005). Strictest wins.
@@ -478,7 +492,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     calibrationMaturity: stage.calibrationMaturity,
     longitudinalTrendStrength,
   };
-  const baseInf = new FusionEngine().fuse(experts, fusionCtx);
+  const baseInf = fusionEngine.fuse(experts, fusionCtx);
 
   // 6a. AXIS READ — lead with VALENCE + AROUSAL from the first hum. A transparent,
   //     on-domain acoustic mapping produces the dimensional read (always meaningful on
@@ -531,8 +545,10 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       // v2 personal model: circadian-, salience-weighted, evidence-gated, regime-aware re-reference.
       // The salience is BLENDED with the HiTL per-feature importance (which features track
       // THIS user's reported affect) so the read leans on what's predictive for them (ADR-0011).
+      // The blend weight is EVIDENCE-AWARE: a thin baseline discounts the hint (the salience
+      // it would amplify is itself unreliable), growing to full weight as the baseline matures.
       model: {
-        salience: blendSalience(history.salience, history.featureImportance),
+        salience: blendSalience(history.salience, history.featureImportance, adaptiveBlendWeight(eligibleHumCount)),
         baseline: personalBaseline,
         regimeShift: history.regimeShift,
       },
@@ -545,10 +561,33 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   const currentRiskScore = clinicalRiskScore(personalizedInf);
   const references = history.relapseReferences ?? {};
   const relapseActive = stage.relapseModelActive && Object.keys(references).length > 0;
+
+  // Learned-signature alignments for THIS hum (computed once; reused by the relapse drift
+  // scaling AND the longitudinal state). Null until the matching signature is learned.
+  const highRiskSignature = history.highRiskSignature ?? {};
+  const recoverySignature = history.recoverySignature ?? {};
+  const hasPersonalZ = Object.keys(personalZDeltas).length > 0;
+  const highRiskAlignment =
+    hasPersonalZ && Object.keys(highRiskSignature).length > 0
+      ? signatureAlignment(personalZDeltas, highRiskSignature)
+      : null;
+  const recoveryAlignment =
+    hasPersonalZ && Object.keys(recoverySignature).length > 0
+      ? signatureAlignment(personalZDeltas, recoverySignature)
+      : null;
+
+  // PER-USER stable band (from the user's own risk-score noise) + SIGNATURE-WEIGHTED drift:
+  // a high-variance user gets a wider "stable" tolerance (fewer false alarms), and drift that
+  // matches their learned high-risk pattern is a stronger early-warning.
+  const relapseOptions = {
+    stableBand: personalStableBand((history.recentRiskSeries ?? []).map((p) => p.value)),
+    signatureAlignment: { highRisk: highRiskAlignment ?? 0, recovery: recoveryAlignment ?? 0 },
+  };
   const relapse: RelapseVerdict | null = relapseActive
     ? assessRelapse(
         { capturedAt: now, dimensional: personalizedInf.dimensional, riskScore: currentRiskScore },
         references,
+        relapseOptions,
       )
     : null;
 
@@ -600,19 +639,8 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   //     at 88%), a monitoring flag, and source provenance. The learned recovery /
   //     high-risk SIGNATURES (centroids of the user's z-deltas in stable / high-risk
   //     periods) finally feed a read here: alignment of THIS hum with them sharpens
-  //     the drift/recovery direction. Computed beside the existing pipeline — the
-  //     relapse verdict, personalization, and confidence caps are all untouched.
-  const highRiskSignature = history.highRiskSignature ?? {};
-  const recoverySignature = history.recoverySignature ?? {};
-  const hasPersonalZ = Object.keys(personalZDeltas).length > 0;
-  const highRiskAlignment =
-    hasPersonalZ && Object.keys(highRiskSignature).length > 0
-      ? signatureAlignment(personalZDeltas, highRiskSignature)
-      : null;
-  const recoveryAlignment =
-    hasPersonalZ && Object.keys(recoverySignature).length > 0
-      ? signatureAlignment(personalZDeltas, recoverySignature)
-      : null;
+  //     the drift/recovery direction. The signature alignments (`highRiskAlignment` /
+  //     `recoveryAlignment`) were computed once above (reused by the relapse drift scaling).
   // ROBUST LONGITUDINAL TREND — Theil–Sen slope + Mann–Kendall over the recent risk
   // series (prior eligible hums + this hum). A significant RISING risk trend reads as
   // worsening; FALLING as improving. Refines a weak single-comparison verdict; never
@@ -770,6 +798,8 @@ export interface AudioOrchestratorInput {
   readonly learnedAffectPrior?: LearnedAffectPrior;
   /** Optional trained coarse valence / arousal axis priors (refine the axis read). */
   readonly axisPriors?: AffectAxisPriors;
+  /** Optional promoted hum-native fusion meta-learner (secondary read only). */
+  readonly metaLearner?: MetaLearner;
 }
 
 /**
@@ -789,6 +819,7 @@ export async function orchestrateHumAudio(input: AudioOrchestratorInput): Promis
     history: input.history,
     learnedAffectPrior: input.learnedAffectPrior,
     axisPriors: input.axisPriors,
+    metaLearner: input.metaLearner,
   });
 }
 

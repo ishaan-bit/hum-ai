@@ -52,7 +52,14 @@ export class FusionEngine {
       return { ...base, abstained: true, abstainReason: "poor_capture_quality" };
     }
 
-    const dist = this.metaLearner.combine(available);
+    // Backbone-floor discipline: a malformed/untrained injected meta-learner degrades to
+    // the deterministic stub rather than crashing the read.
+    let dist: FusionDistribution;
+    try {
+      dist = this.metaLearner.combine(available);
+    } catch {
+      dist = new StubWeightedMetaLearner().combine(available);
+    }
     const top = argmax(dist);
     const modalityAgreement = computeAgreement(available, dist, top.label);
     const oodScore = clamp01(mean(available.map((e) => e.oodScore)));
