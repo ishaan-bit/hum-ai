@@ -67,7 +67,7 @@ import {
   saveFusionParamsLocal,
 } from "./corpus-store";
 import { signInAnon, getFirebase } from "./firebase";
-import { HUM_AGAIN_MESSAGE, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
+import { humAgainMessage, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import {
   renderRead,
   renderInterventionOfDay,
@@ -639,7 +639,7 @@ async function runSynth(kind: SynthKind): Promise<void> {
   setCaptureStatus(`Synthesizing a ${kind} hum…`);
   try {
     const gate = await runOne(() => synthesize(kind), { advance: true });
-    setCaptureStatus(gate.accepted ? "" : HUM_AGAIN_MESSAGE);
+    setCaptureStatus(gate.accepted ? "" : humAgainMessage(gate.reasonCode));
   } catch (err) {
     setCaptureStatus(`Error: ${(err as Error).message}`);
   } finally {
@@ -663,7 +663,7 @@ async function runMic(): Promise<void> {
         }),
       { advance: true },
     );
-    setCaptureStatus(gate.accepted ? "" : HUM_AGAIN_MESSAGE);
+    setCaptureStatus(gate.accepted ? "" : humAgainMessage(gate.reasonCode));
   } catch (err) {
     orb?.setMode("resting");
     setCaptureStatus(`Mic unavailable (${(err as Error).message}). Open the tray to simulate a hum.`);

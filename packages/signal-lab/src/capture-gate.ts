@@ -59,12 +59,37 @@ export interface CaptureGateDecision {
 }
 
 export interface CaptureGateOptions {
-  /** STRICT accept threshold on hum-likeness (default 0.5). Raise to reject more. */
+  /** Accept threshold on hum-likeness (default 0.4). Raise to reject more. */
   readonly threshold?: number;
 }
 
 /** Shortest capture we will even score (s). Below this we reject as `too_short`. */
 const MIN_DURATION_SEC = 8;
+
+/**
+ * Concise, user-facing "why we couldn't read it" line per rejection cause — shown on the
+ * capture (Hum) screen where the user actually is when a take is rejected (the richer copy in
+ * the web render layer is for the read card). Kept here, beside the reason codes, so the two
+ * never drift. Plain, kind, no jargon.
+ */
+export function humAgainMessage(reason: CaptureRejectReason): string {
+  switch (reason) {
+    case "too_short":
+      return "That was a bit short — hold the hum for the full twelve seconds.";
+    case "too_quiet":
+      return "Came through very quietly — move closer and hum a little louder.";
+    case "too_noisy":
+      return "Too much background noise — try again somewhere quieter.";
+    case "sounded_like_speech":
+      return "That sounded more like talking — hum one steady, even note with your lips closed.";
+    case "not_voiced":
+      return "Couldn't find a steady tone — hum a clear note you can feel buzzing.";
+    case "too_choppy":
+      return "That was mostly pauses — a few breaths are fine, just keep the hum going a bit more.";
+    default:
+      return "Didn't quite catch that one — hum one steady note and I'll read it.";
+  }
+}
 
 /**
  * Choose the single most informative rejection cause from the sub-cues, so the user gets a
@@ -85,18 +110,23 @@ function pickRejectReason(f: AcousticFeatures, c: {
   if (f.isSilent || f.peakAmplitude < 0.02 || f.meanRms < 0.006) return "too_quiet";
   // Melodic pitch movement OR a bright/edgy timbre → speech or a tune, not a held hum.
   if (c.melodicRange > 0.4 || c.bright > 0.45 || c.zcr > 0.5) return "sounded_like_speech";
+  // Audible bursts but mostly gaps → keep the hum going more (checked before SNR, since the
+  // muted gaps depress the SNR proxy and would otherwise mislabel a chopped hum as "noisy").
+  if (c.silence > 0.7 && f.peakAmplitude >= 0.05) return "too_choppy";
   // Buried in noise / very flat spectrum with poor SNR.
   if (c.flat > 0.5 || c.snr < 0.1) return "too_noisy";
-  // There IS some voiced tone, but it's broken into too little across the clip.
-  if (c.voicedEvidence >= 0.2 && c.silence > 0.7) return "too_choppy";
   // Audible, but no steady pitched tone was found (sigh/breath/mumble).
   if (c.voiced < 0.3 && c.clarity < 0.4) return "not_voiced";
   return "unclear";
 }
 
-/** Assess whether a capture is a usable hum (STRICT, pause-tolerant). */
+/** Assess whether a capture is a usable hum (lenient + pause-tolerant). */
 export function assessCapture(f: AcousticFeatures, opts: CaptureGateOptions = {}): CaptureGateDecision {
-  const threshold = opts.threshold ?? 0.5;
+  // Lenient by design: the Stage-① gate's job is to reject CLEAR non-hums (silence, noise,
+  // speech), not to be a quality bar — the downstream quality gate + the read's own abstention
+  // handle marginal quality. A real hum drifts and wobbles (nothing like a synthetic test tone),
+  // so we must not punish natural pitch movement; rejecting a genuine hum makes the app unusable.
+  const threshold = opts.threshold ?? 0.4;
 
   // A capture that is simply too short to read — give that exact reason up front.
   if (f.durationSec < MIN_DURATION_SEC) {
@@ -128,12 +158,12 @@ export function assessCapture(f: AcousticFeatures, opts: CaptureGateOptions = {}
   const zcr = clamp01(f.zeroCrossingRate);
   const breath = clamp01(f.breathinessProxy);
   const bright = clamp01(f.spectralCentroidHz / 4000); // whistle/noise/consonants sit high
-  // A hum holds ~one pitch; melodic MOVEMENT across a wide pitch range is speech or a tune,
-  // not a hum. Natural hum wobble (≤2 semitones) is free; range beyond that is penalised.
-  // This is what separates a PAUSED hum (narrow range) from speech (wide range), so pause
-  // tolerance never opens the door to accepting speech. Spectral flux is a softer second cue.
-  const melodicRange = clamp01(((f.pitchRangeSemitones ?? 0) - 2) / 5);
-  const flux = clamp01((f.spectralFlux - 0.04) / 0.12);
+  // A hum holds roughly one pitch; only WIDE melodic movement (speech / a tune) is penalised.
+  // Real humming drifts and re-pitches after breaths, so we leave a generous ~6-semitone band
+  // FREE and only bite on clearly-melodic input — this keeps speech out without rejecting a
+  // genuine, wobbly hum (the earlier 2-semitone cutoff did exactly that). Flux is a soft cue.
+  const melodicRange = clamp01(((f.pitchRangeSemitones ?? 0) - 6) / 8);
+  const flux = clamp01((f.spectralFlux - 0.1) / 0.18);
 
   // Voiced-tone evidence in [0,1]: how confidently this clip contains a real sung tone.
   const voicedEvidence = clamp01(0.5 * voiced + 0.3 * clarity + 0.2 * stableSeg);
@@ -141,10 +171,14 @@ export function assessCapture(f: AcousticFeatures, opts: CaptureGateOptions = {}
   // burst hum keeps almost none of its silence penalty; an unvoiced/noisy clip keeps all of it.
   const effectiveSilence = silence * (1 - 0.78 * voicedEvidence);
 
+  // Positive hum evidence is weighted strongly and the bias is gentle, so an ordinary voiced
+  // hum clears the bar comfortably; the negative cues stay sharp on the UNAMBIGUOUS non-hum
+  // signatures (high zero-crossing/flatness/brightness = speech/noise/whistle) that a real hum
+  // never shows. Melodic movement + flux are now soft, late penalties (won't sink a real hum).
   const score =
-    1.5 * voiced + 1.5 * clarity + 1.0 * snr + 0.55 * steady + 0.6 * pitchSteady + 0.6 * stableSeg -
-    1.3 * effectiveSilence - 2.5 * zcr - 1.6 * flat - 1.5 * bright - 0.8 * breath - 2.2 * melodicRange -
-    0.6 * flux - 1.0;
+    1.6 * voiced + 1.6 * clarity + 1.0 * snr + 0.6 * steady + 0.6 * pitchSteady + 0.6 * stableSeg -
+    1.2 * effectiveSilence - 2.4 * zcr - 1.5 * flat - 1.9 * bright - 0.7 * breath - 1.8 * melodicRange -
+    0.4 * flux - 0.7;
   const humLikeness = 1 / (1 + Math.exp(-score));
 
   if (humLikeness >= threshold) {

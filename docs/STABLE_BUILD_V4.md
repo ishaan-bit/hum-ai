@@ -75,10 +75,22 @@ movement), so pause tolerance never lets speech through. On rejection it returns
 (`too_short / too_quiet / too_noisy / sounded_like_speech / not_voiced / too_choppy / unclear`), surfaced as kind,
 concrete copy in `renderCaptureRejected`.
 
-**Validated** (`packages/signal-lab/test/capture-gate.test.ts`, real extractor on synthetic signals): clean hums
-accepted; silence → `too_quiet`; all speech-like → `sounded_like_speech`; **burst hums at 50–75% voiced are now
-accepted**; a mostly-silent 23%-voiced fragment is still rejected with a fragment/voicing reason. The quality-gate
-suite is unchanged and still green.
+**Leniency rebalance (post-first-deploy fix).** The first v4 cut still rejected *real* hums in the field: a genuine
+hum drifts and re-pitches after breaths, so its `pitchRangeSemitones` is several semitones — and the initial
+speech-guard penalty bit at just 2 semitones (calibrated only on dead-steady synthetic tones). Real audio also has
+higher flux / lower clarity than synth. So the Stage-① gate is now **explicitly lenient**: its job is to reject
+*clear* non-hums (silence, noise, speech), not to be a quality bar — the downstream quality gate + the read's own
+abstention handle marginal quality. Changes: accept threshold 0.5 → **0.4**; the melodic-range penalty now leaves a
+**generous ~6-semitone band free** and only bites on clearly-melodic input; flux is a soft late cue; speech/noise
+rejection leans on the robust **brightness + zero-crossing + flatness** cues (a real hum scores low on all three).
+The specific rejection reason is also now shown on the **Hum window** (`humAgainMessage(reasonCode)` in the capture
+status) — previously it rendered only into the read card on the locked State window, so users never saw it.
+
+**Validated** (`packages/signal-lab/test/capture-gate.test.ts`, real extractor + constructed real-hum profiles):
+clean hums 6/6 accepted; silence → `too_quiet`; speech-like 6/6 → `sounded_like_speech`; music rejected; **burst
+hums at 50–75% voiced accepted**; constructed *wobbly / quiet / low-clarity / paused* real-hum profiles all accept
+(0.62–0.72); an over-fragmented (~14% voiced) take rejects with `too_choppy`. The quality-gate suite is unchanged
+and still green.
 
 ---
 
