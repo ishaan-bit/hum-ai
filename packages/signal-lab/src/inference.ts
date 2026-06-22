@@ -12,6 +12,7 @@ import { computeFeatures, metricsFromFeatures, type AcousticFeatures, type Audio
 import { evaluateQuality, type QualityResult } from "@hum-ai/quality-gate";
 import { HeuristicDomainClassifier, HumDomainAdapter, type DomainClassification } from "@hum-ai/domain-classifier";
 import { defaultAudioExperts } from "@hum-ai/expert-ser";
+import { AFFECT_PRIOR_FAR_DOMAIN_CAP } from "./axis-prior";
 import { FusionEngine, combineCaps, type FusionContext } from "@hum-ai/fusion-engine";
 import { stagePolicy } from "@hum-ai/personalization-engine";
 import { selectInterventionFromView } from "@hum-ai/intervention-engine";
@@ -252,7 +253,7 @@ export async function inferFromHum(input: InferHumInput): Promise<InferenceRepor
     { cap: domainAdaptation.confidencePenalty, reason: `domain match (heard ${domain.predicted})` },
   ];
   if (input.model) {
-    capParts.push({ cap: 0.45, reason: "affect-prior far-domain penalty 0.45 (acted speech; ADR-0005)" });
+    capParts.push({ cap: AFFECT_PRIOR_FAR_DOMAIN_CAP, reason: "affect-prior far-domain penalty 0.45 (acted speech; ADR-0005)" });
   }
   const caps = combineCaps(capParts);
 

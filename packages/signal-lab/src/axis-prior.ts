@@ -1,8 +1,16 @@
 import { clamp, clamp01 } from "@hum-ai/shared-types";
 import type { AcousticFeatures } from "@hum-ai/audio-features";
 import type { AffectAxisPrior, AxisPrediction } from "@hum-ai/orchestrator";
-import { applyStandardizer, predictProba, type LogRegParams } from "./model";
+import { meanAbsZ, predictProba, type LogRegParams } from "./model";
 import { toFeatureVector } from "./feature-schema";
+
+/**
+ * ADR-0005 far-domain confidence penalty for an acted-speech affect prior — the single
+ * source for the 0.45 cap shared by the runtime bridge, the inference path, the prior
+ * expert, and the browser loader. Lives in this PURE deep module so apps/web can reach it
+ * without pulling in the node:fs runtime barrel.
+ */
+export const AFFECT_PRIOR_FAR_DOMAIN_CAP = 0.45;
 
 /**
  * Wrap a trained coarse-axis LogReg (signal-lab `model.valence_binary.json` /
@@ -28,15 +36,6 @@ const POSITIVE_POLE: Record<"valence" | "arousal", string> = {
   valence: "positive_valence",
   arousal: "high_arousal",
 };
-
-/** Mean |standardized value| across the feature vector — the OOD distance proxy. */
-function meanAbsZ(params: LogRegParams, raw: readonly number[]): number {
-  const z = applyStandardizer(raw, params.standardizer);
-  if (z.length === 0) return 0;
-  let s = 0;
-  for (const v of z) s += Math.abs(v);
-  return s / z.length;
-}
 
 export function buildAffectAxisPrior(params: LogRegParams, meta: AxisPriorMeta): AffectAxisPrior {
   const oodThreshold = meta.oodThreshold ?? 1.8;

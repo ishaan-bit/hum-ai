@@ -1,4 +1,17 @@
 import type { CohortModelSpec } from "./cohort";
+import {
+  accuracyOf,
+  balancedAccuracy,
+  confusionMatrix,
+  expectedCalibrationError,
+  groupFolds,
+  makeRng,
+  perClassMetrics,
+  type ClassMetric,
+} from "@hum-ai/shared-types";
+
+// Re-exported for back-compat: the grouped-CV fold assignment used by cohort-eval's tests.
+export { groupFolds };
 
 /**
  * Generic, target-agnostic evaluation harness for the model cohort. It mirrors the
@@ -21,13 +34,8 @@ export interface CohortSample {
   readonly group: string;
 }
 
-export interface CohortClassMetric {
-  readonly label: string;
-  readonly support: number;
-  readonly precision: number;
-  readonly recall: number;
-  readonly f1: number;
-}
+/** Per-class metric row — an alias of the shared {@link ClassMetric} (kept for back-compat). */
+export type CohortClassMetric = ClassMetric;
 
 export interface CohortMetrics {
   readonly model: string;
@@ -43,25 +51,6 @@ export interface CohortMetrics {
   readonly confusion: { readonly labels: readonly string[]; readonly matrix: readonly (readonly number[])[] };
   readonly ece: number;
   readonly chance: { readonly majorityClassAccuracy: number; readonly balancedChance: number };
-}
-
-/** mulberry32 deterministic PRNG. */
-function makeRng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** Assign groups to folds round-robin over sorted group ids (disjoint groups per fold). */
-export function groupFolds(samples: readonly CohortSample[], folds: number): number[] {
-  const groups = Array.from(new Set(samples.map((s) => s.group))).sort();
-  const groupFold = new Map<string, number>();
-  groups.forEach((g, i) => groupFold.set(g, i % folds));
-  return samples.map((s) => groupFold.get(s.group)!);
 }
 
 interface CvOutput {
@@ -113,85 +102,6 @@ function runGroupedCv(
     }
   }
   return { yTrue, yPred, pTop };
-}
-
-function balancedAccuracy(yTrue: readonly string[], yPred: readonly string[], labels: readonly string[]): number {
-  let sum = 0;
-  let used = 0;
-  for (const l of labels) {
-    let tp = 0;
-    let support = 0;
-    for (let i = 0; i < yTrue.length; i++) {
-      if (yTrue[i] === l) {
-        support++;
-        if (yPred[i] === l) tp++;
-      }
-    }
-    if (support > 0) {
-      sum += tp / support;
-      used++;
-    }
-  }
-  return used > 0 ? sum / used : 0;
-}
-
-function accuracyOf(yTrue: readonly string[], yPred: readonly string[]): number {
-  if (yTrue.length === 0) return 0;
-  let c = 0;
-  for (let i = 0; i < yTrue.length; i++) if (yTrue[i] === yPred[i]) c++;
-  return c / yTrue.length;
-}
-
-function perClassMetrics(yTrue: readonly string[], yPred: readonly string[], labels: readonly string[]): CohortClassMetric[] {
-  return labels.map((label) => {
-    let tp = 0;
-    let fp = 0;
-    let fn = 0;
-    let support = 0;
-    for (let i = 0; i < yTrue.length; i++) {
-      const t = yTrue[i] === label;
-      const p = yPred[i] === label;
-      if (t) support++;
-      if (t && p) tp++;
-      else if (!t && p) fp++;
-      else if (t && !p) fn++;
-    }
-    const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-    const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-    const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
-    return { label, support, precision, recall, f1 };
-  });
-}
-
-function confusionMatrix(yTrue: readonly string[], yPred: readonly string[], labels: readonly string[]) {
-  const index = new Map(labels.map((l, i) => [l, i]));
-  const matrix = labels.map(() => labels.map(() => 0));
-  for (let i = 0; i < yTrue.length; i++) {
-    const r = index.get(yTrue[i]!);
-    const c = index.get(yPred[i]!);
-    if (r !== undefined && c !== undefined) matrix[r]![c]!++;
-  }
-  return { labels: [...labels], matrix };
-}
-
-function expectedCalibrationError(yTrue: readonly string[], yPred: readonly string[], pTop: readonly number[]): number {
-  const bins = 10;
-  const binAcc = new Array(bins).fill(0);
-  const binConf = new Array(bins).fill(0);
-  const binN = new Array(bins).fill(0);
-  for (let i = 0; i < pTop.length; i++) {
-    const b = Math.min(bins - 1, Math.max(0, Math.floor(pTop[i]! * bins)));
-    binN[b]++;
-    binConf[b] += pTop[i]!;
-    if (yTrue[i] === yPred[i]) binAcc[b]++;
-  }
-  let ece = 0;
-  const n = pTop.length || 1;
-  for (let b = 0; b < bins; b++) {
-    if (binN[b] === 0) continue;
-    ece += (binN[b] / n) * Math.abs(binAcc[b] / binN[b] - binConf[b] / binN[b]);
-  }
-  return ece;
 }
 
 function majorityClassAccuracy(yTrue: readonly string[]): number {

@@ -45,6 +45,7 @@
       "@hum-ai/signal-lab/expert": ["packages/signal-lab/src/expert.ts"],
       "@hum-ai/signal-lab/axis-prior": ["packages/signal-lab/src/axis-prior.ts"],
       "@hum-ai/signal-lab/feature-schema": ["packages/signal-lab/src/feature-schema.ts"],
+      "@hum-ai/signal-lab/capture-gate": ["packages/signal-lab/src/capture-gate.ts"],
       "@hum-ai/native-corpus": ["packages/native-corpus/src/index.ts"]
     }
   },

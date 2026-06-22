@@ -15,10 +15,12 @@ import { trainableExamples, type NativeCorpus } from "./corpus";
 /**
  * FUSION META-LEARNER TRAINING — close the end-to-end learned-accuracy loop on-device.
  *
- * The `LogisticRegressionMetaLearner` is built and tested but dormant; the live fusion
- * uses the hand-weighted `StubWeightedMetaLearner`. This fits the trained meta-learner on
- * the user's OWN confirmed hums and promotes it ONLY when it beats the stub on held-out
- * data — exactly the backbone-floor discipline of the axis retrain (`train.ts`).
+ * This is the LIVE wiring of the trained `LogisticRegressionMetaLearner`: it fits the model
+ * on the user's OWN confirmed hums and promotes it ONLY when it beats the hand-weighted
+ * `StubWeightedMetaLearner` on held-out data — exactly the backbone-floor discipline of the
+ * axis retrain (`train.ts`). A promoted result is threaded through `metaLearnerFromParams`
+ * into `orchestrateHumRead({ metaLearner })`; absent/unpromoted ⇒ the stub stays (the honest
+ * default), and `FusionEngine.fuse` degrades a malformed meta-learner back to the stub too.
  *
  * Pipeline (pure-ish; the experts' `predict` is async): for each labelled hum, run the
  * deterministic expert ensemble on its features → expert outputs, and map the user's

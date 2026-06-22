@@ -10,6 +10,7 @@ import {
   type OrchestratedRead,
 } from "@hum-ai/orchestrator";
 import { artifactPath } from "./paths";
+import { AFFECT_PRIOR_FAR_DOMAIN_CAP } from "./axis-prior";
 import { deserializeModel, type LogRegParams } from "./model";
 import { LearnedAffectPriorExpert } from "./expert";
 import { predictNeuralFromFeatures, type NeuralFeatureModel } from "./neural-feature-model";
@@ -49,8 +50,9 @@ import type { InferencePromotion } from "./inference";
  * degrades to the honest fallback, never an exception that would block reading a hum.
  */
 
-/** ADR-0005 far-domain confidence penalty for an acted-speech affect prior. */
-export const AFFECT_PRIOR_FAR_DOMAIN_CAP = 0.45;
+/** ADR-0005 far-domain confidence penalty — re-exported for Node consumers; the single
+ *  source lives in the pure `axis-prior` module so the browser shares the same value. */
+export { AFFECT_PRIOR_FAR_DOMAIN_CAP };
 
 export interface RuntimeBridgeOptions {
   /** Env for path resolution (HUM_DATA_DIR override). */

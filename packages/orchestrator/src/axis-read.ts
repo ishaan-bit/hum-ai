@@ -74,8 +74,12 @@ export interface AxisResolution {
   readonly acousticValue: number;
   /** Honest confidence for this axis [0,1] (drives the qualitative band). */
   readonly confidence: UnitInterval;
-  /** Whether a trained prior contributed (in-domain) or abstained (OOD) / was absent. */
-  readonly trainedContribution: "in_domain" | "abstained_ood" | "absent";
+  /**
+   * Whether a trained prior contributed (in-domain + gate-passed), abstained (OOD),
+   * was HELD because it failed/lacks its promotion gate (v3 — recorded for audit but
+   * never steers the value or confidence), or was absent.
+   */
+  readonly trainedContribution: "in_domain" | "abstained_ood" | "held_failed_gate" | "absent";
   /** The trained prior's raw lean (provenance), when present. */
   readonly trainedValue: number | null;
   readonly trainedBalancedAccuracy: number | null;
@@ -209,7 +213,17 @@ function resolveAxis(
     trainedBalancedAccuracy = prior.balancedAccuracy;
     trainedPassedGate = prior.passedGate;
     oodDistance = pred.ood;
-    if (pred.inDomain) {
+    if (!pred.inDomain) {
+      trainedContribution = "abstained_ood";
+    } else if (!prior.passedGate) {
+      // v3 GATE ENFORCEMENT: an in-domain prior that did NOT pass its promotion gate may
+      // NOT steer the leading dimensional read or raise its confidence. Its lean is kept
+      // in provenance (`trainedValue`/`oodDistance`/`trainedPassedGate`) for audit only —
+      // the surfaced value stays the transparent acoustic backbone and confidence is
+      // unchanged. This is conservative by construction: the prior loaders degrade a
+      // missing/old manifest to `passedGate = false`, so an unverified prior lands here too.
+      trainedContribution = "held_failed_gate";
+    } else {
       trainedContribution = "in_domain";
       // Weight the nudge by the prior's self-confidence and its honest accuracy. A
       // far-domain prior is capped at 0.5 (refines, never overrides — ADR-0005); a
@@ -229,10 +243,10 @@ function resolveAxis(
       // read is genuinely more ambiguous when the backbone and the prior point apart. `agree`
       // is 1 at identical leans, 0.5 at a full-scale (|Δ|=1) split, 0 at opposite poles.
       const agree = 1 - Math.abs(acousticValue - pred.value) / 2;
-      const lift = prior.passedGate ? 0.15 : 0.08;
+      // Only a gate-PASSED, in-domain prior reaches here (v3), so the lift is the full 0.15;
+      // disagreement still lowers it (agree − 0.5 < 0), agreement raises it.
+      const lift = 0.15;
       confidence = clamp01(confidence + lift * pred.confidence * (agree - 0.5) * 2);
-    } else {
-      trainedContribution = "abstained_ood";
     }
   }
 

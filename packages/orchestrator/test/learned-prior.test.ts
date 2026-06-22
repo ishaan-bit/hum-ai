@@ -22,6 +22,8 @@ import {
   type HumHistory,
   type LearnedAffectPrior,
   type OrchestratedRead,
+  type AffectAxisPrior,
+  type AxisPrediction,
 } from "@hum-ai/orchestrator";
 import { cleanHumFeatures, sampleHistory } from "./fixtures";
 
@@ -163,33 +165,124 @@ test("claim/safety boundary holds with a risk-leaning trained prior, even with c
   for (const key of allKeys(read)) assert.equal(isRawAudioFieldName(key), false, `raw-audio-like key '${key}'`);
 });
 
-test("manifest gate status flows into model provenance without changing the read (honesty metadata)", async () => {
+/** A stub coarse-axis prior with a fixed prediction (orchestrator-level wiring proof). */
+function stubAxisPrior(
+  axis: "valence" | "arousal",
+  pred: AxisPrediction,
+  opts: { nativeDomain?: boolean } = {},
+): AffectAxisPrior {
+  return {
+    axis,
+    balancedAccuracy: 0.85,
+    passedGate: true,
+    nativeDomain: opts.nativeDomain,
+    predict: () => pred,
+  };
+}
+
+test("axisPriors thread end-to-end: a PROMOTED native prior steers internal.axis within its cap; an OOD prior does not", async () => {
+  const input = { features: cleanHumFeatures(), consent: defaultConsent(now), modelVersion, now, history: matureHistory };
+
+  // Baseline: no prior → the transparent acoustic value leads, no trained contribution.
+  const baseline = await orchestrateHumRead(input);
+  const acoustic = baseline.internal.axis.arousal.value;
+  assert.equal(baseline.internal.axis.arousal.trainedContribution, "absent");
+
+  // A PROMOTED, in-domain hum-native prior (ADR-0011) leaning high MUST move the read
+  // (proves the orchestrator actually threads input.axisPriors → resolveAxisRead → internal.axis,
+  // which is the web app's effectiveAxisPriors path) — but stays bounded below its raw lean.
+  const promoted = await orchestrateHumRead({
+    ...input,
+    axisPriors: { arousal: stubAxisPrior("arousal", { value: 0.95, ood: 0.05, inDomain: true, confidence: 0.9 }, { nativeDomain: true }) },
+  });
+  assert.equal(promoted.internal.axis.arousal.trainedContribution, "in_domain");
+  assert.ok(promoted.internal.axis.arousal.value > acoustic, "a promoted in-domain native prior steers the read");
+  assert.ok(promoted.internal.axis.arousal.value < 0.95, "even a native prior never fully overrides the acoustic backbone");
+
+  // An UNPROMOTED / out-of-domain prior abstains: the read is unchanged from the acoustic value.
+  const ood = await orchestrateHumRead({
+    ...input,
+    axisPriors: { arousal: stubAxisPrior("arousal", { value: 0.95, ood: 1, inDomain: false, confidence: 0 }) },
+  });
+  assert.equal(ood.internal.axis.arousal.trainedContribution, "abstained_ood");
+  assert.equal(ood.internal.axis.arousal.value, acoustic, "an OOD/unpromoted prior leaves the read on the acoustic backbone");
+});
+
+// ---------------------------------------------------------------------------
+// v3 PROMOTION-GATE ENFORCEMENT (Part A): a gate-FAILED learned prior is HELD —
+// it may not steer the read or raise confidence, but its gate status survives as
+// internal audit metadata. An unknown-gate prior is still fused (within its cap).
+// ---------------------------------------------------------------------------
+
+const gateFailedPrior = (fake: AffectExpert): LearnedAffectPrior => ({
+  ...priorOf(fake),
+  gatePassed: false,
+  gateNote: "population prior; affect target did NOT pass the 80% balanced_accuracy gate (balanced acc 47.9%).",
+});
+
+test("v3: a gate-FAILED learned prior is HELD — the read is byte-identical to supplying NO prior (no steer, no confidence boost)", async () => {
+  const input = { features: cleanHumFeatures(), consent: defaultConsent(now), modelVersion, now, history: matureHistory };
+  // A confident risk-leaning prior — the strongest pressure to sharpen/steer the fused read.
+  const fake = new FakeLearnedPriorExpert({ low_mood: 0.6, tense_anxious: 0.3, neutral_close_to_usual: 0.1 });
+
+  const noPrior = await orchestrateHumRead(input);
+  const held = await orchestrateHumRead({ ...input, learnedAffectPrior: gateFailedPrior(fake) });
+
+  // The failed-gate prior never ran (it was held out of the ensemble)…
+  assert.equal(fake.calls, 0, "a gate-failed prior must not even be invoked by the spine");
+  // …so the steering read is identical to supplying no prior at all.
+  assert.deepEqual(held.internal.inference, noPrior.internal.inference, "held prior must not change the inference");
+  assert.deepEqual(held.internal.axis, noPrior.internal.axis, "held prior must not change the axis read");
+  assert.deepEqual(held.userFacing, noPrior.userFacing, "held prior must not change user-facing copy/confidence");
+
+  // But the gate status SURVIVES as audit metadata (transparency, not steering).
+  assert.equal(held.internal.modelProvenance.kind, "heuristic_ensemble");
+  assert.equal(held.internal.modelProvenance.priorContribution, "held_failed_gate");
+  assert.equal(held.internal.modelProvenance.gatePassed, null, "no STEERING prior ⇒ null gate on the steering slot");
+  assert.ok(held.internal.modelProvenance.heldPrior, "the held prior is recorded for audit");
+  assert.equal(held.internal.modelProvenance.heldPrior!.gatePassed, false);
+  assert.match(held.internal.modelProvenance.heldPrior!.gateNote ?? "", /did NOT pass/);
+
+  // No raw-audio-like key introduced by the new audit field, at any depth.
+  assert.deepEqual(findRawAudioFields(held), []);
+});
+
+test("v3: a gate-FAILED prior does not improve fusion confidence", async () => {
+  const input = { features: cleanHumFeatures(), consent: defaultConsent(now), modelVersion, now, history: matureHistory };
+  // A maximally-confident single-state prior would (if fused) sharpen the distribution and
+  // could lift fusion confidence up to the cap. Held, it must have ZERO effect.
+  const peaky = new FakeLearnedPriorExpert({ calm_regulated: 0.98, neutral_close_to_usual: 0.02 });
+  const noPrior = await orchestrateHumRead(input);
+  const held = await orchestrateHumRead({ ...input, learnedAffectPrior: gateFailedPrior(peaky) });
+  assert.equal(
+    held.internal.inference.confidence.confidence,
+    noPrior.internal.inference.confidence.confidence,
+    "a held gate-failed prior must not raise fusion confidence",
+  );
+});
+
+test("v3: an UNKNOWN-gate prior is still fused (conservative cap applies, gate-failure is the only hold trigger)", async () => {
   const input = { features: cleanHumFeatures(), consent: defaultConsent(now), modelVersion, now, history: matureHistory };
   const fake = new FakeLearnedPriorExpert({ calm_regulated: 0.5, neutral_close_to_usual: 0.5 });
+  // priorOf() sets no gatePassed ⇒ undefined ⇒ NOT a known failure ⇒ fused within the far-domain cap.
+  const read = await orchestrateHumRead({ ...input, learnedAffectPrior: priorOf(fake) });
+  assert.ok(fake.calls > 0, "an unknown-gate prior is still fused (steers within its cap)");
+  assert.equal(read.internal.modelProvenance.kind, "learned_affect_prior");
+  assert.equal(read.internal.modelProvenance.priorContribution, "fused");
+  assert.equal(read.internal.modelProvenance.gatePassed, null, "unknown gate ⇒ null (no false validation claim)");
+  assert.equal(read.internal.modelProvenance.heldPrior, null);
+  // The far-domain cap still binds — an unverified prior cannot run confidence away.
+  assert.ok(read.internal.inference.confidence.appliedCap <= 0.45 + 1e-9);
+});
 
-  // A prior carrying gate status (as the signal-lab bridge sets it from model_manifest.json).
-  const gated: LearnedAffectPrior = {
-    ...priorOf(fake),
-    gatePassed: false,
-    gateNote: "population prior; affect target did NOT pass the 80% balanced_accuracy gate (balanced acc 47.9%).",
-  };
-  const read = await orchestrateHumRead({ ...input, learnedAffectPrior: gated });
-  assert.equal(read.internal.modelProvenance.gatePassed, false);
-  assert.match(read.internal.modelProvenance.gateNote ?? "", /did NOT pass/);
-
-  // A prior WITHOUT gate fields → null (no false validation claim, no missing-field crash).
-  const ungated = await orchestrateHumRead({ ...input, learnedAffectPrior: priorOf(fake) });
-  assert.equal(ungated.internal.modelProvenance.gatePassed, null);
-  assert.equal(ungated.internal.modelProvenance.gateNote, null);
-
-  // Heuristic fallback carries null gate metadata (honest "unknown / not a trained model").
-  const fallback = await orchestrateHumRead(input);
-  assert.equal(fallback.internal.modelProvenance.gatePassed, null);
-  assert.equal(fallback.internal.modelProvenance.gateNote, null);
-
-  // Gate status is metadata ONLY — the fused inference is identical with or without it.
-  assert.deepEqual(read.internal.inference, ungated.internal.inference);
-
-  // The new provenance fields introduce no raw-audio-like key at any depth.
-  assert.deepEqual(findRawAudioFields(read), []);
+test("v3: a gate-PASSED far-domain learned prior is fused and steers the secondary read (within its cap)", async () => {
+  const input = { features: cleanHumFeatures(), consent: defaultConsent(now), modelVersion, now, history: matureHistory };
+  const fake = new FakeLearnedPriorExpert({ calm_regulated: 0.6, neutral_close_to_usual: 0.4 });
+  const passed: LearnedAffectPrior = { ...priorOf(fake), gatePassed: true, gateNote: "gate PASSED" };
+  const read = await orchestrateHumRead({ ...input, learnedAffectPrior: passed });
+  assert.ok(fake.calls > 0, "a gate-passed prior is fused");
+  assert.equal(read.internal.modelProvenance.kind, "learned_affect_prior");
+  assert.equal(read.internal.modelProvenance.priorContribution, "fused");
+  assert.equal(read.internal.modelProvenance.gatePassed, true);
+  assert.ok(read.internal.inference.confidence.appliedCap <= 0.45 + 1e-9, "far-domain cap still binds");
 });

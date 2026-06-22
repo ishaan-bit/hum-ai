@@ -60,3 +60,51 @@ test("schema snapshot is serializable and self-describing", () => {
   assert.equal(snap.vectorLength, featureVectorLength());
   assert.ok(snap.vectorNames.includes("pitchMeanHz__present"));
 });
+
+// ---------------------------------------------------------------------------
+// SCHEMA LOCK (drift guard, strict). The 58-column layout IS the contract the
+// shipped RAVDESS prior JSONs serialize against, by POSITION — `axis-prior.ts` /
+// `runtime-bridge.ts` / `native-corpus` all vectorize through `featureVectorNames`
+// / `toFeatureVector`. The reconciliation tests above catch a RENAME/REMOVAL, but
+// an ADDITION or REORDER keeps `v.length === featureVectorLength()` self-consistent
+// and would slip through silently — exactly the schema-v2 hazard the REVAMP_PLAN
+// flags as "BREAKS PRIORS". This pins the exact count AND the exact serialized order
+// so any drift fails LOUDLY and forces the deliberate, versioned v2 migration path.
+const FROZEN_VECTOR_NAMES: readonly string[] = [
+  "durationSec", "inputRms", "meanRms", "medianRms", "rmsEnergy", "peakAmplitude",
+  "activeFrameRatio", "quietFrameRatio", "clippedFrameRatio", "silenceRatio",
+  "noiseFloorRms", "signalToNoiseProxy", "zeroCrossingRate", "spectralCentroidHz",
+  "spectralBandwidthHz", "spectralRolloffHz", "spectralFlatness", "spectralFlux",
+  "breakCount", "pauseCount", "avgPauseLengthSec", "microBreakRatio",
+  "voicingContinuityCoverage", "clarityScore", "breathinessProxy", "shimmerProxy",
+  "amplitudeStability", "musicalityScore", "controlledExpressionScore",
+  "residualInstabilityScore", "residualPitchInstability", "residualAmplitudeInstability",
+  "isSilent", "isTooFaint",
+  "pitchMeanHz", "pitchMeanHz__present",
+  "pitchVariance", "pitchVariance__present",
+  "pitchRangeSemitones", "pitchRangeSemitones__present",
+  "pitchStability", "pitchStability__present",
+  "jitter", "jitter__present",
+  "pitchDrift", "pitchDrift__present",
+  "pitchCoverage", "pitchCoverage__present",
+  "longestStableSegmentSec", "longestStableSegmentSec__present",
+  "onsetDelaySec", "onsetDelaySec__present",
+  "smoothnessScore", "smoothnessScore__present",
+  "vibratoRegularity", "vibratoRegularity__present",
+  "attackConsistency", "attackConsistency__present",
+];
+
+test("SCHEMA LOCK: the vector is exactly 58 columns (32 numeric + 2 boolean + 12 nullable×2)", () => {
+  // The exact bucket sizes the shipped-prior contract depends on. Changing any of
+  // these is a schema-v2 migration (§3 REVAMP_PLAN), never an accidental edit.
+  assert.equal(NUMERIC_FEATURE_KEYS.length, 32, "numeric feature count drifted");
+  assert.equal(BOOLEAN_FEATURE_KEYS.length, 2, "boolean feature count drifted");
+  assert.equal(NULLABLE_FEATURE_KEYS.length, 12, "nullable feature count drifted");
+  assert.equal(featureVectorLength(), 58, "feature vector length drifted from the 58-col prior contract");
+});
+
+test("SCHEMA LOCK: featureVectorNames() matches the frozen golden order exactly", () => {
+  // A positional diff: any add / remove / reorder of a feature breaks this and the
+  // shipped priors at once — forcing the deliberate, retrain-gated v2 path instead.
+  assert.deepEqual(featureVectorNames(), FROZEN_VECTOR_NAMES);
+});

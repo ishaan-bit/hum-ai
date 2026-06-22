@@ -82,6 +82,56 @@ test("a NATIVE in-domain prior nudges the read more than a far-domain one with t
   assert.ok(far.arousal.value > acoustic, "the far-domain prior still refines");
 });
 
+test("v3: a gate-FAILED in-domain axis prior is HELD — no nudge, no confidence change, recorded for audit", () => {
+  const features = cleanHumFeatures();
+  const acoustic = resolveAxisRead(features).arousal;
+
+  // A confident, in-domain, but gate-FAILED prior leaning hard high. It must NOT move the read.
+  const held = resolveAxisRead(features, {
+    arousal: stubPrior("arousal", { value: 0.95, ood: 0.05, inDomain: true, confidence: 0.9 }, { passedGate: false }),
+  }).arousal;
+
+  assert.equal(held.trainedContribution, "held_failed_gate");
+  assert.equal(held.value, acoustic.value, "a gate-failed prior must not nudge the axis value");
+  assert.equal(held.confidence, acoustic.confidence, "a gate-failed prior must not change confidence");
+  // …but its lean + OOD distance are still recorded for provenance/audit.
+  assert.equal(held.trainedValue, 0.95);
+  assert.equal(held.trainedPassedGate, false);
+  assert.equal(held.oodDistance, 0.05);
+});
+
+test("v3: missing gate metadata is conservative — a passedGate=false prior (loader default) does not steer", () => {
+  // The prior loaders degrade a missing/old manifest to passedGate=false; that prior must
+  // be held exactly like an explicitly gate-failed one (never silently trusted to steer).
+  const features = cleanHumFeatures();
+  const acoustic = resolveAxisRead(features).valence;
+  const conservative = resolveAxisRead(features, {
+    valence: stubPrior("valence", { value: -0.9, ood: 0.1, inDomain: true, confidence: 0.8 }, { passedGate: false }),
+  }).valence;
+  assert.equal(conservative.trainedContribution, "held_failed_gate");
+  assert.equal(conservative.value, acoustic.value, "unverified (missing-manifest) prior must not steer the read");
+});
+
+test("an in-domain prior that strongly DISAGREES with the backbone LOWERS confidence (conflicting evidence)", () => {
+  const features = cleanHumFeatures();
+  const acoustic = resolveAxisRead(features).arousal;
+
+  // A confident, gate-passed, in-domain prior pointing to the OPPOSITE pole of the
+  // acoustic backbone — the read is genuinely more ambiguous, so confidence must drop.
+  const opposite = acoustic.value >= 0 ? -0.95 : 0.95;
+  const disagreeing = resolveAxisRead(features, {
+    arousal: stubPrior("arousal", { value: opposite, ood: 0.05, inDomain: true, confidence: 0.9 }, { passedGate: true }),
+  }).arousal;
+
+  assert.equal(disagreeing.trainedContribution, "in_domain");
+  assert.ok(
+    disagreeing.confidence < acoustic.confidence,
+    `disagreement should lower confidence: ${disagreeing.confidence} !< ${acoustic.confidence}`,
+  );
+  // And it stays a valid, bounded confidence (never negative).
+  assert.ok(disagreeing.confidence >= 0 && disagreeing.confidence <= 1);
+});
+
 test("a clear signal alone earns at most Medium; only in-domain trained agreement reaches High", () => {
   const features = cleanHumFeatures();
   const acousticConf = axisReadConfidence(resolveAxisRead(features));

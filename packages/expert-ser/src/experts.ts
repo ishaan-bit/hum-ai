@@ -1,11 +1,7 @@
-﻿import { clamp01 } from "@hum-ai/shared-types";
+﻿import { clamp01, finiteOr } from "@hum-ai/shared-types";
 import type { AcousticFeatures } from "@hum-ai/audio-features";
 import type { FusionLabel as Label } from "@hum-ai/affect-model-contracts";
 import { StubAudioExpert } from "./base";
-
-/** Finite-guarded read of a (possibly null/undefined) feature → `fallback` when not computable. */
-const num = (v: number | null | undefined, fallback: number): number =>
-  typeof v === "number" && Number.isFinite(v) ? v : fallback;
 
 /**
  * HumAcousticExpert — the hum-native interpretable expert (most on-domain).
@@ -62,10 +58,10 @@ export class HumEmbeddingExpert extends StubAudioExpert {
   ];
   protected readonly defaultDomainMatch = 0.85;
   protected tilt(f: AcousticFeatures): Partial<Record<Label, number>> {
-    const energy = clamp01((num(f.rmsEnergy, 0.02) * 0.5 + num(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
-    const positiveValence = clamp01(num(f.clarityScore, 0.5) * 0.6 + (1 - num(f.residualInstabilityScore, 0.3)) * 0.4);
-    const stability = clamp01(num(f.amplitudeStability, 0.5) * 0.5 + num(f.pitchStability, 0.5) * 0.5);
-    const instability = clamp01(num(f.residualInstabilityScore, 0.3));
+    const energy = clamp01((finiteOr(f.rmsEnergy, 0.02) * 0.5 + finiteOr(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
+    const positiveValence = clamp01(finiteOr(f.clarityScore, 0.5) * 0.6 + (1 - finiteOr(f.residualInstabilityScore, 0.3)) * 0.4);
+    const stability = clamp01(finiteOr(f.amplitudeStability, 0.5) * 0.5 + finiteOr(f.pitchStability, 0.5) * 0.5);
+    const instability = clamp01(finiteOr(f.residualInstabilityScore, 0.3));
     return {
       neutral_close_to_usual: 0.35,
       calm_regulated: (1 - energy) * 0.4 + positiveValence * 0.4 + stability * 0.2,
@@ -102,10 +98,10 @@ export class VocalBurstExpressionExpert extends StubAudioExpert {
   readonly labelSpace: readonly Label[] = ["positive_activation", "high_arousal_negative", "calm_regulated", "neutral_close_to_usual"];
   protected readonly defaultDomainMatch = 0.55;
   protected tilt(f: AcousticFeatures): Partial<Record<Label, number>> {
-    const energy = clamp01((num(f.rmsEnergy, 0.02) * 0.5 + num(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
-    const flux = clamp01(num(f.spectralFlux, 0.08) / 0.3);
+    const energy = clamp01((finiteOr(f.rmsEnergy, 0.02) * 0.5 + finiteOr(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
+    const flux = clamp01(finiteOr(f.spectralFlux, 0.08) / 0.3);
     const arousal = clamp01(energy * 0.6 + flux * 0.4);
-    const positiveValence = clamp01(num(f.clarityScore, 0.5) * 0.6 + (1 - num(f.residualInstabilityScore, 0.3)) * 0.4);
+    const positiveValence = clamp01(finiteOr(f.clarityScore, 0.5) * 0.6 + (1 - finiteOr(f.residualInstabilityScore, 0.3)) * 0.4);
     return {
       neutral_close_to_usual: 0.4,
       calm_regulated: (1 - arousal) * 0.7 + positiveValence * 0.3,
@@ -132,10 +128,10 @@ export class SpeechEmotionExpert extends StubAudioExpert {
   ];
   protected readonly defaultDomainMatch = 0.4;
   protected tilt(f: AcousticFeatures): Partial<Record<Label, number>> {
-    const energy = clamp01((num(f.rmsEnergy, 0.02) * 0.5 + num(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
-    const pitchMove = clamp01(num(f.pitchRangeSemitones, 1.5) / 8);
+    const energy = clamp01((finiteOr(f.rmsEnergy, 0.02) * 0.5 + finiteOr(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
+    const pitchMove = clamp01(finiteOr(f.pitchRangeSemitones, 1.5) / 8);
     const arousal = clamp01(energy * 0.5 + pitchMove * 0.5);
-    const positiveValence = clamp01(num(f.clarityScore, 0.5) * 0.6 + (1 - num(f.residualInstabilityScore, 0.3)) * 0.4);
+    const positiveValence = clamp01(finiteOr(f.clarityScore, 0.5) * 0.6 + (1 - finiteOr(f.residualInstabilityScore, 0.3)) * 0.4);
     return {
       neutral_close_to_usual: 0.4,
       positive_activation: arousal * positiveValence,
@@ -159,12 +155,12 @@ export class SpeechClinicalExpert extends StubAudioExpert {
   readonly labelSpace: readonly Label[] = ["low_mood", "fatigued", "tense_anxious", "neutral_close_to_usual"];
   protected readonly defaultDomainMatch = 0.35;
   protected tilt(f: AcousticFeatures): Partial<Record<Label, number>> {
-    const energy = clamp01((num(f.rmsEnergy, 0.02) * 0.5 + num(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
-    const monotone = 1 - clamp01(num(f.pitchRangeSemitones, 2) / 6);
-    const breathy = clamp01(num(f.breathinessProxy, 0.2));
-    const lowClarity = 1 - clamp01(num(f.clarityScore, 0.5));
-    const instability = clamp01(num(f.residualInstabilityScore, 0.3));
-    const jitterN = clamp01(num(f.jitter, 0.01) / 0.04);
+    const energy = clamp01((finiteOr(f.rmsEnergy, 0.02) * 0.5 + finiteOr(f.activeFrameRatio, 0.5) * 0.5) / 0.6);
+    const monotone = 1 - clamp01(finiteOr(f.pitchRangeSemitones, 2) / 6);
+    const breathy = clamp01(finiteOr(f.breathinessProxy, 0.2));
+    const lowClarity = 1 - clamp01(finiteOr(f.clarityScore, 0.5));
+    const instability = clamp01(finiteOr(f.residualInstabilityScore, 0.3));
+    const jitterN = clamp01(finiteOr(f.jitter, 0.01) / 0.04);
     return {
       neutral_close_to_usual: 0.45,
       low_mood: (1 - energy) * 0.4 + monotone * 0.3 + lowClarity * 0.3,

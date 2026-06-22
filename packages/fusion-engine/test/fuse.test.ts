@@ -6,7 +6,7 @@ import {
   type ExpertOutput,
   type ConfidenceCaps,
 } from "@hum-ai/affect-model-contracts";
-import { FusionEngine, expertWeight } from "@hum-ai/fusion-engine";
+import { FusionEngine, expertWeight, StubWeightedMetaLearner, type MetaLearner } from "@hum-ai/fusion-engine";
 
 const engine = new FusionEngine();
 const caps: ConfidenceCaps = { cap: 0.88, capReason: "stage cap", abstainBelow: 0.45 };
@@ -65,4 +65,27 @@ test("dimensional output stays within [-1, 1]", () => {
   const out = engine.fuse([audioExpert()], ctx);
   assert.ok(out.dimensional.valence >= -1 && out.dimensional.valence <= 1);
   assert.ok(out.dimensional.arousal >= -1 && out.dimensional.arousal <= 1);
+});
+
+test("a throwing injected meta-learner degrades to the deterministic stub (backbone-floor discipline)", () => {
+  // A promoted hum-native meta-learner is supplied by the caller; a malformed/buggy one
+  // must NEVER crash the read — fuse() catches and falls back to StubWeightedMetaLearner.
+  let combineCalls = 0;
+  const throwingMeta: MetaLearner = {
+    kind: "logistic_regression",
+    combine() {
+      combineCalls += 1;
+      throw new Error("simulated malformed meta-learner");
+    },
+  };
+  const withThrowing = new FusionEngine({ metaLearner: throwingMeta });
+  const experts = [audioExpert()];
+
+  // Does not throw, and yields the SAME well-formed distribution as the stub fallback.
+  const out = withThrowing.fuse(experts, ctx);
+  assert.equal(combineCalls, 1, "the injected meta-learner was actually attempted");
+  assert.ok(out.states.calm_regulated > 0, "fell back to a real fused distribution, not a crash");
+  const stubOut = new FusionEngine({ metaLearner: new StubWeightedMetaLearner() }).fuse(experts, ctx);
+  assert.deepEqual(out.states, stubOut.states, "the fallback IS the deterministic stub fusion");
+  assert.equal(out.dimensional.valence, stubOut.dimensional.valence);
 });

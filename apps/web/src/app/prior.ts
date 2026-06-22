@@ -15,11 +15,8 @@
  */
 import { deserializeModel } from "@hum-ai/signal-lab/model";
 import { LearnedAffectPriorExpert } from "@hum-ai/signal-lab/expert";
-import { buildAffectAxisPrior } from "@hum-ai/signal-lab/axis-prior";
+import { buildAffectAxisPrior, AFFECT_PRIOR_FAR_DOMAIN_CAP, type AxisPriorMeta as SignalAxisPriorMeta } from "@hum-ai/signal-lab/axis-prior";
 import type { LearnedAffectPrior, AffectAxisPriors } from "@hum-ai/orchestrator";
-
-/** ADR-0005 far-domain confidence penalty for an acted-speech affect prior. */
-const AFFECT_PRIOR_FAR_DOMAIN_CAP = 0.45;
 
 export interface PromotionStatus {
   readonly evaluated: boolean;
@@ -33,11 +30,9 @@ export interface PromotionStatus {
   readonly note: string;
 }
 
-/** Honest per-axis provenance for the two coarse axis priors (for UI labels). */
-export interface AxisPriorMeta {
-  readonly balancedAccuracy: number;
-  readonly passedGate: boolean;
-}
+/** Honest per-axis provenance for the two coarse axis priors (for UI labels) — the
+ *  UI-facing subset of signal-lab's canonical {@link SignalAxisPriorMeta}. */
+export type AxisPriorMeta = Pick<SignalAxisPriorMeta, "balancedAccuracy" | "passedGate">;
 
 export interface LoadedPrior {
   readonly prior: LearnedAffectPrior;

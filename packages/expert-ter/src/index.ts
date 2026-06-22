@@ -1,4 +1,4 @@
-﻿import { clamp01, type Modality, type Probability } from "@hum-ai/shared-types";
+﻿import { clamp01, normalizeDistribution, type Modality } from "@hum-ai/shared-types";
 import {
   missingExpertOutput,
   FUSION_LABELS,
@@ -44,10 +44,7 @@ export class TextEmotionExpert implements AffectExpert {
       if (NEGATIVE_HIGH.includes(w)) tilt.tense_anxious = (tilt.tense_anxious ?? 0) + 1;
     }
 
-    const probabilities: Record<string, Probability> = {};
-    let total = 0;
-    for (const l of FUSION_LABELS) total += Math.max(tilt[l] ?? 0, 0);
-    for (const l of FUSION_LABELS) probabilities[l] = total > 0 ? Math.max(tilt[l] ?? 0, 0) / total : 1 / FUSION_LABELS.length;
+    const probabilities = normalizeDistribution(tilt, FUSION_LABELS);
 
     return {
       expertId: this.expertId,

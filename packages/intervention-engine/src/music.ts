@@ -1,4 +1,4 @@
-import type { ValenceArousal } from "@hum-ai/shared-types";
+import { clamp, vaDistance, type ValenceArousal } from "@hum-ai/shared-types";
 import type { MusicVaTarget } from "./templates";
 
 /**
@@ -68,8 +68,6 @@ export const SEED_MUSIC_CATALOG: readonly MusicTrack[] = [
   { id: "upbeat_focus", title: "Upbeat focus instrumental", genre: "electronic", bpm: 116, valence: 0.4, arousal: 0.5 },
 ];
 
-const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
-
 interface Steer {
   /** Destination region to match tracks against (a function of the current V-A). */
   readonly dest: (current: ValenceArousal) => ValenceArousal;
@@ -112,9 +110,6 @@ const STEER: Readonly<Record<MusicVaTarget, Steer>> = {
     copy: "An upbeat track to take into the thing you want to start.",
   },
 };
-
-const vaDistance = (a: ValenceArousal, b: ValenceArousal): number =>
-  Math.hypot(a.valence - b.valence, a.arousal - b.arousal);
 
 /** Soft, normalized penalty for sitting outside the preferred BPM window. */
 const bpmPenalty = (bpm: number, [lo, hi]: readonly [number, number]): number => {

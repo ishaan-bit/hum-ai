@@ -1,4 +1,4 @@
-import { clamp01, DOMAIN_CLASSES, type DomainClass, type UnitInterval } from "@hum-ai/shared-types";
+import { clamp01, normalizeDistribution, DOMAIN_CLASSES, type DomainClass, type UnitInterval } from "@hum-ai/shared-types";
 import type { AcousticFeatures } from "@hum-ai/audio-features";
 
 /**
@@ -17,16 +17,9 @@ export interface DomainClassifier {
   classify(features: AcousticFeatures): DomainClassification;
 }
 
+// L1-normalize the domain scores; with no positive signal, fall back to "noisy_unknown".
 function softmaxNormalize(scores: Record<DomainClass, number>): Record<DomainClass, number> {
-  let total = 0;
-  for (const c of DOMAIN_CLASSES) total += Math.max(scores[c], 0);
-  const out = {} as Record<DomainClass, number>;
-  if (total <= 0) {
-    for (const c of DOMAIN_CLASSES) out[c] = c === "noisy_unknown" ? 1 : 0;
-    return out;
-  }
-  for (const c of DOMAIN_CLASSES) out[c] = Math.max(scores[c], 0) / total;
-  return out;
+  return normalizeDistribution(scores, DOMAIN_CLASSES, (c) => (c === "noisy_unknown" ? 1 : 0));
 }
 
 /**

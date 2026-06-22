@@ -202,9 +202,26 @@ export interface LearnedAffectPrior {
   readonly gateNote?: string;
 }
 
+/** A learned prior recorded for audit but HELD out of the steering path (v3). */
+export interface HeldPriorAudit {
+  readonly expertId: string;
+  readonly artifact: string | null;
+  readonly gatePassed: boolean | null;
+  readonly gateNote: string | null;
+}
+
 /** Which model produced this read (internal transparency — never rendered/synced). */
 export interface ModelProvenance {
   readonly kind: "learned_affect_prior" | "heuristic_ensemble";
+  /**
+   * How a supplied learned affect prior contributed to the SECONDARY affect-state read
+   * (v3 gate enforcement):
+   *  - `fused` — gate-passed/unknown prior fused into the ensemble (within its far-domain cap);
+   *  - `held_failed_gate` — prior supplied but HELD out of fusion because it failed its
+   *    promotion gate (the heuristic ensemble steered instead; recorded in `heldPrior`);
+   *  - `none` — no learned prior supplied (heuristic ensemble).
+   */
+  readonly priorContribution: "fused" | "held_failed_gate" | "none";
   /** Expert id that supplied the learned prior, or null for the heuristic ensemble. */
   readonly expertId: string | null;
   /** Artifact path the learned prior came from, or null. */
@@ -212,13 +229,19 @@ export interface ModelProvenance {
   /** Number of experts fused this read. */
   readonly expertCount: number;
   /**
-   * Whether the prior's affect target passed its promotion gate (manifest-sourced), or
-   * `null` when unknown / heuristic fallback. The read is identical regardless — the
-   * prior is always far-domain-penalized and capped; this is honesty metadata only.
+   * Whether the STEERING prior's affect target passed its promotion gate (manifest-sourced),
+   * or `null` when unknown / heuristic fallback / held. A fused prior is always
+   * far-domain-penalized and capped; a gate-FAILED prior is held out entirely (v3).
    */
   readonly gatePassed: boolean | null;
-  /** Honest gate/promotion note (manifest-sourced), or `null`. Never rendered/synced. */
+  /** Honest gate/promotion note for the steering prior (manifest-sourced), or `null`. */
   readonly gateNote: string | null;
+  /**
+   * Audit record of a supplied prior that was HELD out of fusion (failed gate). Present
+   * only when `priorContribution === "held_failed_gate"`; the read did NOT use it. Never
+   * rendered raw / synced; carries no clinical-risk or raw-audio-like field.
+   */
+  readonly heldPrior: HeldPriorAudit | null;
   readonly note: string;
 }
 
@@ -255,6 +278,32 @@ export interface OrchestratorInput {
 const SPEECH_EMOTION_EXPERT_ID = "expert-ser:speech-emotion";
 
 /**
+ * v3 GATE ENFORCEMENT. A supplied learned affect prior is HELD (transparency-only — never
+ * steers the read or boosts confidence) when it EXPLICITLY failed its promotion gate
+ * (`gatePassed === false`). An unknown-gate prior (`undefined`) is still fused but is
+ * bounded by its far-domain confidence cap (the conservative ceiling) — only a KNOWN
+ * failure is held out of fusion entirely. The dimensional V-A read leads from the acoustic
+ * backbone regardless; this governs the SECONDARY affect-state read only.
+ */
+function learnedPriorHeld(prior?: LearnedAffectPrior): boolean {
+  return prior !== undefined && prior.gatePassed === false;
+}
+
+/**
+ * The four prior-derived audit fields with their `?? null` defaults — the single source
+ * shared by the fused-prior provenance record and the held-prior record, so the audit
+ * shape can never drift between the two branches.
+ */
+function priorAuditFields(prior: LearnedAffectPrior): HeldPriorAudit {
+  return {
+    expertId: prior.expert.expertId,
+    artifact: prior.artifact ?? null,
+    gatePassed: prior.gatePassed ?? null,
+    gateNote: prior.gateNote ?? null,
+  };
+}
+
+/**
  * Minimum axis signal strength for a read to be shown. Below this the hum carried
  * too little clear, voiced audio to read (near-silent / unclear), so we abstain
  * honestly rather than surface a confident-looking zero.
@@ -270,7 +319,9 @@ const MIN_READ_SIGNAL = 0.1;
  */
 function buildExpertEnsemble(prior?: LearnedAffectPrior): AffectExpert[] {
   const base: AffectExpert[] = defaultAudioExperts();
-  if (!prior) return base;
+  // v3: a gate-FAILED prior is held out of the ensemble entirely — the deterministic
+  // heuristic experts steer the secondary read (the prior can't sharpen or boost it).
+  if (!prior || learnedPriorHeld(prior)) return base;
   let replaced = false;
   const ensemble = base.map((e) => {
     if (e.expertId === SPEECH_EMOTION_EXPERT_ID) {
@@ -475,7 +526,9 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     { cap: quality.confidenceCap, reason: `capture quality (${quality.captureQuality})` },
     { cap: domainAdaptation.confidencePenalty, reason: `domain match (heard ${domain.predicted})` },
   ];
-  if (input.learnedAffectPrior) {
+  // v3: only a FUSED prior contributes its far-domain cap; a HELD (gate-failed) prior is
+  // not in the read, so it neither boosts confidence nor imposes its penalty.
+  if (input.learnedAffectPrior && !learnedPriorHeld(input.learnedAffectPrior)) {
     capParts.push({
       cap: input.learnedAffectPrior.confidenceCap,
       reason: input.learnedAffectPrior.capReason ?? "learned affect prior far-domain penalty (ADR-0005)",
@@ -591,7 +644,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       )
     : null;
 
-  const divergenceDrift = divergence.anchored ? clamp01(divergence.magnitude / 2.5) : 0;
+  const divergenceDrift = longitudinalTrend(divergence);
   const relapseDrift = clamp01(Math.max(relapse ? relapse.drift : 0, divergenceDrift));
 
   const inferenceWithLongitudinal: MultiHeadAffectInference = {
@@ -739,27 +792,36 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   // Structural backstop: no clinical-risk marker key may appear in the rendered object.
   assertNoClinicalLeak(userFacing);
 
-  const modelProvenance: ModelProvenance = input.learnedAffectPrior
-    ? {
-        kind: "learned_affect_prior",
-        expertId: input.learnedAffectPrior.expert.expertId,
-        artifact: input.learnedAffectPrior.artifact ?? null,
-        expertCount: experts.length,
-        gatePassed: input.learnedAffectPrior.gatePassed ?? null,
-        gateNote: input.learnedAffectPrior.gateNote ?? null,
-        note:
-          "Trained affect PRIOR fused as a drop-in for the off-domain speech-emotion stub; " +
-          "far-domain (acted speech), penalized, never hum truth (ADR-0005).",
-      }
-    : {
-        kind: "heuristic_ensemble",
-        expertId: null,
-        artifact: null,
-        expertCount: experts.length,
-        gatePassed: null,
-        gateNote: null,
-        note: "Deterministic heuristic SER-family experts (no trained model supplied; honest fallback).",
-      };
+  const suppliedPrior = input.learnedAffectPrior;
+  const priorHeld = learnedPriorHeld(suppliedPrior);
+  const modelProvenance: ModelProvenance =
+    suppliedPrior && !priorHeld
+      ? {
+          kind: "learned_affect_prior",
+          priorContribution: "fused",
+          ...priorAuditFields(suppliedPrior),
+          expertCount: experts.length,
+          heldPrior: null,
+          note:
+            "Trained affect PRIOR fused as a drop-in for the off-domain speech-emotion stub; " +
+            "far-domain (acted speech), penalized, never hum truth (ADR-0005).",
+        }
+      : {
+          // No prior, OR a gate-FAILED prior held out of fusion (v3). The deterministic
+          // heuristic ensemble steered the secondary read either way.
+          kind: "heuristic_ensemble",
+          priorContribution: suppliedPrior ? "held_failed_gate" : "none",
+          expertId: null,
+          artifact: null,
+          expertCount: experts.length,
+          gatePassed: null,
+          gateNote: null,
+          heldPrior: suppliedPrior ? priorAuditFields(suppliedPrior) : null,
+          note: suppliedPrior
+            ? "Trained affect prior supplied but HELD out of fusion (failed its promotion gate); " +
+              "the deterministic heuristic ensemble steered the secondary read. Transparency-only (ADR-0005, v3 gate enforcement)."
+            : "Deterministic heuristic SER-family experts (no trained model supplied; honest fallback).",
+        };
 
   return {
     userFacing,

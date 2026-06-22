@@ -33,6 +33,9 @@ export function stagePolicy(eligibleHumCount: number): StagePolicy {
   if (n <= 1) {
     return {
       stage: "population_prior",
+      // 0.72 coincides with safety-language's EVIDENCE_BANDS.high but is a DIFFERENT fact
+      // (a maturity gate, not a UI evidence band). Deliberately not shared — safety-language is a
+      // zero-dep leaf and the two may evolve independently (ADR-0004 / ADR-0008).
       confidenceCap: 0.72,
       capReason: "first-hum cap 0.72 (population prior only)",
       calibrationMaturity: 0.45,

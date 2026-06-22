@@ -12,6 +12,7 @@
 import { doc, collection, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import type { HumSyncPayload, PersonalizationState } from "@hum-ai/orchestrator";
 import { getFirebase } from "./firebase";
+import { plain } from "./util";
 
 const LOCAL_ID_KEY = "hum.localUserId.v1";
 const stateKey = (userId: string) => `hum.state.v1.${userId}`;
@@ -28,11 +29,6 @@ export function localUserId(): string {
   } catch {
     return "local-anon";
   }
-}
-
-/** Strip undefined / class instances so the object is Firestore- and JSON-safe. */
-function plain<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 export function loadStateLocal(userId: string): PersonalizationState | null {

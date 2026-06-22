@@ -12,6 +12,7 @@
 import { doc, collection, getDocs, setDoc, serverTimestamp } from "firebase/firestore";
 import type { NativeHumExample } from "@hum-ai/affect-model-contracts";
 import type { LogisticRegressionParams } from "@hum-ai/fusion-engine";
+import { plain } from "./util";
 import {
   appendExample,
   emptyCorpus,
@@ -26,11 +27,6 @@ import { getFirebase } from "./firebase";
 const corpusKey = (userId: string) => `hum.corpus.v1.${userId}`;
 const artifactKey = (userId: string) => `hum.nativeModel.v1.${userId}`;
 const fusionKey = (userId: string) => `hum.fusionMeta.v1.${userId}`;
-
-/** Strip undefined / class instances so the object is Firestore- and JSON-safe. */
-function plain<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
 
 // ── corpus (localStorage) ─────────────────────────────────────────────────────
 export function loadCorpusLocal(userId: string): NativeCorpus {

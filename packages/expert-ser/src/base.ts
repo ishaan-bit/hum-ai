@@ -1,4 +1,4 @@
-﻿import { clamp01, type Modality, type Probability } from "@hum-ai/shared-types";
+﻿import { clamp01, normalizeDistribution, type Modality } from "@hum-ai/shared-types";
 import type { AcousticFeatures } from "@hum-ai/audio-features";
 import {
   missingExpertOutput,
@@ -38,15 +38,7 @@ export abstract class StubAudioExpert implements AffectExpert {
     }
 
     const raw = this.tilt(f);
-    const probabilities: Record<string, Probability> = {};
-    let total = 0;
-    for (const label of this.labelSpace) total += Math.max(raw[label] ?? 0, 0);
-    if (total <= 0) {
-      const p = 1 / this.labelSpace.length;
-      for (const label of this.labelSpace) probabilities[label] = p;
-    } else {
-      for (const label of this.labelSpace) probabilities[label] = Math.max(raw[label] ?? 0, 0) / total;
-    }
+    const probabilities = normalizeDistribution(raw, this.labelSpace);
 
     const selfConfidence = clamp01(Math.min(this.maxSelfConfidence, meta.captureQuality * 0.4));
     const oodScore = clamp01(1 - meta.captureQuality * this.defaultDomainMatch);

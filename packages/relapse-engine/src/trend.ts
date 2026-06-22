@@ -1,4 +1,4 @@
-import { clamp01 } from "@hum-ai/shared-types";
+import { clamp01, median } from "@hum-ai/shared-types";
 
 /**
  * ROBUST WITHIN-USER TREND ESTIMATION.
@@ -42,13 +42,6 @@ export interface TrendEstimate {
   readonly significant: boolean;
   /** Earned confidence [0,1] from |τ| and sample size — never overstated. */
   readonly confidence: number;
-}
-
-function median(xs: number[]): number {
-  if (xs.length === 0) return 0;
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = s.length >> 1;
-  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
 /** Theil–Sen slope: median of pairwise slopes (skips equal-time pairs). */

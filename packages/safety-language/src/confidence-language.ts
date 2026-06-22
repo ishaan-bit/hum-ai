@@ -35,7 +35,12 @@ export type EvidenceLevel = (typeof EVIDENCE_LEVELS)[number];
 /** Eligible hums below which the personal baseline is still forming (informational). */
 export const EARLY_BASELINE_HUMS = 5; // personal baseline matures around here (hum_spec §4.6)
 
-/** Confidence bands (internal number → qualitative level). */
+/**
+ * Confidence bands (internal number → qualitative level).
+ * NOTE: `high` (0.72) coincides with personalization-engine's population_prior stage cap, but it is
+ * a DIFFERENT fact (a UI evidence band, not a maturity gate). Kept separate deliberately — this
+ * package is intentionally zero-dependency and the two may diverge (ADR-0008 / ADR-0004).
+ */
 export const EVIDENCE_BANDS = { high: 0.72, medium: 0.5 } as const;
 
 /** True while the personal baseline is still forming (read is population-level). */

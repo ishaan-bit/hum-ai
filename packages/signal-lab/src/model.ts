@@ -11,6 +11,8 @@
  * weights, so it is fully deterministic and reproducible (no RNG).
  */
 
+import { softmax } from "@hum-ai/shared-types";
+
 export interface Standardizer {
   readonly mean: readonly number[];
   readonly std: readonly number[];
@@ -70,18 +72,19 @@ export function applyStandardizer(v: readonly number[], s: Standardizer): number
   return out;
 }
 
-function softmax(z: readonly number[]): number[] {
-  let max = -Infinity;
-  for (const v of z) if (v > max) max = v;
-  let sum = 0;
-  const out = new Array(z.length);
-  for (let k = 0; k < z.length; k++) {
-    const e = Math.exp(z[k]! - max);
-    out[k] = e;
-    sum += e;
-  }
-  for (let k = 0; k < z.length; k++) out[k] /= sum || 1;
-  return out;
+/**
+ * Mean |standardized value| across a feature vector — the OOD-distance proxy. Standardizes
+ * `raw` by the params' own standardizer, then averages absolute z-scores (0 on an empty
+ * vector). A hum far from the model's training distribution scores high (out-of-domain).
+ * The single source for both the far-domain (`axis-prior`) and hum-native (`native-corpus`)
+ * priors — the differing OOD thresholds/fades live at their call sites, not here.
+ */
+export function meanAbsZ(params: LogRegParams, raw: readonly number[]): number {
+  const z = applyStandardizer(raw, params.standardizer);
+  if (z.length === 0) return 0;
+  let s = 0;
+  for (const v of z) s += Math.abs(v);
+  return s / z.length;
 }
 
 function scoresFor(x: readonly number[], weights: number[][], bias: number[]): number[] {
@@ -100,6 +103,11 @@ function scoresFor(x: readonly number[], weights: number[][], bias: number[]): n
  * Train a multinomial logistic regression. `X` are RAW feature vectors (the
  * standardizer is fit here from `X`); `y` are label strings (must be in
  * `opts.labels`). Deterministic: zero init, full-batch GD.
+ *
+ * NOTE: `fusion-engine` `fitMetaLearner` runs a parallel GD loop. They are deliberately NOT
+ * merged — this one carries a `classWeighted` toggle (research may disable weighting) while the
+ * meta-learner always weights; a shared loop would force one site's behavior to change. We accept
+ * the duplication (Orthogonality over DRY).
  */
 export function trainLogReg(
   X: readonly (readonly number[])[],

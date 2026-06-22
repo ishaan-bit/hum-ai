@@ -1,4 +1,5 @@
 import type { NativeHumExample } from "@hum-ai/affect-model-contracts";
+import { makeRng } from "@hum-ai/shared-types";
 import { trainLogReg, predictProba, type LogRegParams } from "@hum-ai/signal-lab/model";
 import { toFeatureVector, featureVectorNames } from "@hum-ai/signal-lab/feature-schema";
 import { acousticAffectAxes } from "@hum-ai/orchestrator";
@@ -61,17 +62,6 @@ export const NATIVE_PERMUTATION_ITERATIONS = 120; // lighter, matched fits for o
 export const NATIVE_PERMUTATION_MAX_ROWS = 250; // bound the (expensive) permutation test's row count
 export const NATIVE_BOOTSTRAP = 200; // resamples for the held-out accuracy CI
 
-/** mulberry32 deterministic PRNG (no global RNG; seeded for reproducibility). */
-function makeRng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 interface AxisRow {
   readonly example: NativeHumExample;
   readonly vector: number[];
@@ -112,7 +102,12 @@ function trainOn(rows: readonly AxisRow[], axis: Axis, iterations: number): LogR
   );
 }
 
-/** Mean per-pole recall (balanced accuracy) of a {trueHigh, predHigh} confusion. Pure. */
+/**
+ * Mean per-pole recall (balanced accuracy) of a {trueHigh, predHigh} confusion. Pure.
+ * A binary specialization of shared-types' generic `balancedAccuracy`, kept local on purpose:
+ * it runs on the bootstrap hot path (200×/retrain) so a string-mapping adapter would add
+ * per-call allocation for no real gain.
+ */
 function balancedAccuracy(rows: readonly { trueHigh: boolean; predHigh: boolean }[]): number {
   let highCorrect = 0;
   let highTotal = 0;
@@ -209,7 +204,11 @@ function eceFromPreds(preds: readonly CvPred[], bins = 10): number {
   return ece;
 }
 
-/** Bootstrap 95% CI on the held-out balanced accuracy (deterministic resampling). */
+/**
+ * Bootstrap 95% CI on the held-out balanced accuracy (deterministic resampling, shared `makeRng`).
+ * Single-use and bound to this CV's binary `balancedAccuracy` + `CvPred`; kept local rather than
+ * abstracted to shared-types (one call site — the Rule of Three is not met).
+ */
 function bootstrapAccuracyCI(preds: readonly CvPred[], B: number, seed: number): { lo: number; hi: number } {
   const n = preds.length;
   if (n < 4) return { lo: 0, hi: 1 };

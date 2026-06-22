@@ -5,6 +5,7 @@ import {
   predictProba as logregProba,
   type Standardizer,
 } from "./model";
+import { softmax, makeRng } from "@hum-ai/shared-types";
 
 /**
  * A small, dependency-free MODEL COHORT for the multi-dataset experiment.
@@ -40,31 +41,6 @@ export interface CohortModelSpec {
     labels: readonly string[],
     featureNames: readonly string[],
   ): CohortPredictor;
-}
-
-/** mulberry32 deterministic PRNG (shared with evaluate's protocol). */
-function makeRng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function softmax(z: readonly number[]): number[] {
-  let max = -Infinity;
-  for (const v of z) if (v > max) max = v;
-  let sum = 0;
-  const out = new Array(z.length);
-  for (let k = 0; k < z.length; k++) {
-    const e = Math.exp(z[k]! - max);
-    out[k] = e;
-    sum += e;
-  }
-  for (let k = 0; k < z.length; k++) out[k] /= sum || 1;
-  return out;
 }
 
 function zeroDist(labels: readonly string[]): Record<string, number> {

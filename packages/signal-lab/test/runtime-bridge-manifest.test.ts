@@ -114,7 +114,7 @@ test("loadLearnedAffectPrior with no manifest reports unknown gate status (no fa
   }
 });
 
-test("full-spine read carries honest gate status from the manifest, and nothing clinical leaks", async () => {
+test("v3: a gate-FAILED manifest prior is HELD out of the read; its gate status survives as audit metadata; nothing clinical leaks", async () => {
   const { modelPath, cleanup } = writeArtifacts({ manifest: true });
   try {
     const prior = loadLearnedAffectPrior({ modelArtifactPath: modelPath });
@@ -126,12 +126,19 @@ test("full-spine read carries honest gate status from the manifest, and nothing 
       history: matureHistory,
       prior,
     });
-    assert.equal(priorUsed, true);
+    assert.equal(priorUsed, true, "the bridge still supplies the prior (loaded), even though the spine holds it");
     assert.equal(promotion.evaluated, true);
     assert.equal(promotion.affectPassedGate, false);
-    // The gate status reached the end-to-end internal read (model metadata / manifest).
-    assert.equal(read.internal.modelProvenance.gatePassed, false);
-    assert.match(read.internal.modelProvenance.gateNote ?? "", /did NOT pass/);
+    // v3 GATE ENFORCEMENT: the failed-gate prior does NOT steer — the heuristic ensemble did.
+    assert.equal(read.internal.modelProvenance.kind, "heuristic_ensemble");
+    assert.equal(read.internal.modelProvenance.priorContribution, "held_failed_gate");
+    // The STEERING prior is null (no fused prior), so its gate fields are null...
+    assert.equal(read.internal.modelProvenance.gatePassed, null);
+    assert.equal(read.internal.modelProvenance.gateNote, null);
+    // ...but the gate status SURVIVES honestly as held-prior audit metadata.
+    assert.ok(read.internal.modelProvenance.heldPrior, "a held prior must be recorded for audit");
+    assert.equal(read.internal.modelProvenance.heldPrior!.gatePassed, false);
+    assert.match(read.internal.modelProvenance.heldPrior!.gateNote ?? "", /did NOT pass/);
     // Safety unchanged.
     assert.doesNotThrow(() => assertNoClinicalLeak(read.userFacing));
     assert.doesNotThrow(() => assertNoClinicalLeak(read.recommendationView));

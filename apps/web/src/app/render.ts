@@ -15,6 +15,7 @@ import type { OrchestratedRead, AxisResolution, FeedbackRequest } from "@hum-ai/
 import type { HumSelfReport } from "@hum-ai/affect-model-contracts";
 import type { MusicRecommendation } from "@hum-ai/intervention-engine";
 import { EVIDENCE_BANDS } from "@hum-ai/safety-language";
+import { formatEnumLabel } from "./util";
 import type { ConsentState } from "@hum-ai/shared-types";
 import type { CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import {
@@ -23,9 +24,11 @@ import {
   calibrationTrend,
   corpusReadiness,
   nextCollectionHint,
+  assessPersonalizationBenefit,
   type NativeCorpus,
   type HumNativeArtifact,
   type HumNativeAxisStatus,
+  type PersonalizationBenefit,
 } from "@hum-ai/native-corpus";
 import type { LoadedPrior } from "./prior";
 import type { CaptureLevel } from "./capture";
@@ -78,7 +81,7 @@ export function renderRead(read: OrchestratedRead): void {
   const suggestion =
     uf.suggestion && !uf.abstained
       ? `<div class="suggestion">
-           <span class="suggestion-type">${esc(uf.suggestion.type.replace(/_/g, " "))}</span>
+           <span class="suggestion-type">${esc(formatEnumLabel(uf.suggestion.type))}</span>
            <p>${esc(uf.suggestion.copy)}</p>
          </div>`
       : "";
@@ -111,7 +114,7 @@ export function renderRead(read: OrchestratedRead): void {
     }
     const a = read.internal.axis;
     const hint = read.internal.affectHint
-      ? `<p class="muted small axis-hint">Leans: ${esc(read.internal.affectHint.replace(/_/g, " "))}.</p>`
+      ? `<p class="muted small axis-hint">Leans: ${esc(formatEnumLabel(read.internal.affectHint))}.</p>`
       : "";
     axes.innerHTML = `
       <h3>Your read <span class="muted small">(valence + arousal · reflective, non-diagnostic)</span></h3>
@@ -136,6 +139,9 @@ function axisMeter(label: string, lowPole: string, highPole: string, res: AxisRe
     prov = `Acoustic read, with the trained ${res.axis} prior${gate} agreeing — it was in-domain for this hum.`;
   } else if (res.trainedContribution === "abstained_ood") {
     prov = `Transparent acoustic read. The trained ${res.axis} prior was held back — this hum sits outside its acted-speech training domain (ADR-0005).`;
+  } else if (res.trainedContribution === "held_failed_gate") {
+    // v3: a prior that has not passed its promotion gate never steers the read.
+    prov = `Transparent acoustic read. The trained ${res.axis} prior is held back — it hasn't passed its promotion gate, so it doesn't steer your read (gate-enforced).`;
   } else {
     prov = `Transparent acoustic read (no trained ${res.axis} prior loaded).`;
   }
@@ -280,6 +286,13 @@ const NATIVE_TREND_COPY: Record<string, string> = {
   insufficient: "still gathering enough of your feedback to tell",
 };
 
+// Personalization-benefit copy (v3, §C) — qualitative only, never a percentage.
+const BENEFIT_COPY: Record<Exclude<PersonalizationBenefit, "insufficient_evidence">, string> = {
+  personalization_helping: "Personalizing your read is tracking your self-reports more closely than the generic read would.",
+  neutral_or_unclear: "Personalizing your read is tracking about the same as the generic read so far — keep teaching it.",
+  personalization_worsening: "Personalizing isn't helping your read right now — keep logging how you feel so it can re-center on you.",
+};
+
 function nativeAxisLine(label: string, s: HumNativeAxisStatus): string {
   // Qualitative only — no accuracy percentages in user copy (ADR-0008). `s.n` is a hum
   // COUNT (not a confidence/accuracy number), like the eligible-hum counts shown elsewhere.
@@ -314,11 +327,21 @@ export function renderModelLab(corpus: NativeCorpus, artifact: HumNativeArtifact
 
   const hintBlock = hint ? `<p class="model-hint">${esc(hint)}</p>` : ready.anyReady ? `<p class="muted small">Enough data to retrain — your model updates as you go.</p>` : "";
 
+  // PERSONALIZATION BENEFIT (v3, §C): an honest, abstaining "is personalizing actually
+  // helping vs the plain backbone, against your own self-reports?" — a coarse category,
+  // never a raw accuracy number (ADR-0008).
+  const benefit = assessPersonalizationBenefit(corpus).status;
+  const benefitBlock =
+    benefit === "insufficient_evidence"
+      ? ""
+      : `<p class="muted small model-benefit">${esc(BENEFIT_COPY[benefit])}</p>`;
+
   card.innerHTML = `
     <h3>Your hum model <span class="muted small">(learns from your feedback — non-diagnostic)</span></h3>
     <p class="muted small">${stats.total} labelled hum${stats.total === 1 ? "" : "s"} so far · ${stats.quadrantsCovered}/4 mood-energy regions covered.</p>
     <ul class="model-status-list">${modelLines}</ul>
     ${calBlock}
+    ${benefitBlock}
     ${hintBlock}
     <p class="disclaimer">Research-stage and non-clinical. This model reflects how your hums map to how you say you feel — it is not a diagnosis.</p>
   `;
@@ -375,7 +398,7 @@ export function renderInterventionOfDay(read: OrchestratedRead): void {
   const card = $("intervention-card");
   if (!card) return;
   const iod = read.userFacing.interventionOfDay;
-  const cat = IOD_CATEGORY_LABEL[iod.category] ?? iod.category.replace(/_/g, " ");
+  const cat = IOD_CATEGORY_LABEL[iod.category] ?? formatEnumLabel(iod.category);
   const duration = iod.durationMinutes > 0 ? ` · ${iod.durationMinutes} min` : "";
   const basedOn = iod.basedOnSignals.length
     ? `<div class="chips"><span class="muted small">Based on:</span> ${iod.basedOnSignals
@@ -573,9 +596,11 @@ export function renderProvenance(read: OrchestratedRead, prior: LoadedPrior | nu
   }.`;
   const mp = read.internal.modelProvenance;
   const affectLine =
-    mp.kind === "learned_affect_prior"
+    mp.priorContribution === "fused"
       ? `Secondary affect-label hint from the trained 6-class prior${mp.gatePassed === false ? " (below its promotion gate; far-domain, penalized)" : ""}.`
-      : "Secondary affect-label hint from the heuristic ensemble (no trained model present).";
+      : mp.priorContribution === "held_failed_gate"
+        ? "Secondary affect-label hint from the heuristic ensemble — the trained 6-class prior was held back (it hasn't passed its promotion gate, so it doesn't steer your read)."
+        : "Secondary affect-label hint from the heuristic ensemble (no trained model present).";
   const gate = prior?.promotion.evaluated ? `<span class="muted small">${esc(prior.promotion.note)}</span>` : "";
   el.innerHTML = `
     <p>${esc(axisLine)}</p>

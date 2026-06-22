@@ -61,7 +61,7 @@ drift **markers** — never a diagnosis.
 ```
 
 **Entry points** (`@hum-ai/orchestrator`):
-- `orchestrateHumRead({ features, consent, modelVersion, now, history?, learnedAffectPrior?, axisPriors? }) → OrchestratedRead`
+- `orchestrateHumRead({ features, consent, modelVersion, now, history?, learnedAffectPrior?, axisPriors?, metaLearner? }) → OrchestratedRead`
 - `orchestrateHumAudio({ audio, … })` — extracts features on-device, drops the buffer, then the above.
 - `runHumCycle(input) → HumCycleResult` (`apps/web/src/app/cycle.ts`) — the app's per-hum loop: capture-gate → read → learn (`ingestHum`) → build sync payload.
 
@@ -265,7 +265,7 @@ from source by Vite.
 ## 7. Build, test & deploy
 
 - **Verify:** `npm run check` (typecheck + web typecheck + the Node built-in test runner over
-  `packages/**/test`, 478 tests) and `npm run qa` (4 governance gates). No third-party test framework.
+  `packages/**/test`, 502 tests) and `npm run qa` (4 governance gates). No third-party test framework.
 - **Web build:** `npm run build:web` (Vite). The bundle is browser-pure — `signal-lab` is reached only
   via its pure deep modules (`model`, `feature-schema`, `axis-prior`, `expert`, `capture-gate`), never
   its `node:fs` barrel.
@@ -280,8 +280,12 @@ from source by Vite.
 - The downstream affect/clinical-risk apparatus is carried by the **transparent acoustic backbone**
   plus penalized, abstaining priors and the growing hum-native model — **not** by validated clinical
   models. The SER experts are **deterministic heuristics** (not trained models); the trained
-  `LogisticRegressionMetaLearner` is implemented + trainable but **not yet fit on hum data** or
-  wired live (the deterministic fusion remains the default).
+  `LogisticRegressionMetaLearner` is now **wired live** on the HiTL corpus
+  (`native-corpus/fusion-train.ts`): fit on the user's own confirmed hums and promoted over the
+  deterministic `StubWeightedMetaLearner` only when it beats it on held-out hums (≥32 examples,
+  ≥45% accuracy, +4% margin), else the stub stays as the honest fallback (a malformed meta-learner
+  degrades to it too). It is a learned **re-weighting** of those heuristics for the **secondary**
+  affect-state read only — the dimensional V-A read still leads from the acoustic backbone.
 - **Non-clinical, not validated.** Risk **markers** and reflective signals only, never a diagnosis.
 - **Reference numbers are not Hum metrics.** Architecture-reference accuracies (TriSense MELD) and
   clinical study AUCs are priors, never presented as Hum's accuracy. No fabricated metrics anywhere.

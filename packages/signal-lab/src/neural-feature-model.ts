@@ -1,5 +1,7 @@
 import type { AcousticFeatures } from "@hum-ai/audio-features";
+import { softmax } from "@hum-ai/shared-types";
 import { toFeatureVector, featureVectorNames } from "./feature-schema";
+import { applyStandardizer } from "./model";
 
 /**
  * Pure-TS executor for a feature-space neural model exported by the Python harness
@@ -116,27 +118,10 @@ function applyOp(x: number[], op: NeuralOp): number[] {
   }
 }
 
-function softmax(z: readonly number[]): number[] {
-  let max = -Infinity;
-  for (const v of z) if (v > max) max = v;
-  let sum = 0;
-  const out = new Array<number>(z.length);
-  for (let k = 0; k < z.length; k++) {
-    const e = Math.exp(z[k]! - max);
-    out[k] = e;
-    sum += e;
-  }
-  const denom = sum || 1;
-  for (let k = 0; k < z.length; k++) out[k] = out[k]! / denom;
-  return out;
-}
 
 /** Run the op-graph on a RAW feature vector → probability distribution over labels. */
 export function predictNeural(model: NeuralFeatureModel, rawVector: readonly number[]): Record<string, number> {
-  let x = new Array<number>(rawVector.length);
-  for (let i = 0; i < rawVector.length; i++) {
-    x[i] = (rawVector[i]! - model.standardizer.mean[i]!) / model.standardizer.std[i]!;
-  }
+  let x = applyStandardizer(rawVector, model.standardizer);
   for (const op of model.ops) x = applyOp(x, op);
   const p = softmax(x);
   const out: Record<string, number> = {};

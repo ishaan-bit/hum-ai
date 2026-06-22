@@ -1,4 +1,5 @@
 ﻿import { FUSION_LABELS, type FusionLabel, type ExpertOutput } from "@hum-ai/affect-model-contracts";
+import { softmax, normalizeDistribution } from "@hum-ai/shared-types";
 import { expertWeight } from "./reliability";
 
 export type FusionDistribution = Record<FusionLabel, number>;
@@ -20,15 +21,7 @@ function zeroDist(): FusionDistribution {
 }
 
 function normalize(d: FusionDistribution): FusionDistribution {
-  let total = 0;
-  for (const l of FUSION_LABELS) total += Math.max(d[l], 0);
-  const out = zeroDist();
-  if (total <= 0) {
-    for (const l of FUSION_LABELS) out[l] = 1 / FUSION_LABELS.length;
-    return out;
-  }
-  for (const l of FUSION_LABELS) out[l] = Math.max(d[l], 0) / total;
-  return out;
+  return normalizeDistribution(d, FUSION_LABELS);
 }
 
 /**
@@ -87,20 +80,6 @@ export function metaFeatureVector(experts: readonly ExpertOutput[], expertOrder:
   return v;
 }
 
-function softmax(z: readonly number[]): number[] {
-  let max = -Infinity;
-  for (const v of z) if (v > max) max = v;
-  let sum = 0;
-  const out = new Array<number>(z.length);
-  for (let k = 0; k < z.length; k++) {
-    const e = Math.exp(z[k]! - max);
-    out[k] = e;
-    sum += e;
-  }
-  for (let k = 0; k < z.length; k++) out[k] = out[k]! / (sum || 1);
-  return out;
-}
-
 /**
  * The trained late-fusion meta-learner (the drop-in for `StubWeightedMetaLearner`
  * once weights are fit). `combine` runs the forward pass: build the fixed-layout
@@ -155,8 +134,8 @@ export interface FitMetaOptions {
  * logistic regression: zero-init, full-batch gradient descent, L2, inverse-frequency
  * class weighting — same machinery as `signal-lab` `trainLogReg`, kept self-contained
  * so `fusion-engine` stays dependency-light. Returns params consumable by
- * `LogisticRegressionMetaLearner`. (Live wiring — corpus → experts → label — is a
- * follow-up; this makes the trained model a tested drop-in.)
+ * `LogisticRegressionMetaLearner`. The live wiring (corpus → experts → label → fit →
+ * promote-if-beats-stub) is `@hum-ai/native-corpus` `trainFusionMetaLearner`.
  */
 export function fitMetaLearner(samples: readonly MetaLearnerSample[], opts: FitMetaOptions = {}): LogisticRegressionParams {
   const expertOrder = opts.expertOrder ?? (samples[0]?.experts.map((e) => e.expertId) ?? []);

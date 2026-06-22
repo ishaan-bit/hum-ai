@@ -12,8 +12,8 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "node --import tsx --test \"packages/**/test/**/*.test.ts\"",
-    "test:watch": "node --import tsx --test --watch \"packages/**/test/**/*.test.ts\"",
+    "test": "node --import tsx --test \"packages/**/test/**/*.test.ts\" \"apps/**/test/**/*.test.ts\"",
+    "test:watch": "node --import tsx --test --watch \"packages/**/test/**/*.test.ts\" \"apps/**/test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:web": "tsc --noEmit -p apps/web/tsconfig.json",
     "check": "npm run typecheck && npm run typecheck:web && npm test",

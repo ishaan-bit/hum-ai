@@ -9,6 +9,7 @@ import {
 } from "@hum-ai/affect-model-contracts";
 import { toFeatureVector } from "./feature-schema";
 import { predictProba, type LogRegParams } from "./model";
+import { AFFECT_PRIOR_FAR_DOMAIN_CAP } from "./axis-prior";
 
 /**
  * `LearnedAffectPriorExpert` — the trained baseline surfaced through the EXISTING
@@ -30,7 +31,7 @@ export class LearnedAffectPriorExpert implements AffectExpert {
 
   constructor(params: LogRegParams, opts: { expertId?: string; priorDomainPenalty?: number } = {}) {
     this.params = params;
-    this.priorDomainPenalty = opts.priorDomainPenalty ?? 0.45;
+    this.priorDomainPenalty = opts.priorDomainPenalty ?? AFFECT_PRIOR_FAR_DOMAIN_CAP;
     this.expertId = opts.expertId ?? "signal-lab:learned-affect-prior";
     // Only labels the model actually emits AND that exist in the fusion space.
     const set = new Set(params.labels);

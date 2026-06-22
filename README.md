@@ -106,6 +106,7 @@ The 10 required test areas and where each is covered:
 
 ## Documentation index
 
+- **Stable Build v2 — full end-to-end spec:** [docs/STABLE_BUILD_V2.md](docs/STABLE_BUILD_V2.md)
 - **Architecture & tech spec (latest):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · **All-layers revamp plan:** [docs/REVAMP_PLAN.md](docs/REVAMP_PLAN.md)
 - Source manifest & provenance: [docs/source/INDEX.md](docs/source/INDEX.md) (source binaries are local-only — see [docs/source/README.md](docs/source/README.md))
 - Architecture: [docs/architecture/](docs/architecture/) (pipeline, fusion, personalization, relapse, [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md))

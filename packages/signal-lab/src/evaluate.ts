@@ -1,4 +1,13 @@
 import type { FusionLabel } from "@hum-ai/affect-model-contracts";
+import {
+  accuracyOf,
+  confusionMatrix,
+  expectedCalibrationError,
+  groupFolds,
+  makeRng,
+  perClassMetrics,
+  type ClassMetric,
+} from "@hum-ai/shared-types";
 import { trainLogReg, predictTop, type LogRegParams } from "./model";
 
 /**
@@ -23,13 +32,7 @@ export interface LabeledSample {
   readonly group: string;
 }
 
-export interface ClassMetric {
-  readonly label: string;
-  readonly support: number;
-  readonly precision: number;
-  readonly recall: number;
-  readonly f1: number;
-}
+export type { ClassMetric };
 
 export type EvidenceTier = "supported" | "moderate" | "weak" | "insufficient";
 
@@ -75,25 +78,6 @@ export interface EvalOptions {
   readonly task?: string;
 }
 
-/** mulberry32 deterministic PRNG. */
-function makeRng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** Assign groups to folds round-robin over sorted group ids (disjoint groups per fold). */
-function groupFolds(samples: readonly LabeledSample[], folds: number): number[] {
-  const groups = Array.from(new Set(samples.map((s) => s.group))).sort();
-  const groupFold = new Map<string, number>();
-  groups.forEach((g, i) => groupFold.set(g, i % folds));
-  return samples.map((s) => groupFold.get(s.group)!);
-}
-
 function runGroupedCv(
   samples: readonly LabeledSample[],
   foldOf: readonly number[],
@@ -128,45 +112,6 @@ function runGroupedCv(
   return { yTrue, yPred, pTop };
 }
 
-function accuracyOf(yTrue: readonly string[], yPred: readonly string[]): number {
-  if (yTrue.length === 0) return 0;
-  let correct = 0;
-  for (let i = 0; i < yTrue.length; i++) if (yTrue[i] === yPred[i]) correct++;
-  return correct / yTrue.length;
-}
-
-function perClassMetrics(yTrue: readonly string[], yPred: readonly string[], labels: readonly string[]): ClassMetric[] {
-  return labels.map((label) => {
-    let tp = 0;
-    let fp = 0;
-    let fn = 0;
-    let support = 0;
-    for (let i = 0; i < yTrue.length; i++) {
-      const t = yTrue[i] === label;
-      const p = yPred[i] === label;
-      if (t) support++;
-      if (t && p) tp++;
-      else if (!t && p) fp++;
-      else if (t && !p) fn++;
-    }
-    const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-    const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-    const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
-    return { label, support, precision, recall, f1 };
-  });
-}
-
-function confusionMatrix(yTrue: readonly string[], yPred: readonly string[], labels: readonly string[]) {
-  const index = new Map(labels.map((l, i) => [l, i]));
-  const matrix = labels.map(() => labels.map(() => 0));
-  for (let i = 0; i < yTrue.length; i++) {
-    const r = index.get(yTrue[i]!);
-    const c = index.get(yPred[i]!);
-    if (r !== undefined && c !== undefined) matrix[r]![c]!++;
-  }
-  return { labels: [...labels], matrix };
-}
-
 function wilson95(p: number, n: number): [number, number] {
   if (n === 0) return [0, 0];
   const z = 1.96;
@@ -174,29 +119,6 @@ function wilson95(p: number, n: number): [number, number] {
   const center = (p + (z * z) / (2 * n)) / denom;
   const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
   return [Math.max(0, center - half), Math.min(1, center + half)];
-}
-
-/** Top-class Expected Calibration Error (10 equal-width bins). */
-function expectedCalibrationError(yTrue: readonly string[], yPred: readonly string[], pTop: readonly number[]): number {
-  const bins = 10;
-  const binAcc = new Array(bins).fill(0);
-  const binConf = new Array(bins).fill(0);
-  const binN = new Array(bins).fill(0);
-  for (let i = 0; i < pTop.length; i++) {
-    const b = Math.min(bins - 1, Math.floor(pTop[i]! * bins));
-    binN[b]++;
-    binConf[b] += pTop[i]!;
-    if (yTrue[i] === yPred[i]) binAcc[b]++;
-  }
-  let ece = 0;
-  const n = pTop.length || 1;
-  for (let b = 0; b < bins; b++) {
-    if (binN[b] === 0) continue;
-    const acc = binAcc[b] / binN[b];
-    const conf = binConf[b] / binN[b];
-    ece += (binN[b] / n) * Math.abs(acc - conf);
-  }
-  return ece;
 }
 
 function chanceBaselines(yTrue: readonly string[], labels: readonly string[]) {

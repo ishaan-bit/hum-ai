@@ -1,6 +1,7 @@
 export * from "./numeric";
 export * from "./claims";
 export * from "./stats";
+export * from "./metrics";
 export * from "./ids";
 export * from "./modality";
 export * from "./domain";

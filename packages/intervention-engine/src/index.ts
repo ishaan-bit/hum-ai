@@ -68,6 +68,29 @@ export function selectIntervention(
   return selectInterventionFromView(toRecommendationView(inf), ctx);
 }
 
+/** Arousal at/above which activation is "elevated". */
+const AROUSAL_ACTIVATION = 0.25;
+/** Valence at/above which the read is treated as settled/positive. */
+const VALENCE_POSITIVE = 0.2;
+
+/** The benign V-A region of a read. */
+type VaRegion = "high_arousal_negative" | "low_arousal_negative" | "mixed_uncertain" | "positive" | "neutral";
+
+/**
+ * The single source of the V-A region boundaries — shared by the safety rule
+ * (`selectInterventionFromView`) and the supportive-candidate set (`supportiveCandidates`)
+ * so the two can never disagree on which region a read is in. `null` for an abstained read.
+ */
+function vaRegion(view: RecommendationView): VaRegion | null {
+  if (view.abstained) return null;
+  const { valence, arousal } = view.dimensional;
+  if (arousal >= AROUSAL_ACTIVATION && valence < 0) return "high_arousal_negative";
+  if (arousal < 0 && valence < 0) return "low_arousal_negative";
+  if (view.mixedOrUncertain) return "mixed_uncertain";
+  if (valence >= VALENCE_POSITIVE) return "positive";
+  return "neutral";
+}
+
 /**
  * Core policy over the sanitized recommendation view. This is the only function
  * that decides an intervention, and it has no access to clinical labels — only
@@ -81,6 +104,7 @@ export function selectInterventionFromView(
 
   const { valence, arousal } = view.dimensional;
   const highRisk = view.elevatedRegulationNeed;
+  const region = vaRegion(view);
 
   // Escalation is gated by BOTH a persistent pattern AND the safety allowance.
   if (highRisk && ctx.persistentRiskPattern && ctx.safetyAllowsEscalation) {
@@ -94,7 +118,7 @@ export function selectInterventionFromView(
   }
 
   // High arousal + negative valence → down-regulate with breathing.
-  if (arousal >= 0.25 && valence < 0) {
+  if (region === "high_arousal_negative") {
     return {
       type: "breath_regulation",
       rationale: "elevated, tense activation — paced breathing to lower arousal",
@@ -105,7 +129,7 @@ export function selectInterventionFromView(
   }
 
   // Low arousal + negative valence → fatigue vs low mood.
-  if (arousal < 0 && valence < 0) {
+  if (region === "low_arousal_negative") {
     if (view.lowEnergyPattern) {
       return {
         type: "rest_recovery",
@@ -134,7 +158,7 @@ export function selectInterventionFromView(
   }
 
   // Mixed / uncertain → reflective journaling.
-  if (view.mixedOrUncertain) {
+  if (region === "mixed_uncertain") {
     return {
       type: "journaling_prompt",
       rationale: "mixed or uncertain pattern — a short reflective prompt",
@@ -145,7 +169,7 @@ export function selectInterventionFromView(
   }
 
   // Positive / regulated → light music to maintain, or nothing.
-  if (valence >= 0.2) {
+  if (region === "positive") {
     return {
       type: "music_recommendation",
       rationale: "settled/positive pattern — music to match and maintain",
@@ -189,13 +213,18 @@ export function isSupportiveIntervention(type: InterventionType): boolean {
  * `[]` for the abstain / "close to usual" cases (nothing to personalize).
  */
 export function supportiveCandidates(view: RecommendationView): InterventionType[] {
-  if (view.abstained) return [];
-  const { valence, arousal } = view.dimensional;
-  if (arousal >= 0.25 && valence < 0) return ["breath_regulation", "music_recommendation"];
-  if (arousal < 0 && valence < 0) return ["rest_recovery", "social_check_in", "music_recommendation"];
-  if (view.mixedOrUncertain) return ["journaling_prompt", "music_recommendation"];
-  if (valence >= 0.2) return ["music_recommendation", "journaling_prompt"];
-  return [];
+  switch (vaRegion(view)) {
+    case "high_arousal_negative":
+      return ["breath_regulation", "music_recommendation"];
+    case "low_arousal_negative":
+      return ["rest_recovery", "social_check_in", "music_recommendation"];
+    case "mixed_uncertain":
+      return ["journaling_prompt", "music_recommendation"];
+    case "positive":
+      return ["music_recommendation", "journaling_prompt"];
+    default: // abstained (null) or neutral — nothing to personalize
+      return [];
+  }
 }
 
 const SUPPORTIVE_TARGET: Record<

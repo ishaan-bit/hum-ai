@@ -1,4 +1,5 @@
 import type { AcousticFeatures } from "@hum-ai/audio-features";
+import { clamp01 } from "@hum-ai/shared-types";
 
 /**
  * STAGE ① — Capture acceptance gate (TS-native, STRICT).
@@ -31,8 +32,6 @@ export interface CaptureGateOptions {
   /** STRICT accept threshold on hum-likeness (default 0.5). Raise to reject more. */
   readonly threshold?: number;
 }
-
-const clamp01 = (x: number): number => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
 
 /** Assess whether a capture is a usable hum (STRICT). */
 export function assessCapture(f: AcousticFeatures, opts: CaptureGateOptions = {}): CaptureGateDecision {

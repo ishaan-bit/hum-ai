@@ -1,4 +1,4 @@
-import { clamp01, mean, type IsoTimestamp, type ModelVersion, type ValenceArousal } from "@hum-ai/shared-types";
+import { clamp01, type IsoTimestamp, type ModelVersion, type ValenceArousal } from "@hum-ai/shared-types";
 import {
   assertValidNativeHumExample,
   normalizeLabel,
@@ -7,6 +7,7 @@ import {
 } from "@hum-ai/affect-model-contracts";
 import type { PersonalAxisCorrection } from "@hum-ai/personalization-engine";
 import type { OrchestratedRead } from "./orchestrator";
+import { axisReadConfidence } from "./axis-read";
 
 /**
  * HUMAN-IN-THE-LOOP (HiTL) FEEDBACK — turn a read + a user self-report into (a) one
@@ -67,7 +68,7 @@ function nearBoundary(dim: ValenceArousal): boolean {
 export function buildFeedbackRequest(read: OrchestratedRead): FeedbackRequest {
   const axis = read.internal.axis;
   const predicted = axis.dimensional;
-  const predictedConfidence = clamp01(mean([axis.valence.confidence, axis.arousal.confidence]));
+  const predictedConfidence = axisReadConfidence(axis);
 
   if (read.userFacing.abstained) {
     return {
@@ -147,7 +148,7 @@ export function applyFeedback(
   const internal = read.internal;
   const predicted = internal.axis.dimensional;
   const label = normalizeLabel(report.label);
-  const predictedConfidence = clamp01(mean([internal.axis.valence.confidence, internal.axis.arousal.confidence]));
+  const predictedConfidence = axisReadConfidence(internal.axis);
 
   const example: NativeHumExample = {
     id: binding.id,
