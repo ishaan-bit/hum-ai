@@ -19,9 +19,22 @@ import {
 
 const KEY = "hum.consent.v1";
 
-/** The two optional scopes this UI exposes as toggles. */
-export const TOGGLEABLE_SCOPES = ["derived_feature_sync", "clinical_risk_surfacing"] as const;
+/**
+ * The optional scopes this UI exposes as toggles. The first two are the consumer toggles
+ * (always available). `clinical_label_capture` + `research_audio_upload` are STUDY scopes —
+ * surfaced only to enrolled participants via the study-status surface (a non-participant never
+ * sees them), but kept here so setScope() can manage them through the same persistence path.
+ */
+export const TOGGLEABLE_SCOPES = [
+  "derived_feature_sync",
+  "clinical_risk_surfacing",
+  "clinical_label_capture",
+  "research_audio_upload",
+] as const;
 export type ToggleableScope = (typeof TOGGLEABLE_SCOPES)[number];
+
+/** The study-only subset of toggleable scopes (gated behind enrollment). */
+export const STUDY_SCOPES = ["clinical_label_capture", "research_audio_upload"] as const;
 
 function nowIso() {
   return asIsoTimestamp(new Date().toISOString());

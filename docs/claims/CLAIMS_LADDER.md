@@ -27,7 +27,8 @@ the abstention floor (ADR-0004).
 | **1 — Emotional-state signal** | dimensional V-A + non-risk state heads | "an upbeat, positive pattern" · "a settled, regulated pattern" | Fused inference above the abstain floor; confidence under the binding cap (`population_prior` 0.72 → up). Non-risk heads only (`valence`, `arousal`, `calm_regulated`, `joy_positive_activation`, `mixed_state`) | Yes |
 | **2 — Stress-load / recovery trend** | longitudinal within-user trend | "a higher stress-load signal than your usual" · recovery vs. worsening trend | `riskMarker` heads (`stress_overload`, `fatigue_low_recovery`) require an **active baseline** (`baselineActive`, ≥5 hums) plus a supported longitudinal signal; relapse/recovery class needs the relapse model (`relapseModelActive`, 20+ hums) | Yes (data-dependent) |
 | **3 — Risk marker / screening signal / early-warning pattern** | anxiety/depressive/relapse-risk markers | "a lower-mood pattern worth gently noting" · "a drift away from your steadier pattern" | All of tier 2, **plus**: head is in `RISK_MARKER_HEADS`; sustained signal (not a single hum); explicit non-diagnostic framing; uncertainty surfaced. Caps still bind (≤0.92 mature) | Yes, as **markers only** — never as a verdict about the person |
-| **4 — Clinical screening instrument** | "screens for depression with sensitivity X" | — | Prospective validation against a reference standard, calibrated operating points, external replication ([VALIDATION_PLAN](../validation/VALIDATION_PLAN.md)) | **No — unreachable in current build** |
+| **4a — Investigational screening (pre-validation)** | research-participation framing; NO performance claim | "investigational · for research use only · not a diagnosis" · "you are participating in a research study" | IRB approval on file **and** a filed pre-registration ([PRE_REGISTRATION](../validation/PRE_REGISTRATION.md)) exist; the screening probability is **blinded** (computed, never shown). No accuracy/sensitivity figure may be stated. | Yes, **only inside the pilot**, as investigational framing — never a result |
+| **4 — Clinical screening instrument** | "an investigational screening signal for depression/anxiety, validated against PHQ-9 ≥ 10 / GAD-7 ≥ 10" | — | Pre-registered cross-sectional validation: AUC + sensitivity/specificity at the locked cut, calibrated operating points, participant-grouped analysis, QUADAS-2 risk-of-bias control, external replication ([VALIDATION_PLAN](../validation/VALIDATION_PLAN.md), [ANALYSIS_PLAN](../validation/ANALYSIS_PLAN.md)) | **No — unreachable until the pilot reads out and §5 is satisfied** |
 | **5 — FORBIDDEN** | diagnosis · clinical certainty · prevents relapse · medical device · FDA-cleared · clinically validated | — | Requires `validatedRegulatoryMode` (§5): real clinical validation **and** regulatory clearance. None exists | **No — categorically blocked** |
 
 Key constraint: **moving up a tier never raises the confidence ceiling.** The caps
@@ -142,15 +143,24 @@ of the following is met, audited, and documented in
 
 1. Prospective clinical validation of the specific claim against an accepted
    reference standard, with pre-registered endpoints and calibrated operating
-   points — not a literature prior.
+   points — not a literature prior. For the depression/anxiety screening claim
+   this is the cross-sectional pilot ([PRE_REGISTRATION](../validation/PRE_REGISTRATION.md),
+   [ANALYSIS_PLAN](../validation/ANALYSIS_PLAN.md)) meeting its co-primary AUC /
+   sensitivity / specificity endpoints at PHQ-9 ≥ 10 and GAD-7 ≥ 10, with
+   acceptable calibration (binary ECE) and a passing QUADAS-2 review, and the
+   `@hum-ai/screening-model` promotion gate cleared on participant-grouped CV.
 2. External, independent replication across populations and devices addressing the
    generalizability and bias concerns flagged in
-   [clinical_voice_biomarker_review] and [ser_mental_health_review].
+   [clinical_voice_biomarker_review] and [ser_mental_health_review], and the
+   self-recruited-cohort spectrum bias declared in the pre-registration.
 3. The corresponding regulatory clearance for the exact intended-use claim
    (e.g. medical-device authorization). Until then "medical device" and
-   "FDA-cleared" remain blocked.
+   "FDA-cleared" remain blocked. (Research-grade credibility — a peer-reviewable
+   validated screening signal — is reachable WITHOUT this; a medical-device claim
+   is not.)
 4. A governance sign-off recorded per ADR, scoping the mode to the **specific**
-   validated claim only — never a blanket bypass.
+   validated claim only — never a blanket bypass. Biostatistics + clinical + ethics
+   collaborators must co-sign that the locked analysis plan was followed.
 
 Setting `validatedRegulatoryMode` for any other reason — demos, "it reads better,"
 loosening copy review — is a safety violation. The flag exists so the

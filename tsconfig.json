@@ -46,7 +46,10 @@
       "@hum-ai/signal-lab/axis-prior": ["packages/signal-lab/src/axis-prior.ts"],
       "@hum-ai/signal-lab/feature-schema": ["packages/signal-lab/src/feature-schema.ts"],
       "@hum-ai/signal-lab/capture-gate": ["packages/signal-lab/src/capture-gate.ts"],
+      "@hum-ai/signal-lab/evaluate-binary": ["packages/signal-lab/src/evaluate-binary.ts"],
       "@hum-ai/native-corpus": ["packages/native-corpus/src/index.ts"],
+      "@hum-ai/clinical-corpus": ["packages/clinical-corpus/src/index.ts"],
+      "@hum-ai/screening-model": ["packages/screening-model/src/index.ts"],
       "@hum-ai/personality-signature": ["packages/personality-signature/src/index.ts"]
     }
   },

@@ -130,8 +130,19 @@ export function applyStateVisual(v: StateVisual, el: HTMLElement | null = safeRo
   s.setProperty("--state-light", `${v.light.toFixed(1)}%`);
   s.setProperty("--state-reach", v.reach.toFixed(3));
   s.setProperty("--state-energy", v.energy.toFixed(3));
-  // A ready-to-use accent colour so DOM chrome can borrow the world's temperature.
+  // DUOTONE AURA: the world borrows TWO related temperatures, not one flat accent — so cards,
+  // graphics and the spectra read as a lit two-colour gradient rather than a monotone dashboard.
+  //   --state-accent    the primary accent (valence warmth, arousal brightness),
+  //   --state-accent-2  an analogous companion hue (+34°), a touch brighter — the gradient's far stop,
+  //   --state-accent-deep a low, saturated version for grounding/shadow,
+  //   --state-glow      a ready alpha glow colour for soft shadows.
+  // All three are derived from the SAME live read, so the duotone stays fully state-adaptive.
+  const hue2 = (v.hue + 34) % 360;
+  s.setProperty("--state-hue-2", hue2.toFixed(1));
   s.setProperty("--state-accent", `hsl(${v.hue.toFixed(1)} ${(v.sat + 22).toFixed(0)}% ${Math.min(78, v.light + 48).toFixed(0)}%)`);
+  s.setProperty("--state-accent-2", `hsl(${hue2.toFixed(1)} ${(v.sat + 30).toFixed(0)}% ${Math.min(82, v.light + 54).toFixed(0)}%)`);
+  s.setProperty("--state-accent-deep", `hsl(${v.hue.toFixed(1)} ${(v.sat + 18).toFixed(0)}% ${Math.max(16, v.light + 6).toFixed(0)}%)`);
+  s.setProperty("--state-glow", `hsla(${v.hue.toFixed(1)}, ${(v.sat + 34).toFixed(0)}%, ${Math.min(70, v.light + 42).toFixed(0)}%, 0.55)`);
   el.dataset.read = v.abstained ? "abstain" : "live";
 }
 

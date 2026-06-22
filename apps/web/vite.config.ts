@@ -30,6 +30,9 @@ export default defineConfig({
       { find: "@hum-ai/shared-types", replacement: pkg("shared-types") },
       { find: "@hum-ai/audio-features", replacement: pkg("audio-features") },
       { find: "@hum-ai/affect-model-contracts", replacement: pkg("affect-model-contracts") },
+      // clinical-corpus: the sanctioned clinical channel's store helpers — pure TS (depends
+      // only on affect-model-contracts + shared-types), browser-safe. NOT the screening model.
+      { find: "@hum-ai/clinical-corpus", replacement: pkg("clinical-corpus") },
       { find: "@hum-ai/quality-gate", replacement: pkg("quality-gate") },
       { find: "@hum-ai/domain-classifier", replacement: pkg("domain-classifier") },
       { find: "@hum-ai/expert-ser", replacement: pkg("expert-ser") },

@@ -28,6 +28,12 @@ export const FORBIDDEN_PHRASES: readonly ForbiddenPhrase[] = [
   { pattern: /\bmedical device\b/i, reason: "regulatory status Hum does not hold", suggestion: "reflective self-awareness tool" },
   { pattern: /\bFDA[- ]?cleared\b/i, reason: "regulatory status Hum does not hold", suggestion: "research-stage prototype" },
   { pattern: /\b(treats?|cures?|therap(y|eutic) for)\b/i, reason: "implies treatment of a condition", suggestion: "supports reflection / regulation" },
+  // Premature SCREENING claims — forbidden until the pre-registered validation reads out and
+  // `validatedRegulatoryMode` is scoped to the specific claim (CLAIMS_LADDER §5). These stop a
+  // developer shipping a depression/anxiety screening claim before the study earns it.
+  { pattern: /\bscreens? (for |you for )?(depression|anxiety)\b/i, reason: "asserts a validated screening claim Hum has not earned", suggestion: "investigational screening signal (research use only)" },
+  { pattern: /\bdetects? (depression|anxiety)\b/i, reason: "asserts a validated detection claim", suggestion: "an investigational signal under study" },
+  { pattern: /\b\d+(\.\d+)?\s*%?\s*(sensitivity|specificity)\b/i, reason: "cites a performance number as a claim before validation", suggestion: "report performance only post-validation, per the analysis plan" },
 ];
 
 /**
@@ -45,6 +51,12 @@ export const ALLOWED_TERMS: readonly string[] = [
   "risk marker",
   "recovery trend",
   "worsening trend",
+  // Investigational register — the honest posture DURING the validation pilot. These describe
+  // research participation, never a validated claim (Tier-4a, CLAIMS_LADDER §1).
+  "investigational screening signal",
+  "for research use only",
+  "research study",
+  "participating in a research study",
 ];
 
 export interface SafetyViolation {

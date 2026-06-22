@@ -15,10 +15,10 @@ test("all gates pass on the real (clean) tree — qa is green", () => {
   assert.equal(total, 0, `Expected a clean tree, found ${total} violation(s):\n${detail}`);
 });
 
-test("the registry wires every gate (4 gates) and each result has a description", () => {
-  assert.equal(ALL_GATES.length, 4);
+test("the registry wires every gate (5 gates) and each result has a description", () => {
+  assert.equal(ALL_GATES.length, 5);
   const results = runAllGates(REPO_ROOT);
-  assert.equal(results.length, 4);
+  assert.equal(results.length, 5);
   for (const r of results) {
     assert.ok(r.gate.length > 0, "gate id missing");
     assert.ok(r.description.length > 0, "gate description missing");

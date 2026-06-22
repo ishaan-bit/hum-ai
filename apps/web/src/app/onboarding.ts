@@ -20,7 +20,7 @@ const SLIDES: readonly Slide[] = [
   {
     tag: "The ritual",
     title: "Meet your hum",
-    body: "Once a day, hum one steady note for about twelve seconds. Hum AI reads your inner state from the sound — entirely on your device.",
+    body: "Once a day, hum one steady note for about twelve seconds. Hum AI reads your inner state from the sound, entirely on your device.",
   },
   {
     tag: "How it works",
@@ -30,7 +30,7 @@ const SLIDES: readonly Slide[] = [
   {
     tag: "Why daily",
     title: "Small check-ins, an early heads-up",
-    body: "One hum is a snapshot. Day by day, Hum learns your usual — so it can gently notice when your pattern drifts, and offer one small, research-informed step. Reflective support, never a diagnosis.",
+    body: "One hum is a snapshot. Day by day, Hum learns your usual, so it can gently notice when your pattern drifts, and offer one small, research-informed step. Reflective support, never a diagnosis.",
   },
   {
     tag: "Before we begin",

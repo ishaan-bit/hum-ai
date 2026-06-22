@@ -93,6 +93,7 @@ import { createStage, type Stage, type Step } from "./stage";
 import { applyStateVisual, visualFromRead, NEUTRAL_VISUAL, ABSTAIN_VISUAL, type StateVisual } from "./theme";
 import { saveAuraCard } from "./aura-card";
 import { maybeShowOnboarding, showOnboarding, type OnboardingOptions } from "./onboarding";
+import { initStudyUi, offerCaptureToStudy } from "./study-ui";
 
 const MODEL_VERSION: ModelVersion = asModelVersion(import.meta.env.HUM_AI_MODEL_VERSION ?? "hum-web@0.1.0");
 
@@ -235,9 +236,12 @@ function anchorOrbForStep(step: Step): void {
   if (!orb) return;
   // Landscape phones: orb sits left, the content column sits right (see the landscape @media).
   const land = window.innerWidth > window.innerHeight && window.innerHeight < 600;
+  // On the read screens the orb recedes to a small, centred ambient wash (dimmed further in CSS):
+  // the inline #read-avatar now carries the "this is you" meaning, so the read fills the screen
+  // instead of giving the top third to a looming orb.
   if (step === "hum") anchorOrbToHumButton();
-  else if (step === "state") orb.setAnchor(land ? 0.26 : 0.5, land ? 0.5 : 0.2, land ? 0.62 : 0.52);
-  else orb.setAnchor(land ? 0.22 : 0.5, land ? 0.42 : 0.13, land ? 0.5 : 0.36);
+  else if (step === "state") orb.setAnchor(land ? 0.24 : 0.5, land ? 0.5 : 0.5, land ? 0.46 : 0.42);
+  else orb.setAnchor(land ? 0.2 : 0.5, land ? 0.46 : 0.5, land ? 0.42 : 0.4);
 }
 
 /** Center the orb exactly on the Hum button so the button reads as the orb's glowing heart. */
@@ -324,9 +328,9 @@ async function boot(): Promise<void> {
   renderLadderForState(session.state);
   renderHistory(session.log);
   updateSyncStatus();
-  // Render the longitudinal panel up front (locked when consent is off) so it's
-  // discoverable from the first visit, before any hum. The data stays consent-gated.
-  renderLongitudinal(null, session.consent, session.state.eligibleHumCount);
+  // Render the diary panel up front (locked when consent is off) so it's discoverable from the
+  // first visit, before any hum. The data stays consent-gated; the trail starts as a ghost.
+  renderLongitudinal(null, session.consent, session.state.eligibleHumCount, session.recentReads);
 
   // Load the user's NATIVE-HUM corpus + retrained model (local; merge cloud when consented).
   // This is the HiTL asset: their own confirmed hums and the model trained on them (ADR-0011).
@@ -351,6 +355,33 @@ async function boot(): Promise<void> {
   // First-landing walkthrough (once; re-openable from the tray's "How it works"). Ends on a
   // consent step that primes the mic and offers the early-noticing opt-in.
   maybeShowOnboarding(onboardingOptions());
+
+  // RESEARCH STUDY layer (Workstreams 2 + 6) — additive + gated. A non-participant sees only
+  // the "learn about the study" entry; everything else is gated behind enrollment. Boots after
+  // the consumer UI so the consumer experience is never blocked on the study path.
+  void initStudyUi({
+    getConsent: () => session.consent,
+    setConsent: (next) => {
+      session.consent = next;
+      reflectConsentInputs();
+    },
+    stopCapture: () => setBusy(false),
+    relapseLine: () => studyRelapseLine(),
+  });
+}
+
+/**
+ * A within-user, already-screened qualitative hum-trend line for the study dashboard. Reuses
+ * the SAME longitudinal trend copy the consumer diary uses (no numbers, no screening
+ * probability) — null when there's nothing safe to say yet.
+ */
+function studyRelapseLine(): string | null {
+  const lg = session.lastRead?.internal.longitudinal;
+  if (!lg || lg.abstained) return null;
+  if (lg.trendDirection === "improving") return "Your recent hums look like they're easing toward steadier.";
+  if (lg.trendDirection === "worsening") return "Your recent hums look a little more unsettled than your usual.";
+  if (lg.trendDirection === "stable") return "Your recent hums look steady.";
+  return null;
 }
 
 function focusHum(): void {
@@ -391,7 +422,7 @@ function setModelStatus(): void {
   // A promoted hum-native model (trained on the user's own confirmed hums) leads the line.
   if (session.artifact && hasPromotedNativeModel(session.artifact)) {
     el.textContent =
-      "A hum-native model trained on YOUR confirmed hums is now steering your read — in-domain, no far-domain penalty. It keeps improving as you give feedback. Non-clinical.";
+      "A hum-native model trained on YOUR confirmed hums is now steering your read, in-domain, no far-domain penalty. It keeps improving as you give feedback. Non-clinical.";
     return;
   }
   if (session.prior) {
@@ -400,7 +431,7 @@ function setModelStatus(): void {
     const axisBits: string[] = [];
     if (meta.arousal) axisBits.push(`arousal${meta.arousal.passedGate ? " (gate-passed)" : ""}`);
     if (meta.valence) axisBits.push(`valence${meta.valence.passedGate ? " (gate-passed)" : ""}`);
-    const axes = axisBits.length ? `Trained axis priors loaded (${axisBits.join(", ")}) — far-domain acted speech, used only when in-domain. ` : "";
+    const axes = axisBits.length ? `Trained axis priors loaded (${axisBits.join(", ")}), far-domain acted speech, used only when in-domain. ` : "";
     el.textContent = `${axes}Your read leads with an on-device acoustic valence + arousal mapping, available from hum #1.`;
   } else {
     el.textContent = "Running the on-device acoustic valence + arousal read (no trained model artifact served).";
@@ -422,6 +453,7 @@ async function onConsentChange(scope: ToggleableScope, granted: boolean): Promis
       session.lastRead,
       session.consent,
       session.lastRead?.internal.eligibleHumCount ?? session.state.eligibleHumCount,
+      session.recentReads,
     );
   }
   if (scope === "derived_feature_sync") {
@@ -439,11 +471,11 @@ function updateSyncStatus(): void {
   if (!getFirebase()) {
     setSyncStatus("Local-only (no cloud backend configured).");
   } else if (!isGranted(session.consent, "derived_feature_sync")) {
-    setSyncStatus("Local-only — enable derived-feature sync to back up to the cloud.");
+    setSyncStatus("Local-only. Enable derived-feature sync to back up to the cloud.");
   } else if (session.uid) {
-    setSyncStatus("Cloud backup on — derived-only summaries sync to your private space.");
+    setSyncStatus("Cloud backup on. Derived-only summaries sync to your private space.");
   } else {
-    setSyncStatus("Cloud unavailable (anonymous sign-in is off for this project) — staying local.");
+    setSyncStatus("Cloud unavailable (anonymous sign-in is off for this project). Staying local.");
   }
 }
 
@@ -495,6 +527,18 @@ async function runOne(
   session.state = result.nextState;
   session.lastRead = result.read;
 
+  // RESEARCH STUDY pairing (Workstream 1) — for an enrolled participant with a pending
+  // instrument session, pair this hum's DERIVED features into a ClinicalHumExample (firewall:
+  // derived-only, validated in the store) and, ONLY when research_audio_upload is consented,
+  // send the ephemeral raw `audio` out the physically-isolated research-upload channel. This is
+  // the tap of capture.ts's buffer "before release". No-op for non-participants.
+  void offerCaptureToStudy({
+    features: result.read.internal.features,
+    captureQuality: result.captureGate.humLikeness,
+    eligible: result.eligible,
+    audio,
+  });
+
   // Update the recent-reads buffer (usable, non-abstained reads only) so the NEXT hum's
   // intervention is informed by recent history; then recompute the signature off the new baseline.
   if (!result.read.userFacing.abstained) {
@@ -507,7 +551,7 @@ async function runOne(
   renderInterventionOfDay(result.read);
   renderPersonalization(result.read);
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
-  renderLongitudinal(result.read, session.consent, result.read.internal.eligibleHumCount);
+  renderLongitudinal(result.read, session.consent, result.read.internal.eligibleHumCount, session.recentReads);
   renderSignature(session.signature ?? currentSignature(), result.read, session.consent, result.read.internal.eligibleHumCount);
   renderProvenance(result.read, session.prior, syncEnabled());
 
@@ -615,7 +659,7 @@ async function maybeRetrain(): Promise<void> {
     saveArtifactLocal(session.localId, session.artifact);
     if (syncEnabled() && session.uid) void saveArtifactCloud(session.uid, session.artifact);
     if (!wasPromoted && hasPromotedNativeModel(session.artifact)) {
-      setCaptureStatus("🎉 Your hum-native model just went live — your read now uses a model trained on your own hums.");
+      setCaptureStatus("🎉 Your hum-native model just went live. Your read now uses a model trained on your own hums.");
       setModelStatus();
     }
 
@@ -626,7 +670,7 @@ async function maybeRetrain(): Promise<void> {
     if (fusion.decision === "promote" && fusion.params) {
       saveFusionParamsLocal(session.localId, fusion.params);
       session.metaLearner = metaLearnerFromParams(fusion.params);
-      if (!hadMeta) setCaptureStatus("🎯 Your hum-native fusion model went live — the affect read is now tuned to you.");
+      if (!hadMeta) setCaptureStatus("🎯 Your hum-native fusion model went live. The affect read is now tuned to you.");
     }
   } catch (err) {
     console.warn("[retrain] failed:", err);
@@ -681,7 +725,7 @@ async function runWeek(): Promise<void> {
       await runOne(() => synthesize("clean"), { advance: false });
       await new Promise((r) => setTimeout(r, 120));
     }
-    setCaptureStatus("Simulated a week — watch the baseline and stage advance above.");
+    setCaptureStatus("Simulated a week. Watch the baseline and stage advance above.");
   } catch (err) {
     setCaptureStatus(`Error: ${(err as Error).message}`);
   } finally {
@@ -709,7 +753,7 @@ async function runDemoSeed(): Promise<void> {
       await runOne(() => synthesize("clean"), { advance: false });
       await new Promise((r) => setTimeout(r, 50));
     }
-    setCaptureStatus("Seeded ~22 demo hums — your longitudinal trend is now active in the menu.");
+    setCaptureStatus("Seeded ~22 demo hums. Your diary of hums is now active on your read screen.");
     revealLongitudinal();
   } catch (err) {
     setCaptureStatus(`Error: ${(err as Error).message}`);
@@ -718,13 +762,14 @@ async function runDemoSeed(): Promise<void> {
   }
 }
 
-/** Open the tray and reveal the (now-active) longitudinal trend panel after a demo seed. */
+/** Reveal the (now-active) diary of hums after a demo seed. The diary lives on the read screen
+ *  now (not the tray), so we close the tray, reveal the last read, and scroll the diary into view. */
 function revealLongitudinal(): void {
-  stage?.openTray();
-  const card = document.getElementById("longitudinal-card");
-  const details = card?.closest("details") as HTMLDetailsElement | null;
-  if (details) details.open = true;
-  requestAnimationFrame(() => card?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  stage?.closeTray();
+  if (session.lastRead) presentRead(session.lastRead, true);
+  requestAnimationFrame(() =>
+    document.getElementById("longitudinal-card")?.scrollIntoView({ behavior: "smooth", block: "center" }),
+  );
 }
 
 // ── wire DOM ─────────────────────────────────────────────────────────────────
@@ -772,7 +817,7 @@ function wireControls(): void {
     showShare(false);
     stage?.closeTray();
     stage?.lock();
-    setCaptureStatus("Reset — baseline cleared on this device.");
+    setCaptureStatus("Reset. Baseline cleared on this device.");
   });
 }
 
@@ -788,7 +833,7 @@ async function onShare(): Promise<void> {
     dateLabel,
   });
   if (btn) {
-    btn.textContent = outcome === "failed" ? "Couldn't save — try again" : "Saved ✓";
+    btn.textContent = outcome === "failed" ? "Couldn't save, try again" : "Saved ✓";
     setTimeout(() => {
       btn.textContent = "✦ Save today's Aura";
       btn.disabled = false;

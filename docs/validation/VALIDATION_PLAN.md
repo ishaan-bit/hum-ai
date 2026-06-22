@@ -71,10 +71,41 @@ anchors and evaluate `assessRelapse` against the four reference kinds (`previous
 `recovery | stable | worsening | relapse_drift | uncertain`, mapped to DVDSA `recovery/unchanged/worsening`.
 Evaluate **within-user**, not group accuracy; expect F0-family features to carry most signal per that source.
 
-**(e) Construct / convergent checks (research consent only).** Under explicit research consent only
-(`research_audio_upload` / `clinical_label_capture` are off by default), correlate Hum's
-dimensional/marker outputs against self-report instruments (PHQ-9, GAD-7, CES-DC) for **convergent
-validity** — *correlation, not classification*. These are markers and screening signals, never labels.
+**(e) Cross-sectional screening classification — PRE-REGISTERED CO-PRIMARY ENDPOINT.** Under explicit
+research consent only (`research_audio_upload` / `clinical_label_capture` are off by default, gated
+behind study enrollment), collect paired hum captures and self-administered reference instruments
+(PHQ-9 + GAD-7, administered together) on the study schedule, and evaluate the hum signal as a
+**binary screening classifier** against the established clinical cuts: **depression at PHQ-9 ≥ 10**
+and **anxiety at GAD-7 ≥ 10**, as **two co-primary endpoints**.
+
+This is the **Tier-3 → Tier-4 leap**: study (e) is elevated from the earlier framing of
+*"convergent validity — correlation, not classification"* to a **pre-registered cross-sectional
+classification** study with locked, powered endpoints. It is the validation that makes the Tier-4
+investigational-screening claim *possible* — and nothing surfaces it to participants until it reads
+out (see below).
+
+- **Co-primary metrics (per cut):** **AUC** with CI (the new ROC/AUC primitive,
+  `@hum-ai/shared-types/metrics.ts` `rocAuc` + `@hum-ai/signal-lab/evaluate-binary`), plus
+  **sensitivity / specificity at the pre-registered operating point**, PPV/NPV, and a binary
+  **reliability diagram** (calibration / binary ECE).
+- **Secondary:** abstention precision/recall (a poor-capture/OOD hum must abstain rather than emit a
+  screening probability — §3c), calibration adequacy, and the longitudinal relapse endpoint (study d).
+- **Leakage control:** participant-grouped cross-validation (group key = `participantPseudonym`,
+  reusing `groupFolds`) so no participant spans folds; permutation p-values + bootstrap CIs as in the
+  existing harness.
+- **Multiplicity:** two co-primary endpoints require multiplicity control and a larger sample than a
+  single endpoint — both fixed in the pre-registration / power analysis.
+- **Blinding & governance:** during the pilot the screening probability is **internal-only and
+  blinded** — never shown to participants, never wired into the consumer read/render path (the
+  `@hum-ai/screening-model` head is a study artifact; the ADR-0006 firewall is enforced at build time
+  by the `no-screening-in-read-path` QA gate in `@hum-ai/qa-gates`). The validated screening claim
+  unlocks only after these endpoints are met, calibration is adequate, QUADAS-2 passes, governance
+  signs off, and `validatedRegulatoryMode` is scoped to the specific validated claim.
+
+The full hypotheses, locked endpoints, blinding, stopping rules, and statistical analysis are in the
+pre-registration and analysis plan: see [PRE_REGISTRATION](./PRE_REGISTRATION.md) and
+[ANALYSIS_PLAN](./ANALYSIS_PLAN.md). Hum's dimensional/marker outputs remain markers and screening
+signals — never diagnoses — throughout.
 
 **(f) Privacy invariant fuzzing.** Property-test/fuzz randomized sync payloads; `assertNoRawAudioFields`
 must throw on any raw-audio-like field (`audio`, `audioBlob`, `rawAudio`, `recording`, `waveformRaw`,

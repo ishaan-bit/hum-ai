@@ -148,12 +148,36 @@ abstention quality on real data with clinician review; regulatory pathway assess
 | Milestone reached | Highest honest claim | Notes |
 |---|---|---|
 | Today (scaffold) | **Tier 0–3 marker, unvalidated** | "a drift away from your steadier pattern" — reflective, consent-gated, ≤88%, never a verdict |
+| IRB approval + pre-registration filed + crisis protocol tested (Phase 0) | **Tier 4a investigational screening (pre-validation)** | register "investigational · for research · not a diagnosis" — **no performance claim**; the `@hum-ai/screening-model` head exists but is **blinded** (study artifact only) |
 | B1+B3+B4 + studies a–d | Tier 3 marker, *internally validated within-user* | early-warning drift with demonstrated calibration & within-user agreement |
-| Study e + §4 pre-clinical gate | **Tier 4 screening instrument** *(becomes possible)* | "screens for X with sensitivity/specificity"; requires `validatedRegulatoryMode` + governance sign-off |
+| Study e (cross-sectional classification) + §4 pre-clinical gate | **Tier 4 screening instrument** *(becomes possible)* | "screens for depression/anxiety with sensitivity/specificity"; requires the pre-registered co-primary endpoints met (AUC + sens/spec at **PHQ-9 ≥ 10** and **GAD-7 ≥ 10**), adequate calibration (binary ECE), passing QUADAS-2, the **`@hum-ai/screening-model` promotion gate cleared on participant-grouped CV**, governance sign-off, and `validatedRegulatoryMode` **scoped to that specific claim** |
 | Tier 5 (diagnosis / "prevents relapse" / medical device) | **Forbidden** | categorically blocked in code (`FORBIDDEN_PHRASES`) until regulatory clearance |
 
-"Early detection" is legitimately a **Tier-3 early-warning marker** that prompts a *human* to look —
-never detection of a condition (Tier 4) and never **prevention** (Tier 5, mechanically blocked).
+**The screening-claim path (Tier-3 → Tier-4 leap).** Study (e) is no longer "correlation, not
+classification": [VALIDATION_PLAN §3e](./VALIDATION_PLAN.md) now frames it as the **pre-registered
+cross-sectional classification co-primary endpoint** — depression at PHQ-9 ≥ 10 *and* anxiety at
+GAD-7 ≥ 10, AUC + sensitivity/specificity, participant-grouped CV. Its implementing head is the new
+third head `@hum-ai/screening-model` (ADR-0006), which is **structurally isolated from the consumer
+read/render path during the entire pilot**: the screening probability is internal-only and blinded,
+never reaches `render.ts`, the orchestrator, or `safety-language`. That isolation is enforced at
+build time by the **`no-screening-in-read-path` QA gate** in `@hum-ai/qa-gates` (the import-graph
+analogue of the runtime `assertNoClinicalLeak` gate), so a developer cannot wire the head into the
+consumer surface before the claim is earned. Post-validation surfacing happens only via the new
+`phq_screening_signal` / `gad_screening_signal` labels in `@hum-ai/safety-language`.
+
+**`validatedRegulatoryMode` unlock conditions (the Tier-4 gate).** The flag stays `false` until
+**all** of: (1) the pre-registered co-primary endpoints are met — AUC + sens/spec at PHQ-9 ≥ 10 and
+GAD-7 ≥ 10 — with acceptable calibration and the `@hum-ai/screening-model` promotion gate cleared on
+participant-grouped CV; (2) QUADAS-2 risk-of-bias review passes; (3) clinician-collaborative review;
+and (4) a recorded governance sign-off **scoping the mode to that specific validated claim only —
+never a blanket bypass** ([CLAIMS_LADDER §5](../claims/CLAIMS_LADDER.md);
+[PRE_REGISTRATION](./PRE_REGISTRATION.md); [ANALYSIS_PLAN](./ANALYSIS_PLAN.md)). Diagnosis,
+"prevents relapse," and "medical device / FDA-cleared" remain categorically blocked regardless.
+
+"Early detection" is legitimately a **Tier-3 early-warning marker** that prompts a *human* to look,
+or — once the study reads out — a **Tier-4 cross-sectional screening signal** that routes to clinical
+judgment; never detection of a condition as a verdict, and never **prevention** (Tier 5, mechanically
+blocked).
 
 ---
 

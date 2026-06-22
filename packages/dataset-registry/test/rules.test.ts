@@ -11,7 +11,7 @@ import {
 } from "@hum-ai/dataset-registry";
 
 test("all source entries are present and govern-valid", () => {
-  assert.equal(REGISTRY.length, 8);
+  assert.equal(REGISTRY.length, 9); // +1: native_hum_clinical_screening_corpus (PHQ-9/GAD-7 paired)
   assert.doesNotThrow(() => assertValidRegistry(REGISTRY));
 });
 

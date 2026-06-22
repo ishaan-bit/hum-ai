@@ -1,0 +1,59 @@
+rules_version = '2';
+
+// =============================================================================
+// FIREBASE STORAGE RULES — the ONLY sanctioned raw-audio egress.
+//
+// Raw audio NEVER enters Firestore (see firestore.rules). The 12-second hum
+// waveform may leave the device ONLY through this Storage channel, ONLY for a
+// consented, enrolled study participant, under a study bucket keyed by the
+// participant's client-minted pseudonym + capture id. This is physically isolated
+// from every derived-sync Firestore path.
+//
+// Path scheme (matches apps/web/src/app/research-upload.ts):
+//   studies/{studyId}/raw-audio/{pseudonym}/{captureId}.wav
+//
+// ROLE CLAIMS (request.auth.token custom claims), minted server-side:
+//   studyParticipant — an enrolled research participant (boolean)
+//   studyAdmin       — study operator / data steward (boolean)
+//   studyId          — the single study a claim is scoped to (string)
+//   pseudonym        — the participant's minted pseudonym (string)
+// =============================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    // The participant identified by `pseudonym` within `studyId`.
+    function isParticipant(studyId, pseudonym) {
+      return isSignedIn()
+             && request.auth.token.studyParticipant == true
+             && request.auth.token.studyId == studyId
+             && request.auth.token.pseudonym == pseudonym;
+    }
+    function isStudyAdmin(studyId) {
+      return isSignedIn()
+             && request.auth.token.studyAdmin == true
+             && request.auth.token.studyId == studyId;
+    }
+
+    // RAW-AUDIO RESEARCH SUBSET. A participant may upload + delete (right-to-deletion)
+    // their OWN pseudonym-scoped raw audio; a study-admin may read/delete any (for the
+    // model-development subset + deletion propagation). Uploads are capped to a sane size
+    // and must be audio. No one else can read raw audio — it never reaches a clinician
+    // projection or any consumer path.
+    match /studies/{studyId}/raw-audio/{pseudonym}/{captureFile} {
+      allow read: if isParticipant(studyId, pseudonym) || isStudyAdmin(studyId);
+      allow write: if (isParticipant(studyId, pseudonym) || isStudyAdmin(studyId))
+                   && request.resource.size < 20 * 1024 * 1024
+                   && request.resource.contentType.matches('audio/.*');
+      allow delete: if isParticipant(studyId, pseudonym) || isStudyAdmin(studyId);
+    }
+
+    // Deny all other Storage paths (no consumer raw-audio egress exists).
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

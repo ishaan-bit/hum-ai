@@ -80,6 +80,34 @@ export const REGISTRY: readonly DatasetRegistryEntry[] = [
       "Created by the human-in-the-loop loop (ADR-0011): after a read the user confirms/adjusts the valence/arousal, minting one {derived features, self-report} row. A hum-native model retrained on it is IN-DOMAIN for hums (no far-domain penalty) and is promoted only when it beats the transparent acoustic backbone on held-out hums. Convergent-validity (correlation) signal, NOT a diagnostic classifier; non-clinical and not clinically validated.",
   },
   {
+    id: "native_hum_clinical_screening_corpus",
+    name: "Native-hum clinical screening corpus (PHQ-9 / GAD-7 paired)",
+    kind: "dataset",
+    role: "dataset",
+    source_path_or_url:
+      "study-backend://clinical-screening-corpus (@hum-ai/clinical-corpus; derived features paired with PHQ-9/GAD-7; pseudonymised; see docs/validation/PRE_REGISTRATION.md, docs/validation/DATA_DICTIONARY.md)",
+    domain: "native_hum",
+    task_type: "voice_biomarker",
+    label_type: "clinical_scale",
+    recording_context:
+      "Production 12-second hum capture paired with a self-administered PHQ-9/PHQ-8 + GAD-7 in the same session (tight gap; see ClinicalSessionLink). Derived features only — raw audio never stored here (a separate research_audio_upload channel holds the model-dev subset).",
+    population: "consented adult study participants (target condition: depression + anxiety); self-recruited remote cohort, partner-site pluggable",
+    clinical_status: "clinical",
+    language: "any",
+    modality: ["audio"],
+    domain_gap_to_hum: "none",
+    // native_hum is the only source of hum truth (ADR-0005); this is the CLINICAL variant, the
+    // ground truth the depression/anxiety SCREENING model is validated against. Gated by
+    // clinical_label_capture consent + IRB approval. hum_finetune/evaluation are permitted ONLY
+    // under an approved, pre-registered protocol; this entry's existence presupposes that approval.
+    allowed_model_use: ["evaluation", "hum_finetune", "clinical_prior"],
+    prohibited_model_use: ["personalization", "relapse_tracking", "recommendation", "market_research_only", "pretraining"],
+    consent_notes:
+      "PHI. Requires clinical_label_capture consent (PHQ-9/GAD-7) + research_audio_upload consent (raw-audio subset only), under IRB approval with versioned informed e-consent and right-to-deletion. Pseudonymised (re-identification key held only in the participant backend, never in the corpus). Clinical instrument scores live ONLY in this sanctioned channel (assertValidClinicalExample), never in the benign native_hum_self_report_corpus.",
+    validation_notes:
+      "The dataset for the pre-registered cross-sectional screening endpoints (PHQ-9 ≥ 10 / GAD-7 ≥ 10): participant-grouped CV, AUC + sensitivity/specificity at the locked cut, calibration (binary ECE), QUADAS-2 risk-of-bias control. Investigational and NOT clinically validated until the pilot reads out and CLAIMS_LADDER §5 is satisfied; the screening probability is blinded during data collection.",
+  },
+  {
     id: "voice_depression_systematic_review",
     name: "Speech & Voice Quality as Digital Biomarkers in Depression (systematic review)",
     kind: "reference",

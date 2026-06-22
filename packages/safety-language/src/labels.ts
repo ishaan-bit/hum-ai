@@ -24,6 +24,11 @@ export const INTERNAL_TO_USER_FACING: Readonly<Record<string, string>> = {
   mixed_state: "a mixed pattern",
   neutral_close_to_usual: "close to your usual pattern",
   relapse_drift_score: "a drift away from your steadier pattern",
+  // Screening-head internal labels (study artifacts). Mapped for POST-VALIDATION surfacing only —
+  // during the pilot the screening probability is blinded and never rendered. Surfacing these
+  // requires `validatedRegulatoryMode` scoped to the validated claim (CLAIMS_LADDER §5).
+  phq_screening_signal: "an investigational depression-screening signal (research use only)",
+  gad_screening_signal: "an investigational anxiety-screening signal (research use only)",
   dvdsa_3class: "your change since last time",
   epistemic_uncertainty: "how sure this read is",
   abstain_reason: "(internal)",

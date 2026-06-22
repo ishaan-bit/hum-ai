@@ -124,7 +124,7 @@ function drawPoster(ctx: CanvasRenderingContext2D, W: number, H: number, input: 
   // Honesty watermark.
   ctx.fillStyle = "rgba(180,186,196,0.5)";
   ctx.font = "500 26px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
-  ctx.fillText("A reflection from a 12-second hum — on-device · non-clinical · not a diagnosis", cx, H * 0.955);
+  ctx.fillText("A reflection from a 12-second hum · on-device · non-clinical · not a diagnosis", cx, H * 0.955);
 }
 
 function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number, font: string): string[] {
@@ -179,7 +179,7 @@ export async function saveAuraCard(input: AuraCardInput): Promise<ShareOutcome> 
         await nav.share({
           files: [file],
           title: "My Aura",
-          text: "My inner state today, from a 12-second hum. — Hum AI",
+          text: "My inner state today, from a 12-second hum. · Hum AI",
         });
         return "shared";
       } catch {

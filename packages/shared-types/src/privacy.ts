@@ -42,6 +42,61 @@ export function defaultConsent(now: IsoTimestamp): ConsentState {
 }
 
 /**
+ * VERSIONED RESEARCH-CONSENT RECORD.
+ *
+ * The device-local `ConsentState` is a mutable snapshot of currently-granted
+ * scopes — fine for the consumer product. Research consent is more: an IRB needs
+ * an APPEND-ONLY, versioned, timestamped record of exactly what a participant
+ * agreed to and when, bound to the hash of the consent document they saw, plus an
+ * explicit withdrawal as a NEW record (never an edit/delete of the original).
+ * These are written to the study backend (`studies/{id}/consentRecords`), where
+ * the Firestore rules deny update/delete so the record is immutable by construction.
+ */
+export interface ResearchConsentRecord {
+  readonly recordId: string;
+  readonly participantPseudonym: string;
+  readonly studyId: string;
+  /** Version of the consent document the participant acknowledged. */
+  readonly consentVersion: string;
+  /** Hash of the exact consent text shown, so the agreed wording stays auditable. */
+  readonly consentDocHash: string;
+  /** Scopes granted at signing (a subset of CONSENT_SCOPES). */
+  readonly grantedScopes: readonly ConsentScope[];
+  readonly signedAt: IsoTimestamp;
+  /** "enrol" grants; "withdraw" revokes — a withdrawal references the record it revokes. */
+  readonly kind: "enrol" | "withdraw";
+  /** For a withdrawal: the recordId being revoked. Null on an enrolment record. */
+  readonly withdrawsRecordId: string | null;
+}
+
+export class InvalidConsentRecordError extends Error {
+  constructor(reason: string) {
+    super(`invalid research-consent record: ${reason}`);
+    this.name = "InvalidConsentRecordError";
+  }
+}
+
+/** Validate a research-consent record before it is written to the append-only log. */
+export function assertValidConsentRecord(r: ResearchConsentRecord): void {
+  if (!r.recordId) throw new InvalidConsentRecordError("recordId required");
+  if (!r.participantPseudonym || r.participantPseudonym.includes("@")) {
+    throw new InvalidConsentRecordError("participantPseudonym must be a non-identifying pseudonym");
+  }
+  if (!r.studyId) throw new InvalidConsentRecordError("studyId required");
+  if (!r.consentVersion) throw new InvalidConsentRecordError("consentVersion required");
+  if (!r.consentDocHash) throw new InvalidConsentRecordError("consentDocHash required");
+  for (const s of r.grantedScopes) {
+    if (!CONSENT_SCOPES.includes(s)) throw new InvalidConsentRecordError(`unknown scope: ${s}`);
+  }
+  if (r.kind === "withdraw" && !r.withdrawsRecordId) {
+    throw new InvalidConsentRecordError("a withdrawal record must reference the record it revokes");
+  }
+  if (r.kind === "enrol" && r.withdrawsRecordId) {
+    throw new InvalidConsentRecordError("an enrolment record must not reference a revoked record");
+  }
+}
+
+/**
  * Exact forbidden field names from `hum_spec` §5.4 (`lib/firebase/humPayload.ts`),
  * plus defensive additions. These must never appear in a derived sync payload.
  */

@@ -8,6 +8,7 @@
 /* Registered so THE TUNING (the read's bloom) animates the world smoothly.
    Unsupported browsers simply snap instead of transition — still correct. */
 @property --state-hue { syntax: "<number>"; inherits: true; initial-value: 210; }
+@property --state-hue-2 { syntax: "<number>"; inherits: true; initial-value: 244; }
 @property --state-sat { syntax: "<percentage>"; inherits: true; initial-value: 12%; }
 @property --state-light { syntax: "<percentage>"; inherits: true; initial-value: 15%; }
 @property --state-reach { syntax: "<number>"; inherits: true; initial-value: 0.4; }
@@ -18,11 +19,17 @@
 
   /* state vars (defaults = the idle/neutral world; overwritten per read by theme.ts) */
   --state-hue: 210;
+  --state-hue-2: 244;
   --state-sat: 12%;
   --state-light: 15%;
   --state-reach: 0.4;
   --state-energy: 0.3;
   --state-accent: hsl(210 34% 64%);
+  /* DUOTONE AURA companions (overwritten per read by theme.ts) — a second analogous hue + a deep
+     grounding tone + a soft glow colour, so surfaces read as a lit two-colour gradient. */
+  --state-accent-2: hsl(244 40% 70%);
+  --state-accent-deep: hsl(210 30% 22%);
+  --state-glow: hsla(210, 46%, 60%, 0.45);
 
   /* base palette */
   --bg: #0a0b0f;
@@ -83,14 +90,22 @@ body {
   inset: 0;
   z-index: 0;
   background:
+    /* DUOTONE: a second analogous-hue wash up in one corner gives the world colour depth
+       instead of a single flat temperature — still 100% derived from the live read. */
     radial-gradient(
-      120% 90% at 50% 38%,
+      85% 65% at 80% 16%,
+      hsl(var(--state-hue-2) calc(var(--state-sat) + 6%) calc(var(--state-light) + 9%) / 0.5) 0%,
+      transparent 58%
+    ),
+    radial-gradient(
+      120% 90% at 50% 40%,
       hsl(var(--state-hue) var(--state-sat) calc(var(--state-light) + 10%) / 0.95) 0%,
       hsl(var(--state-hue) var(--state-sat) var(--state-light) / 0.7) 38%,
       var(--bg) 78%
     ),
     var(--bg);
   transition: --state-hue var(--tune) var(--ease-bloom),
+    --state-hue-2 var(--tune) var(--ease-bloom),
     --state-sat var(--tune) var(--ease-bloom),
     --state-light var(--tune) var(--ease-bloom),
     background var(--tune) var(--ease-bloom);
@@ -333,26 +348,28 @@ body {
   padding-top: 0.4rem;
 }
 
-/* WINDOWS B/C · the orb rises in the top region; the content is a bottom-docked panel that
-   scrolls INTERNALLY. Using a capped, self-scrolling panel (not justify-content:flex-end on the
-   window) avoids the classic flexbox bug where flex-end + overflow makes the TOP unreachable. */
+/* WINDOWS B/C · the READ is the hero and fills the screen top-to-bottom (the orb has receded to a
+   faint ambient wash, so the old bottom-docked panel that gave the top third to the orb is gone).
+   The content is a top-aligned panel that scrolls INTERNALLY (a capped, self-scrolling panel, not
+   justify-content on the window, avoids the flex-end+overflow "top unreachable" bug). */
 .window-state,
 .window-today {
-  justify-content: flex-end;
+  justify-content: flex-start;
   overflow: hidden;
 }
 .reveal,
 .today {
+  position: relative;
   width: 100%;
   max-width: var(--maxw);
   margin: 0 auto;
-  /* bounded by BOTH the viewport and the actual stage box (100%) so a tall panel on a short
-     landscape/split-screen viewport scrolls internally instead of clipping its own top. */
-  max-height: min(64svh, 100%);
+  /* full stage height; a tall panel scrolls internally instead of clipping its own top. */
+  max-height: 100%;
   overflow-y: auto;
+  overflow-x: hidden; /* clip the reveal "tuning sweep" so it can't add a horizontal scrollbar */
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 0.3rem 0.15rem 0.5rem;
+  padding: 0.3rem 0.2rem 1.1rem;
 }
 .reveal-actions {
   display: flex;
@@ -1003,14 +1020,14 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
   /* orb sits left, the content column sits right and uses the full height */
   .window-state,
   .window-today {
-    justify-content: flex-end;
+    justify-content: flex-start;
     align-items: center;
   }
   .reveal,
   .today {
     max-width: 30rem;
     margin: 0 0 0 auto;
-    max-height: min(90svh, 100%);
+    max-height: 100%;
   }
   .hum-title { font-size: clamp(1.4rem, 5.5vh, 2rem); }
   .window-hum { justify-content: center; gap: 1rem; }
@@ -1249,81 +1266,243 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 .reveal.unfurl > *:nth-child(5) { animation-delay: 0.42s; }
 .reveal.unfurl > *:nth-child(n+6) { animation-delay: 0.5s; }
 
-/* Orb de-emphasis: the ripple over the read read as noise — quiet it behind result windows. */
+/* A one-shot diagonal "tuning" light sweeps across the read as it resolves (cinematic). */
+.reveal.unfurl::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(
+    104deg,
+    transparent 34%,
+    color-mix(in srgb, var(--state-accent-2) 24%, transparent) 50%,
+    transparent 66%
+  );
+  transform: translateX(-130%);
+  animation: tune-sweep 1.05s var(--ease-bloom) 0.08s both;
+}
+@keyframes tune-sweep { to { transform: translateX(130%); } }
+
+/* Orb de-emphasis: on the read screens the orb recedes to a faint ambient wash (the inline
+   #read-avatar now carries the "this is you" meaning), so the read can own the full screen. */
 body[data-step="state"] #orb-canvas,
 body[data-step="today"] #orb-canvas {
-  opacity: 0.4;
+  opacity: 0.24;
   transition: opacity 0.6s var(--ease);
 }
 body[data-step="hum"] #orb-canvas { opacity: 1; transition: opacity 0.6s var(--ease); }
 
-/* GAMIFIED mood-energy field (ASK 4). */
-.mood-field {
-  position: relative;
-  width: 100%;
-  max-width: 16rem;
-  aspect-ratio: 1;
-  margin: 0.4rem auto 0.7rem;
-  border-radius: 18px;
-  background:
-    radial-gradient(120% 120% at 50% 50%, color-mix(in srgb, var(--state-accent) 12%, transparent), transparent 70%),
-    rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--glass-line);
-  overflow: hidden;
+/* ── section-heading glyphs (small duotone graphics, never a dashboard) ─────── */
+h3 .ic,
+.ic {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 0.34rem;
+  color: var(--state-accent);
 }
-.mood-grid { position: absolute; inset: 0; }
-.mood-cross-h, .mood-cross-v { position: absolute; background: rgba(255, 255, 255, 0.08); }
-.mood-cross-h { left: 0; right: 0; top: 50%; height: 1px; }
-.mood-cross-v { top: 0; bottom: 0; left: 50%; width: 1px; }
-.mood-axis-label {
-  position: absolute;
-  font-size: 0.6rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-mute);
-}
-.mal-top { top: 0.4rem; left: 50%; transform: translateX(-50%); }
-.mal-bottom { bottom: 0.4rem; left: 50%; transform: translateX(-50%); }
-.mal-left { left: 0.4rem; top: 50%; transform: translateY(-50%) rotate(-90deg); transform-origin: left center; }
-.mal-right { right: 0.4rem; top: 50%; transform: translateY(-50%) rotate(90deg); transform-origin: right center; }
-.mood-zone {
-  position: absolute;
-  font-size: 0.66rem;
-  font-weight: 700;
-  color: var(--ink-mute);
-  opacity: 0.55;
-  padding: 0.5rem 0.6rem;
-  transition: opacity 0.4s, color 0.4s;
-}
-.mood-zone.on { opacity: 1; color: var(--ink); text-shadow: 0 0 16px color-mix(in srgb, var(--state-accent) 60%, transparent); }
-.mz-rt { top: 1.3rem; right: 0.4rem; }
-.mz-lt { top: 1.3rem; left: 0.4rem; }
-.mz-lb { bottom: 1.3rem; left: 0.4rem; }
-.mz-rb { bottom: 1.3rem; right: 0.4rem; }
-.mood-marker {
-  position: absolute;
-  width: 26px;
-  height: 26px;
+.ic svg { display: block; filter: drop-shadow(0 0 6px var(--state-glow)); }
+
+/* ── the inline state-avatar: a small living orb in the read header ─────────── */
+.read-avatar {
+  flex: none;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
-  transform: translate(-50%, -50%);
-  background: radial-gradient(circle at 38% 34%, #fff, var(--state-accent) 70%);
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--state-accent) 30%, transparent),
-    0 0 26px 6px color-mix(in srgb, var(--state-accent) 70%, transparent);
-  transition: left 0.9s var(--ease-bloom), top 0.9s var(--ease-bloom);
+  background:
+    radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.6), transparent 56%),
+    radial-gradient(circle at 62% 70%, var(--state-accent-2), var(--state-accent) 52%,
+      color-mix(in srgb, var(--state-accent-deep) 82%, #0b0c10));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 0 20px -2px var(--state-glow);
+  animation: avatar-breathe calc(5.6s - var(--state-energy) * 2.1s) var(--ease) infinite;
 }
-.mood-field.mood-developing .mood-marker { filter: blur(1.2px); opacity: 0.8; }
-.mood-field.mood-moderate .mood-marker { opacity: 0.92; }
-.mood-zone-now {
+@keyframes avatar-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+.read-avatar-developing { opacity: 0.72; filter: saturate(0.85); }
+.read-head-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 0.22rem; min-width: 0; }
+
+/* ── the legible mood + energy read: bold state name + two reading spectra ─── */
+.mood-read { margin: 0.5rem 0 0.2rem; }
+.state-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.7rem; margin-bottom: 0.8rem; }
+.state-name-zone {
+  font: 800 clamp(1.5rem, 6vw, 2rem)/1 "Iowan Old Style", Georgia, serif;
+  letter-spacing: -0.01em;
+  color: var(--state-accent); /* fallback for engines without background-clip:text */
+  filter: drop-shadow(0 0 22px var(--state-glow));
+}
+/* Duotone gradient text only where supported — never leave the state name invisible. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .state-name-zone {
+    background: linear-gradient(92deg, var(--state-accent), var(--state-accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+.state-name-desc { color: var(--ink-soft); font-size: 0.92rem; }
+.signal-chip {
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: rgba(255, 255, 255, 0.05);
+}
+.signal-clear { color: #7bd391; border-color: rgba(123, 211, 145, 0.4); }
+.signal-moderate { color: #e6cf6a; border-color: rgba(230, 207, 106, 0.4); }
+.signal-developing { color: #c0a7e6; border-color: rgba(192, 167, 230, 0.4); }
+
+.spectra { display: flex; flex-direction: column; gap: 0.9rem; }
+.spectrum-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.32rem; }
+.spectrum-label { font-weight: 700; font-size: 0.9rem; }
+.spectrum-now {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--state-accent-2);
+}
+.spectrum-track {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--state-accent-deep) 82%, #0b0c10),
+    color-mix(in srgb, var(--state-accent) 42%, #14161d) 50%,
+    var(--state-accent-2)
+  );
+}
+.spectrum-fill {
   position: absolute;
-  left: 0.6rem;
-  bottom: 0.5rem;
-  font-size: 0.82rem;
-  font-weight: 700;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 34%, #fff, var(--state-accent-2) 72%);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-accent) 34%, transparent), 0 0 20px 3px var(--state-glow);
+  transition: left 0.95s var(--ease-bloom);
 }
-.mood-conf { font-weight: 600; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
-.mood-conf-clear { color: #7bd391; }
-.mood-conf-moderate { color: #e6cf6a; }
-.mood-conf-developing { color: #c0a7e6; }
+.spectrum-poles {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.3rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+}
+.mood-developing .spectrum-fill { filter: blur(1.1px); opacity: 0.82; }
+.mood-moderate .spectrum-fill { opacity: 0.94; }
+
+/* ── richer diagnostics: a duotone tile grid (everything Hum noticed) ───────── */
+.diagnostics-card {
+  margin-top: 0.7rem;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 18px;
+  padding: 1.05rem 1.1rem 1.1rem;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.8);
+}
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.2rem, 1fr));
+  gap: 0.5rem;
+  margin: 0.3rem 0 0.2rem;
+}
+.diag-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 12px;
+  border: 1px solid var(--glass-line);
+  background: linear-gradient(
+    150deg,
+    color-mix(in srgb, var(--state-accent) 10%, rgba(255, 255, 255, 0.02)),
+    color-mix(in srgb, var(--state-accent-2) 6%, rgba(255, 255, 255, 0.01))
+  );
+  animation: tile-in 0.5s var(--ease-bloom) both;
+}
+.diag-grid > .diag-tile:nth-child(1) { animation-delay: 0.04s; }
+.diag-grid > .diag-tile:nth-child(2) { animation-delay: 0.1s; }
+.diag-grid > .diag-tile:nth-child(3) { animation-delay: 0.16s; }
+.diag-grid > .diag-tile:nth-child(4) { animation-delay: 0.22s; }
+.diag-grid > .diag-tile:nth-child(5) { animation-delay: 0.28s; }
+@keyframes tile-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.diag-k { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-mute); font-weight: 700; }
+.diag-v { font-size: 0.95rem; font-weight: 700; }
+.diag-v::first-letter { text-transform: uppercase; }
+.diag-clear { color: #7bd391; }
+.diag-moderate { color: #e6cf6a; }
+.diag-developing { color: #c0a7e6; }
+.diag-info { color: var(--state-accent-2); }
+.diag-note { margin: 0.55rem 0 0; }
+
+/* ── THE DIARY OF HUMS: a graphic, cinematic longitudinal panel ────────────── */
+.longitudinal-card {
+  margin-top: 0.7rem;
+  background:
+    radial-gradient(130% 80% at 86% 0%, color-mix(in srgb, var(--state-accent-2) 11%, transparent), transparent 60%),
+    var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 18px;
+  padding: 1.05rem 1.1rem 1.1rem;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.8);
+}
+.diary-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0.3rem 0 0.8rem;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+  overflow: visible;
+}
+.diary-axis { stroke: rgba(255, 255, 255, 0.1); stroke-width: 1; stroke-dasharray: 3 5; }
+.diary-line {
+  stroke: var(--state-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px var(--state-glow));
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  animation: diary-draw 1.5s var(--ease-bloom) forwards;
+}
+@keyframes diary-draw { to { stroke-dashoffset: 0; } }
+.diary-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: diary-pop 0.5s var(--ease-bloom) both;
+  animation-delay: calc(var(--i, 0) * 0.06s + 0.25s);
+}
+@keyframes diary-pop { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
+.diary-hi { fill: var(--state-accent-2); }
+.diary-mid { fill: var(--state-accent); }
+.diary-lo { fill: color-mix(in srgb, var(--state-accent-deep) 55%, var(--state-accent)); }
+.diary-today { fill: #fff; filter: drop-shadow(0 0 7px var(--state-glow)); }
+.diary-ghost { fill: rgba(255, 255, 255, 0.16); animation: none; }
+.diary-svg-ghost { opacity: 0.7; }
+.diary-trend-improving { color: #8fd6a4; }
+.diary-trend-worsening { color: #e6c79a; }
+
+/* ── per-category accent on Today's suggestion (a little colour variety) ───── */
+.iod-cat-breath_regulation .iod-cat { color: #6fd3c6; }
+.iod-cat-grounding .iod-cat { color: #8fd6a4; }
+.iod-cat-music_regulation .iod-cat { color: #c0a7e6; }
+.iod-cat-movement_reset .iod-cat { color: #e6b07a; }
+.iod-cat-journaling .iod-cat,
+.iod-cat-social_check_in .iod-cat { color: #7fb0e6; }
+.iod-cat-rest_recovery .iod-cat { color: #b9a7e6; }
+.iod-cat-safety_support .iod-cat { color: #e69aa6; }
 
 /* BREATH PACER (ASK 6). */
 .breath { margin: 0.6rem 0 0.2rem; }
@@ -1423,6 +1602,132 @@ body[data-step="hum"] #orb-canvas { opacity: 1; transition: opacity 0.6s var(--e
 
 @media (prefers-reduced-motion: reduce) {
   .reveal.unfurl > * { animation: none; }
-  .mood-marker, .trait-fill { transition: none; }
+  .reveal.unfurl::before { display: none; }
+  .spectrum-fill, .trait-fill { transition: none; }
   .breath-disc { transition: none !important; }
+  .read-avatar { animation: none; }
+  .diary-line { animation: none; stroke-dashoffset: 0; }
+  .diary-dot { animation: none; opacity: 1; }
+  .diag-tile { animation: none; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESEARCH STUDY SURFACES (Workstreams 2 + 6) — additive; gated behind enrollment.
+   They reuse the existing glass/orb world (--glass, --ink, --state-accent) so a
+   participant never leaves the same atmosphere. A non-participant never sees them.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* shared full-screen overlay scaffold (crisis / instrument / e-consent) */
+.crisis-overlay,
+.instrument-overlay,
+.study-consent {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+}
+.crisis-scrim,
+.instrument-scrim,
+.sc-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 7, 11, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.crisis-card,
+.instrument-card,
+.sc-card {
+  position: relative;
+  width: min(34rem, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 1.4rem 1.4rem 1.2rem;
+  border-radius: 20px;
+  border: 1px solid var(--glass-line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 60%), var(--glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 24px 70px -30px rgba(0, 0, 0, 0.9);
+  color: var(--ink);
+}
+
+/* crisis surface — direct, calm, non-dismissable */
+.crisis-overlay.crisis-active .crisis-card {
+  border-color: color-mix(in srgb, #ff8a8a 55%, var(--glass-line));
+  box-shadow: 0 24px 80px -28px rgba(255, 90, 90, 0.5);
+}
+.crisis-title { font-size: 1.25rem; margin: 0 0 0.5rem; }
+.crisis-message { margin: 0 0 1rem; line-height: 1.5; }
+.crisis-resources { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: 0.7rem; }
+.crisis-resource {
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  background: rgba(255, 255, 255, 0.04);
+}
+.crisis-resource-name { font-weight: 600; display: block; }
+.crisis-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+.crisis-action { text-decoration: none; }
+.crisis-ack { margin-top: 0.4rem; }
+
+/* instrument administration (PHQ-9 / GAD-7) */
+.instrument-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.instrument-title { font-size: 1.15rem; margin: 0; }
+.instrument-frame { margin: 0.2rem 0 0.9rem; }
+.instrument-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; counter-reset: q; }
+.instrument-item { padding-bottom: 0.6rem; border-bottom: 1px solid var(--glass-line); }
+.instrument-q { margin: 0 0 0.5rem; font-weight: 500; line-height: 1.4; }
+.instrument-opts { display: grid; gap: 0.35rem; }
+.instrument-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid var(--glass-line);
+  cursor: pointer;
+}
+.instrument-opt input { accent-color: var(--state-accent); }
+.instrument-actions { margin-top: 1rem; display: flex; justify-content: flex-end; }
+
+/* study e-consent steps */
+.sc-tag { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin: 0; }
+.sc-title { font-size: 1.2rem; margin: 0.3rem 0 0.6rem; }
+.sc-body { line-height: 1.55; margin: 0 0 1rem; }
+.sc-choices { display: grid; gap: 0.7rem; margin-bottom: 1rem; }
+.sc-toggle, .study-audio-toggle { display: flex; gap: 0.6rem; align-items: flex-start; line-height: 1.45; }
+.sc-toggle input, .study-audio-toggle input { margin-top: 0.2rem; accent-color: var(--state-accent); }
+.sc-progress { display: flex; gap: 0.4rem; margin-bottom: 1rem; }
+.sc-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; background: var(--glass-line); }
+.sc-dot.on { background: var(--state-accent); }
+.sc-actions { display: flex; justify-content: space-between; gap: 0.6rem; }
+
+/* study-status surface (in the tray) */
+.study-surface { display: grid; gap: 0.7rem; }
+.study-status-line { margin: 0; }
+.study-due { margin: 0; }
+.study-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.study-manage summary { cursor: pointer; }
+.study-dashboard { margin-top: 0.6rem; }
+
+/* longitudinal dashboard trajectories */
+.dashboard { display: grid; gap: 0.9rem; }
+.dash-instrument { display: grid; gap: 0.3rem; }
+.dash-instrument h4, .dash-relapse h4 { margin: 0; font-size: 0.95rem; }
+.traj-svg { width: 100%; height: auto; }
+.traj-axis { stroke: var(--glass-line); stroke-width: 1; }
+.traj-line { stroke: color-mix(in srgb, var(--state-accent) 70%, transparent); stroke-width: 2; }
+.traj-dot { fill: var(--ink-soft); }
+.traj-today { fill: var(--state-accent); }
+
+/* clinician read-projection */
+.clinician-view { display: grid; gap: 0.7rem; }
+.clin-flags { display: grid; gap: 0.4rem; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); }
+.clin-flag { padding: 0.5rem 0.6rem; border-radius: 10px; border: 1px solid var(--glass-line); display: grid; gap: 0.15rem; }
+.clin-k { font-size: 0.72rem; color: var(--ink-soft); }
+.clin-v { font-weight: 600; }
+.clin-warn { border-color: color-mix(in srgb, #ff8a8a 50%, var(--glass-line)); }
+.clin-audit { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }

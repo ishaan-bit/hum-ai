@@ -17,6 +17,7 @@ export * from "./datasets";
 export * from "./extract";
 export * from "./model";
 export * from "./evaluate";
+export * from "./evaluate-binary";
 export * from "./expert";
 export * from "./inference";
 export * from "./manifest";

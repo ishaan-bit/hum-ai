@@ -122,7 +122,7 @@ export function createBreathPacer(host: HTMLElement, opts: BreathPacerOptions): 
     disc.style.transition = reduced ? "none" : "transform 1.2s ease";
     disc.style.transform = "scale(0.6)";
     cue.textContent = "✓";
-    count.textContent = "Nicely done — notice how that landed.";
+    count.textContent = "Nicely done. Notice how that landed.";
     beginBtn.hidden = false;
     beginBtn.textContent = "Again";
     stopBtn.hidden = true;

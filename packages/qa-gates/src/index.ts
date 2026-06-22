@@ -2,6 +2,7 @@ import { clinicalLeakGate } from "./clinical-leak";
 import { cameraDepsGate } from "./camera-deps";
 import { confidenceCopyGate } from "./confidence-copy";
 import { forbiddenFilesGate } from "./forbidden-files";
+import { screeningIsolationGate } from "./screening-isolation";
 import type { Gate, GateResult } from "./types";
 
 export * from "./types";
@@ -10,6 +11,7 @@ export * from "./clinical-leak";
 export * from "./camera-deps";
 export * from "./confidence-copy";
 export * from "./forbidden-files";
+export * from "./screening-isolation";
 
 /**
  * The full ordered set of QA gates. Adding a gate here wires it into both the
@@ -20,6 +22,7 @@ export const ALL_GATES: readonly Gate[] = [
   cameraDepsGate,
   confidenceCopyGate,
   forbiddenFilesGate,
+  screeningIsolationGate,
 ];
 
 /** Run every gate against a repo root and collect the results. */

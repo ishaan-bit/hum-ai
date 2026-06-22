@@ -10,10 +10,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <title>Hum AI — your hum, tuned into a living world</title>
+    <title>Hum AI · your hum, tuned into a living world</title>
     <meta
       name="description"
-      content="Hum AI — a private, local-first daily 12-second hum. The whole screen tunes itself to your inner state. On-device, non-clinical, research-stage, not a diagnosis."
+      content="Hum AI is a private, local-first daily 12-second hum. The whole screen tunes itself to your inner state. On-device, non-clinical, research-stage, not a diagnosis."
     />
     <meta name="robots" content="noindex" />
   </head>
@@ -33,7 +33,7 @@
           <span class="badge badge-warn">Non-clinical</span>
           <span class="badge badge-ok">Local-first</span>
         </div>
-        <button id="tray-handle" class="icon-btn" aria-label="Open your instrument tray — baseline, model, trend &amp; privacy">
+        <button id="tray-handle" class="icon-btn" aria-label="Open your instrument tray: baseline, model, history &amp; privacy">
           <span class="icon-lines" aria-hidden="true"></span>
         </button>
       </header>
@@ -61,16 +61,24 @@
         </section>
 
         <!-- ─────────────── WINDOW B · YOUR INNER STATE ─────────────── -->
+        <!-- Full-height, top-aligned: the read is the hero here. The big orb is demoted to a
+             faint ambient wash (body[data-step]) so it stops eating the top third — its "this is
+             you" meaning is carried inline by the small #read-avatar in the read header instead. -->
         <section class="window window-state" data-step="state" aria-label="Your inner state">
           <div class="reveal">
             <div id="read-card" class="read-card" tabindex="-1">
               <p class="muted">Hum to see your reflective read.</p>
             </div>
             <div id="axes-card" class="axes-card"></div>
+            <!-- Richer diagnostics, first-class on the main screen (what Hum actually noticed) -->
+            <section id="diagnostics-card" class="diagnostics-card" data-no-swipe hidden></section>
+            <!-- The within-you assessment (personality signature + trend), first-class -->
+            <section id="signature-card" class="signature-card" data-no-swipe hidden></section>
+            <!-- THE DIARY OF HUMS — the longitudinal pattern, moved onto the main screen + made
+                 cinematic + graphical. Consent-gated DATA; the panel itself is always present. -->
+            <section id="longitudinal-card" class="longitudinal-card" data-no-swipe hidden></section>
             <!-- HiTL: confirm/adjust the read → one row of native-hum truth (ADR-0011) -->
             <div id="feedback-card" class="feedback-card" hidden></div>
-            <!-- ASK 7: the within-you assessment (personality signature + trend), first-class -->
-            <section id="signature-card" class="signature-card" data-no-swipe hidden></section>
             <div class="reveal-actions">
               <button id="btn-hum-again" class="btn btn-ghost" hidden>↺ Hum again</button>
               <button id="btn-share" class="btn btn-ghost" hidden>✦ Save today’s Aura</button>
@@ -122,24 +130,15 @@
         </details>
 
         <details class="tray-section">
-          <summary>Your baseline</summary>
+          <summary>Your baseline &amp; refinement</summary>
           <div id="personalization-card" class="personalization-card">
             <p class="muted small">Your personal baseline forms as you hum. The read works from hum #1 regardless.</p>
           </div>
-        </details>
-
-        <details class="tray-section">
-          <summary>Read refinement</summary>
           <div id="ladder-card" class="ladder-card"></div>
         </details>
 
-        <details class="tray-section" open>
-          <summary>Your pattern over time · early-noticing</summary>
-          <section id="longitudinal-card" hidden></section>
-        </details>
-
         <details class="tray-section">
-          <summary>Your gallery · this session</summary>
+          <summary>This session’s log</summary>
           <ul id="history-list" class="history-list"></ul>
         </details>
 
@@ -154,6 +153,17 @@
             <span><strong>Notice changes early.</strong> Let Hum remember your hums and show your <strong>pattern over time</strong>, so it can gently flag a drift from your usual. On-device, non-diagnostic.</span>
           </label>
           <p id="sync-status" class="sync-status muted small" role="status" aria-live="polite">Local-only.</p>
+        </details>
+
+        <!-- RESEARCH STUDY (Workstream 6) — additive + gated. A non-participant sees only the
+             "join the study" entry; everything else (status, schedule, dashboard, withdraw) is
+             rendered into #study-surface by study-ui.ts once enrolled. -->
+        <details class="tray-section" id="study-section">
+          <summary>Research study</summary>
+          <div id="study-surface" class="study-surface">
+            <p class="muted small">A pre-registered, investigational research study. For research use only, not a diagnosis. You can take part, or just keep using Hum as usual.</p>
+            <button id="btn-study-join" class="btn btn-sm btn-primary">Learn about the study</button>
+          </div>
         </details>
 
         <details class="tray-section">
@@ -171,7 +181,7 @@
 
         <footer class="tray-foot">
           <p class="disclaimer">
-            Hum AI · research preview — not a medical device. Does not provide a diagnosis or medical
+            Hum AI · research preview. Not a medical device. Does not provide a diagnosis or medical
             advice. Not clinically validated. Not FDA-cleared. Raw audio is processed on your device.
           </p>
         </footer>

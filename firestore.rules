@@ -2,11 +2,36 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users can only read and write their own documents and sub-collections.
-    // HumSyncPayload documents are derived-features only — raw audio and
-    // clinical labels are stripped before any write reaches Firestore
-    // (enforced in orchestrator.ts by assertNoRawAudioFields +
+    // =========================================================================
+    // RAW-AUDIO FIREWALL (load-bearing, applies to EVERY path below).
+    // Raw audio NEVER enters Firestore. The 12-second waveform / PCM samples are
+    // ephemeral on-device; the ONLY sanctioned egress for raw audio is Firebase
+    // Storage via the `research_audio_upload` channel (physically isolated from
+    // every Firestore write path). Documents reaching Firestore are derived
+    // features + structured records only — enforced upstream by
+    // assertNoRawAudioFields before any write is issued.
+    //
+    // CLINICAL-SCORE CHANNEL: PHQ-9 / GAD-7 instrument scores are PHI and live
+    // ONLY in the sanctioned clinical channel under studies/{studyId}/* (gated by
+    // clinical_label_capture consent + a study claim). They are structurally kept
+    // out of the consumer users/{uid} space by assertNoClinicalLeak upstream.
+    //
+    // ROLE CLAIMS (request.auth.token custom claims):
+    //   studyAdmin       — study operator / data steward (boolean)
+    //   clinician        — partner-site clinician (boolean)
+    //   studyParticipant — an enrolled research participant (boolean)
+    //   studyId          — the single study a claim is scoped to (string)
+    //   pseudonym        — the participant's minted pseudonym (string)
+    // Role checks below read these claims; absence of a claim = not granted.
+    // =========================================================================
+
+    // -------------------------------------------------------------------------
+    // CONSUMER PRODUCT (unchanged). Users can only read and write their own
+    // documents and sub-collections. HumSyncPayload documents are derived-features
+    // only — raw audio and clinical labels are stripped before any write reaches
+    // Firestore (enforced in orchestrator.ts by assertNoRawAudioFields +
     // assertNoClinicalLeak before this path is ever called).
+    // -------------------------------------------------------------------------
     match /users/{userId} {
       allow read, write: if request.auth != null
                          && request.auth.uid == userId;
@@ -24,6 +49,121 @@ service cloud.firestore {
         allow read, write: if request.auth != null
                            && request.auth.uid == userId;
       }
+    }
+
+    // -------------------------------------------------------------------------
+    // RESEARCH STUDY BACKEND (parallel, partner-pluggable; deny-by-default).
+    // Every collection below is explicitly allowed; anything not matched falls to
+    // the catch-all deny at the bottom. All access requires authentication and the
+    // relevant custom claim. Pseudonyms are the only participant identifier here —
+    // the re-identification key lives only in the participant-management backend.
+    // -------------------------------------------------------------------------
+
+    // Role-check helpers (reusable across the study collections).
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isStudyAdmin(studyId) {
+      return isSignedIn()
+             && request.auth.token.studyAdmin == true
+             && request.auth.token.studyId == studyId;
+    }
+    function isClinician(studyId) {
+      return isSignedIn()
+             && request.auth.token.clinician == true
+             && request.auth.token.studyId == studyId;
+    }
+    // The participant identified by `pseudonym` within `studyId`.
+    function isParticipant(studyId, pseudonym) {
+      return isSignedIn()
+             && request.auth.token.studyParticipant == true
+             && request.auth.token.studyId == studyId
+             && request.auth.token.pseudonym == pseudonym;
+    }
+
+    match /studies/{studyId} {
+      // Protocol metadata/version/status. Readable by any authenticated user
+      // (participants need the active protocol/consent version); writable only by
+      // a study-admin scoped to this study.
+      allow read: if isSignedIn();
+      allow write: if isStudyAdmin(studyId);
+
+      // Enrollment, active consent version, schedule, withdrawal state. The
+      // participant may read/write their own doc; a study-admin may read/write any.
+      match /participants/{pseudonym} {
+        allow read, write: if isParticipant(studyId, pseudonym)
+                           || isStudyAdmin(studyId);
+      }
+
+      // APPEND-ONLY versioned consent log (ResearchConsentRecord). Creation is
+      // allowed for the participant (enrol/withdraw) or a study-admin; UPDATE and
+      // DELETE are DENIED so the record is immutable — immutability IS the audit
+      // guarantee. A withdrawal is a NEW record, never an edit of the original.
+      match /consentRecords/{recordId} {
+        allow create: if isParticipant(studyId, request.resource.data.participantPseudonym)
+                      || isStudyAdmin(studyId);
+        allow read: if isParticipant(studyId, resource.data.participantPseudonym)
+                    || isStudyAdmin(studyId)
+                    || isClinician(studyId);
+        allow update, delete: if false; // append-only: immutability = audit guarantee
+      }
+
+      // Derived clinical examples (ClinicalHumExample) — derived features paired
+      // with instrument scores. DERIVED FEATURES ONLY; raw audio never reaches here
+      // (assertNoRawAudioFields upstream; raw audio goes to Storage via the
+      // research_audio_upload channel). Participant writes their own; study-admin
+      // reads/writes any; clinician may read.
+      match /clinicalExamples/{exampleId} {
+        allow create: if isParticipant(studyId, request.resource.data.participantPseudonym)
+                      || isStudyAdmin(studyId);
+        allow read: if isStudyAdmin(studyId) || isClinician(studyId)
+                    || isParticipant(studyId, resource.data.participantPseudonym);
+        allow update, delete: if isStudyAdmin(studyId); // corrections + right-to-deletion propagation
+      }
+
+      // PHQ-9 instrument responses (PHI; the sanctioned clinical channel).
+      match /phqResponses/{responseId} {
+        allow create: if isParticipant(studyId, request.resource.data.participantPseudonym)
+                      || isStudyAdmin(studyId);
+        allow read: if isStudyAdmin(studyId) || isClinician(studyId)
+                    || isParticipant(studyId, resource.data.participantPseudonym);
+        allow update, delete: if isStudyAdmin(studyId); // right-to-deletion propagation
+      }
+
+      // GAD-7 instrument responses (PHI; the sanctioned clinical channel).
+      match /gad7Responses/{responseId} {
+        allow create: if isParticipant(studyId, request.resource.data.participantPseudonym)
+                      || isStudyAdmin(studyId);
+        allow read: if isStudyAdmin(studyId) || isClinician(studyId)
+                    || isParticipant(studyId, resource.data.participantPseudonym);
+        allow update, delete: if isStudyAdmin(studyId); // right-to-deletion propagation
+      }
+
+      // APPEND-ONLY audit trail (consent grant/revoke, access, export, deletion,
+      // PHQ-9 item-9 escalation). Create-only; reads gated to study-admin/clinician.
+      // Update/delete DENIED so the audit trail cannot be rewritten.
+      match /auditLog/{eventId} {
+        allow create: if isParticipant(studyId, request.resource.data.participantPseudonym)
+                      || isStudyAdmin(studyId)
+                      || isClinician(studyId);
+        allow read: if isStudyAdmin(studyId) || isClinician(studyId);
+        allow update, delete: if false; // append-only audit trail
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // CLINICIAN READ-PROJECTION (partner-site surface). A read-only projection per
+    // pseudonym: instrument history, capture compliance, item-9 escalation flags,
+    // audit summary. Reads ONLY the sanctioned projection — never raw audio. Gated
+    // by a clinician claim scoped to the projection's studyId. Writes are
+    // server-side only (the projection is materialised by trusted backend code),
+    // so all client writes are denied here.
+    // -------------------------------------------------------------------------
+    match /clinicianViews/{pseudonym} {
+      allow read: if isSignedIn()
+                  && request.auth.token.clinician == true
+                  && request.auth.token.studyId == resource.data.studyId;
+      allow write: if false; // materialised server-side only
     }
 
     // Deny all other paths.

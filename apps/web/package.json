@@ -15,6 +15,7 @@
   "dependencies": {
     "@hum-ai/affect-model-contracts": "*",
     "@hum-ai/audio-features": "*",
+    "@hum-ai/clinical-corpus": "*",
     "@hum-ai/orchestrator": "*",
     "@hum-ai/personalization-engine": "*",
     "@hum-ai/relapse-engine": "*",
