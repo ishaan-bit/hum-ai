@@ -61,6 +61,24 @@ const RAW_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   channelCount: 1,
 };
 
+/**
+ * Prime microphone permission from a user gesture (the onboarding consent step), so the OS
+ * prompt appears in a warm, explained context instead of the first time someone taps Hum.
+ * Opens the stream only to trigger the prompt, then immediately stops every track — it never
+ * records and keeps no audio. Returns whether access was granted (false on deny / no API),
+ * and never throws so the caller can proceed regardless.
+ */
+export async function primeMicrophone(): Promise<boolean> {
+  if (!navigator.mediaDevices?.getUserMedia) return false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: RAW_AUDIO_CONSTRAINTS });
+    for (const track of stream.getTracks()) track.stop();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** RMS of a time-domain frame in [-1,1]. */
 function frameRms(buf: Float32Array): number {
   let s = 0;
@@ -118,6 +136,9 @@ export async function recordHum(opts: RecordOptions = {}): Promise<AudioInput> {
   try {
     try {
       meterCtx = new AudioContext();
+      // iOS/WKWebView creates the context 'suspended'; resume inside this gesture-initiated
+      // call so the AnalyserNode produces real data and the live orb visualizer animates.
+      if (meterCtx.state === "suspended") await meterCtx.resume();
       const source = meterCtx.createMediaStreamSource(stream);
       const analyser = meterCtx.createAnalyser();
       analyser.fftSize = 2048;

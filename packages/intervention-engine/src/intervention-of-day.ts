@@ -9,6 +9,7 @@ import {
   deriveRegulationState,
   isAffectiveState,
   EVIDENCE_RANK,
+  REGULATION_STATE_DESCRIPTION,
   type HumRegulationState,
   type LongitudinalStatus,
   type RegulationStateMeta,
@@ -56,6 +57,22 @@ export interface InterventionOfDay {
   /** Explicit scope: what this was NOT based on. */
   readonly notBasedOn: readonly string[];
   readonly confidenceLanguage: InterventionConfidenceLanguage;
+  /** A safe, reflective description of the read region this step is shaped for (never clinical). */
+  readonly targetStateDescription: string;
+  /** One plain, technique-level sentence on why this kind of step helps (research-informed support). */
+  readonly researchRationale: string;
+  /** A short, plain technique tag cited inline with the rationale (e.g. "paced exhale"). */
+  readonly technique: string;
+  /**
+   * Two concrete micro-options the user can choose between — the single biggest anti-"generic"
+   * lever (single-session-intervention "you're the expert" agency). Omitted for meta states
+   * (poor_capture / low_confidence / not_enough_history) where there's nothing to act on.
+   */
+  readonly microMoves?: readonly string[];
+  /** One optional interoceptive pointer ("notice where it sits") — somatic specificity. */
+  readonly bodyCue?: string;
+  /** Display-safe citations grounding this step (may be empty for generic low-risk actions). */
+  readonly sources: readonly { readonly label: string; readonly detail: string }[];
   readonly safetyNote?: string;
   readonly escalation?: {
     readonly show: boolean;
@@ -130,6 +147,142 @@ const REGULATION_STATE_WHY_NO_BASELINE: Partial<Record<HumRegulationState, strin
   mixed_unsettled: "This read came out mixed, without one clear direction",
   neutral_usual: "Your hum sounded fairly even and neutral",
 };
+
+/**
+ * Per-category, technique-level "why this kind of step helps" — research-INFORMED support
+ * (never treatment/diagnosis). Plain enough to pass the safety screen; carries no numbers.
+ */
+const CATEGORY_RATIONALE: Readonly<Record<InterventionCategory, string>> = {
+  breath_regulation: "Slowing the breath with a longer exhale is a well-recognised way to ease a more activated state.",
+  grounding: "A brief sensory grounding step is a common way to steady a charged moment without overthinking it.",
+  music_regulation: "Calm, low-stimulation music is associated with winding down and easing stress load.",
+  movement_reset: "A short burst of easy movement helps a charged moment discharge, and gently lifts a flat one.",
+  rest_recovery: "Short, deliberate recovery breaks suit a tired-sounding read better than pushing on.",
+  journaling: "Briefly naming how a moment feels is a light, low-effort way to make it clearer.",
+  social_check_in: "A small, low-pressure social connection is a gentle lift on a lower day.",
+  reduce_load: "Easing demand for a short while is a safer response to a heavier read than adding more.",
+  repeat_capture: "A clearer hum gives a more useful read — so the most useful next step is simply another one.",
+  no_action_needed: "When a read sounds settled, the steadiest move is to keep your rhythm.",
+  safety_support: "When a heavier pattern keeps showing up, easing your load and leaning on someone are caring next steps.",
+};
+
+/**
+ * A short, plain TECHNIQUE TAG per category, cited inline with the rationale so the "why this"
+ * line ends in a named method instead of a vague claim (research-informed; carries no number,
+ * names no clinical condition). Required for every category.
+ */
+const CATEGORY_TECHNIQUE: Readonly<Record<InterventionCategory, string>> = {
+  breath_regulation: "paced exhale",
+  grounding: "sensory grounding",
+  music_regulation: "low-stimulation music",
+  movement_reset: "behavioural activation",
+  rest_recovery: "deliberate recovery",
+  journaling: "affect labelling",
+  social_check_in: "social connection",
+  reduce_load: "easing demand",
+  repeat_capture: "a cleaner signal",
+  no_action_needed: "keeping your rhythm",
+  safety_support: "easing load and reaching out",
+};
+
+/**
+ * Two concrete MICRO-MOVES per action category — the user picks whichever fits (agency is the
+ * strongest anti-"generic AI" lever). Meta states (poor_capture / low_confidence /
+ * not_enough_history / no_action_needed) get none — there is nothing to act on there.
+ * All spelled-out (no digits) so the confidence-copy guard never trips.
+ */
+const CATEGORY_MICRO_MOVES: Partial<Record<InterventionCategory, readonly [string, string]>> = {
+  breath_regulation: [
+    "Breathe out slowly six times, each exhale a little longer than the breath in.",
+    "Or in for four, hold for four, out for four — for about a minute.",
+  ],
+  grounding: [
+    "Name five things you can see, then four you can hear.",
+    "Or plant both feet, feel the floor, and take one long breath out.",
+  ],
+  music_regulation: [
+    "Put on one steady, low-key track and just listen.",
+    "Or play a song you quietly love and let it run.",
+  ],
+  movement_reset: [
+    "Move gently for two minutes — a slow walk or an easy stretch.",
+    "Or step outside and unclench your jaw and hands.",
+  ],
+  rest_recovery: [
+    "Sit back and let your shoulders drop for a few minutes.",
+    "Or make a warm drink, slowly, away from any screen.",
+  ],
+  journaling: [
+    "Write one line for how this feels — a label, not an essay.",
+    "Or jot down one thing that's going okay, however small.",
+  ],
+  social_check_in: [
+    "Send one small hello — it doesn't have to be deep.",
+    "Or reply to the message you've been meaning to get to.",
+  ],
+  reduce_load: [
+    "Take one task off the next hour and give that time back.",
+    "Or pick the one thing that matters today and let the rest wait.",
+  ],
+  safety_support: [
+    "Take one thing off your plate today.",
+    "Or share how you've been doing with someone you trust.",
+  ],
+};
+
+/** One interoceptive BODY CUE per action category — somatic specificity reads as earned, not generic. */
+const CATEGORY_BODY_CUE: Partial<Record<InterventionCategory, string>> = {
+  breath_regulation: "Notice where the charge sits — chest, jaw, or shoulders — and let that spot soften on each way out.",
+  grounding: "Let your attention drop out of your head and down into your feet as you do it.",
+  music_regulation: "Notice your shoulders come down a little as the track settles in.",
+  movement_reset: "Notice the bit of looseness that follows once you've moved.",
+  rest_recovery: "Find where you're holding on, and let it go heavy for a moment.",
+  journaling: "Once it's named, notice whether it loosens even slightly.",
+  social_check_in: "Notice it gets a touch lighter once you've sent it.",
+  reduce_load: "Notice the small relief of one less thing to hold.",
+  safety_support: "Feel where your weight rests for a moment — you don't have to carry it all at once.",
+};
+
+/** Display-safe citation strings for the source ids on a template (no numbers, no clinical terms). */
+const SOURCE_DISPLAY: Readonly<Record<string, { label: string; detail: string }>> = {
+  intervention_support_source: {
+    label: "Music & stress",
+    detail: "de Witte et al. — a large meta-analysis linking music to lower stress.",
+  },
+  longitudinal_voice_treatment_response_source: {
+    label: "Voice change over time",
+    detail: "Kim et al. — tracking recovery versus worsening within the same person over time.",
+  },
+  ser_mental_health_review: {
+    label: "Voice & affect",
+    detail: "Jordan et al. — a review of voice-based affect sensing and its uncertainty.",
+  },
+  trisense_architecture: {
+    label: "Mood–energy map",
+    detail: "Ilyas et al. — the valence–arousal model behind how the read is mapped.",
+  },
+  vocal_biomarker_and_singing_protocol_support: {
+    label: "Sustained voice",
+    detail: "Sustained, sung phonation as a language-independent vocal-signal source.",
+  },
+  clinical_voice_biomarker_review: {
+    label: "Voice signals",
+    detail: "A review of acoustic voice features that track affective state, used as a research prior.",
+  },
+  hum_spec: {
+    label: "The 12-second hum",
+    detail: "Hum AI's standardised capture and personal-baseline protocol.",
+  },
+};
+
+function sourcesFor(refs: readonly string[]): { label: string; detail: string }[] {
+  const out: { label: string; detail: string }[] = [];
+  for (const id of refs) {
+    const s = SOURCE_DISPLAY[id];
+    if (s) out.push({ label: s.label, detail: s.detail });
+  }
+  return out;
+}
 
 /** What the suggestion is explicitly NOT based on (worded to pass safety-language). */
 export const NOT_BASED_ON: readonly string[] = [
@@ -244,6 +397,10 @@ function buildEscalation(
 /** Gather every user-facing string on an InterventionOfDay for the safety screen. */
 export function interventionOfDayStrings(iod: InterventionOfDay): string[] {
   const strings = [iod.title, iod.instruction, iod.whySuggested, ...iod.basedOnSignals, ...iod.notBasedOn];
+  strings.push(iod.targetStateDescription, iod.researchRationale, iod.technique);
+  if (iod.microMoves) strings.push(...iod.microMoves);
+  if (iod.bodyCue) strings.push(iod.bodyCue);
+  for (const s of iod.sources) strings.push(s.label, s.detail);
   if (iod.safetyNote) strings.push(iod.safetyNote);
   if (iod.escalation?.reason) strings.push(iod.escalation.reason);
   if (iod.escalation?.copy) strings.push(iod.escalation.copy);
@@ -318,6 +475,12 @@ export function selectInterventionOfDay(input: InterventionOfDayInput): Interven
     basedOnSignals: basedOnSignals(state, input.baselineMature),
     notBasedOn: NOT_BASED_ON,
     confidenceLanguage: CONFIDENCE_LANGUAGE[input.evidence],
+    targetStateDescription: REGULATION_STATE_DESCRIPTION[state],
+    researchRationale: CATEGORY_RATIONALE[template.category],
+    technique: CATEGORY_TECHNIQUE[template.category],
+    ...(CATEGORY_MICRO_MOVES[template.category] ? { microMoves: CATEGORY_MICRO_MOVES[template.category] } : {}),
+    ...(CATEGORY_BODY_CUE[template.category] ? { bodyCue: CATEGORY_BODY_CUE[template.category] } : {}),
+    sources: sourcesFor(template.sourceRefs),
     ...(template.safetyNote ? { safetyNote: template.safetyNote } : {}),
     ...(escalation ? { escalation } : {}),
     ...(music ? { musicRecommendation: music } : {}),

@@ -7,7 +7,7 @@
  * resilient: with no mic, no cloud, or no model artifact, it still runs honestly.
  */
 import "./styles.css";
-import { newPersonalizationState, stagePolicy, ingestFeedback } from "@hum-ai/personalization-engine";
+import { newPersonalizationState, stagePolicy, ingestFeedback, updateArm } from "@hum-ai/personalization-engine";
 import {
   asIsoTimestamp,
   asModelVersion,
@@ -42,7 +42,7 @@ import {
 import type { MetaLearner } from "@hum-ai/orchestrator";
 import { loadConsent, setScope, isGranted, type ToggleableScope } from "./consent";
 import { loadBrowserPrior, type LoadedPrior } from "./prior";
-import { recordHum, synthesize, type SynthKind } from "./capture";
+import { recordHum, synthesize, primeMicrophone, type SynthKind } from "./capture";
 import { runHumCycle } from "./cycle";
 import {
   localUserId,
@@ -69,6 +69,8 @@ import { HUM_AGAIN_MESSAGE, type CaptureGateDecision } from "@hum-ai/signal-lab/
 import {
   renderRead,
   renderInterventionOfDay,
+  renderInterventionFeedback,
+  clearInterventionFeedback,
   renderLadder,
   renderLongitudinal,
   renderProvenance,
@@ -79,11 +81,15 @@ import {
   clearFeedbackPrompt,
   renderModelLab,
   setCaptureStatus,
-  setLiveMeter,
   setSyncStatus,
   setBusy,
   type HistoryEntry,
 } from "./render";
+import { createOrb, type Orb } from "./orb";
+import { createStage, type Stage, type Step } from "./stage";
+import { applyStateVisual, visualFromRead, NEUTRAL_VISUAL, ABSTAIN_VISUAL, type StateVisual } from "./theme";
+import { saveAuraCard } from "./aura-card";
+import { maybeShowOnboarding, showOnboarding, type OnboardingOptions } from "./onboarding";
 
 const MODEL_VERSION: ModelVersion = asModelVersion(import.meta.env.HUM_AI_MODEL_VERSION ?? "hum-web@0.1.0");
 
@@ -124,8 +130,14 @@ interface Session {
   metaLearner: MetaLearner | null;
   /** The most recent accepted hum, available for the feedback step. */
   pending: PendingHum | null;
+  /** The intervention category shown on the previous hum — used to ask "did it help?" on the next hum. */
+  previousIntervention: string | null;
   /** Corpus size at the last retrain — gates how often we re-evaluate promotion. */
   lastRetrainSize: number;
+  /** The visual derived from the most recent usable read (for the share poster); null when none/abstained. */
+  lastVisual: StateVisual | null;
+  /** The safety-screened reveal caption for the share poster (uf.innerState ?? uf.headline). */
+  lastCaption: string | null;
 }
 
 const session: Session = {
@@ -141,8 +153,15 @@ const session: Session = {
   featureImportance: {},
   metaLearner: null,
   pending: null,
+  previousIntervention: null,
   lastRetrainSize: 0,
+  lastVisual: null,
+  lastCaption: null,
 };
+
+/** The persistent AURA orb (one Canvas, shared across windows) + the windowed stage controller. */
+let orb: Orb | null = null;
+let stage: Stage | null = null;
 
 /** Re-evaluate the hum-native model after this many new labels (kept cheap + responsive). */
 const RETRAIN_EVERY = 4;
@@ -163,11 +182,100 @@ function syncEnabled(): boolean {
   return isGranted(session.consent, "derived_feature_sync") && session.uid !== null;
 }
 
+// ── AURA experience: the orb + the windowed stage ───────────────────────────────
+function setupExperience(): void {
+  const canvas = document.getElementById("orb-canvas") as HTMLCanvasElement | null;
+  if (canvas) {
+    orb = createOrb(canvas);
+    orb.resize();
+    orb.setMode("resting");
+    orb.start();
+  }
+  // Boot the world in its honest, idle neutral state — listening, not pretending.
+  applyStateVisual(NEUTRAL_VISUAL);
+
+  stage = createStage({ onStep: (step) => anchorOrbForStep(step) });
+
+  const onResize = (): void => {
+    orb?.resize();
+    const s = stage?.current();
+    if (s) anchorOrbForStep(s); // re-anchor all windows (orientation flip reflows State/Today too)
+  };
+  window.addEventListener("resize", onResize);
+  window.addEventListener("orientationchange", () => setTimeout(onResize, 200));
+}
+
+/** Re-anchor the orb as the active window changes (it is the shared element that travels). */
+function anchorOrbForStep(step: Step): void {
+  if (!orb) return;
+  // Landscape phones: orb sits left, the content column sits right (see the landscape @media).
+  const land = window.innerWidth > window.innerHeight && window.innerHeight < 600;
+  if (step === "hum") anchorOrbToHumButton();
+  else if (step === "state") orb.setAnchor(land ? 0.26 : 0.5, land ? 0.5 : 0.2, land ? 0.62 : 0.52);
+  else orb.setAnchor(land ? 0.22 : 0.5, land ? 0.42 : 0.13, land ? 0.5 : 0.36);
+}
+
+/** Center the orb exactly on the Hum button so the button reads as the orb's glowing heart. */
+function anchorOrbToHumButton(): void {
+  if (!orb) return;
+  const btn = document.getElementById("btn-record");
+  const vw = window.innerWidth || 1;
+  const vh = window.innerHeight || 1;
+  const r = btn?.getBoundingClientRect();
+  // Fall back to a sensible lower-centre when the button isn't laid out yet (rect 0 at boot).
+  if (!r || r.width === 0) {
+    orb.setAnchor(0.5, 0.6, 1);
+    return;
+  }
+  // center-origin math: the .hum-btn :active scale(0.96) doesn't move this midpoint.
+  orb.setAnchor((r.left + r.width / 2) / vw, (r.top + r.height / 2) / vh, 1);
+}
+
+function showShare(show: boolean): void {
+  document.getElementById("btn-share")?.toggleAttribute("hidden", !show);
+}
+
+/** Tune the whole world to a read; on a single capture, reveal it (THE TUNING) and advance. */
+function presentRead(read: OrchestratedRead, advance: boolean): void {
+  const uf = read.userFacing;
+  const visual = visualFromRead(read); // ABSTAIN_VISUAL when faint/abstained
+  applyStateVisual(visual);
+  orb?.setVisual(visual);
+  session.lastVisual = uf.abstained ? null : visual;
+  session.lastCaption = uf.abstained ? null : uf.innerState ?? uf.headline;
+  if (advance) {
+    orb?.pulse();
+    orb?.setMode(uf.abstained ? "abstain" : "revealed");
+    stage?.unlock();
+    anchorOrbForStep("state");
+    stage?.go("state");
+    document.getElementById("btn-hum-again")?.toggleAttribute("hidden", false);
+    // Move focus to the read so screen-reader users hear the reveal (#read-card is tabindex=-1).
+    requestAnimationFrame(() => document.getElementById("read-card")?.focus());
+  }
+  showShare(advance && !uf.abstained);
+}
+
+/** Clear every read surface back to its idle placeholder (used by Reset). */
+function resetReadSurfaces(): void {
+  const rc = document.getElementById("read-card");
+  if (rc) rc.innerHTML = `<p class="muted">Hum to see your reflective read.</p>`;
+  const ax = document.getElementById("axes-card");
+  if (ax) ax.innerHTML = "";
+  const iv = document.getElementById("intervention-card");
+  if (iv)
+    iv.innerHTML = `<h3>Today’s suggestion</h3><p class="muted">A gentle, optional next step appears here with your read.</p>`;
+  clearFeedbackPrompt();
+  clearInterventionFeedback();
+  document.getElementById("btn-hum-again")?.setAttribute("hidden", "");
+}
+
 // ── bootstrap ─────────────────────────────────────────────────────────────────
 async function boot(): Promise<void> {
   session.consent = loadConsent();
   session.localId = localUserId();
   reflectConsentInputs();
+  setupExperience();
 
   // Effective identity + state: prefer cloud (authoritative when signed-in & consented).
   let cloud: PersonalizationState | null = null;
@@ -206,6 +314,33 @@ async function boot(): Promise<void> {
   setModelStatus();
 
   wireControls();
+
+  // First-landing walkthrough (once; re-openable from the tray's "How it works"). Ends on a
+  // consent step that primes the mic and offers the early-noticing opt-in.
+  maybeShowOnboarding(onboardingOptions());
+}
+
+function focusHum(): void {
+  stage?.go("hum");
+  (document.getElementById("btn-record") as HTMLElement | null)?.focus();
+}
+
+/**
+ * Onboarding wiring: the final slide primes mic permission (in a warm, explained context) and
+ * records the "notice changes early" opt-in. Granting it turns on the same `clinical_risk_surfacing`
+ * scope as the tray toggle, so the longitudinal pattern view is live from hum #1.
+ */
+function onboardingOptions(): OnboardingOptions {
+  return {
+    onDone: () => focusHum(),
+    onRequestMic: primeMicrophone,
+    initialLongitudinal: isGranted(session.consent, "clinical_risk_surfacing"),
+    onConsent: ({ longitudinal }) => {
+      if (longitudinal && !isGranted(session.consent, "clinical_risk_surfacing")) {
+        void onConsentChange("clinical_risk_surfacing", true).then(() => reflectConsentInputs());
+      }
+    },
+  };
 }
 
 function pickFurthest(a: PersonalizationState | null, b: PersonalizationState | null): PersonalizationState | null {
@@ -280,7 +415,11 @@ function updateSyncStatus(): void {
 }
 
 // ── run a hum ───────────────────────────────────────────────────────────────────
-async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise<CaptureGateDecision> {
+async function runOne(
+  getAudio: () => AudioInput | Promise<AudioInput>,
+  opts: { advance?: boolean } = {},
+): Promise<CaptureGateDecision> {
+  const advance = opts.advance ?? false;
   const audio = await getAudio();
   const result = await runHumCycle({
     audio,
@@ -302,7 +441,15 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
     session.state = result.nextState;
     session.lastRead = null;
     session.pending = null;
+    clearInterventionFeedback();
     renderCaptureRejected(result.captureGate);
+    // The world dims to a hollow "listening" state — we only read a clear, sustained hum.
+    applyStateVisual(ABSTAIN_VISUAL);
+    orb?.setVisual(ABSTAIN_VISUAL);
+    orb?.setMode("abstain");
+    session.lastVisual = null;
+    session.lastCaption = null;
+    showShare(false);
     return result.captureGate;
   }
 
@@ -315,6 +462,19 @@ async function runOne(getAudio: () => AudioInput | Promise<AudioInput>): Promise
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
   renderLongitudinal(result.read, session.consent, result.read.internal.eligibleHumCount);
   renderProvenance(result.read, session.prior, syncEnabled());
+
+  // THE TUNING — tune the whole world to this read; on a single capture, reveal + advance.
+  presentRead(result.read, advance);
+
+  // Carry forward the intervention shown on the PREVIOUS hum so we can ask "did it help?"
+  // after the user has had a chance to try it. Ask only when there was a prior suggestion.
+  const prevIntervention = session.previousIntervention;
+  if (prevIntervention && prevIntervention !== "none") {
+    renderInterventionFeedback((helpful) => onInterventionFeedback(helpful));
+  } else {
+    clearInterventionFeedback();
+  }
+  session.previousIntervention = result.read.userFacing.interventionOfDay?.category ?? null;
 
   // HiTL: stash this hum and ask whether the read matched, so a confirm/adjust mints a
   // native-hum training row + a personal calibration correction (ADR-0011).
@@ -375,6 +535,25 @@ async function onFeedback(report: HumSelfReport): Promise<void> {
   renderModelLab(session.corpus, session.artifact);
 }
 
+// ── Intervention feedback: "did yesterday's suggestion help?" ─────────────────
+// Directly updates the intervention bandit arm — no ingestHum, no clinical data.
+// Reward values are hard-coded user utility signals, not derived from any inference head.
+function onInterventionFeedback(helpful: boolean): void {
+  const cat = session.previousIntervention;
+  if (!cat || cat === "none") return;
+  const reward = helpful ? 0.3 : -0.2;
+  // `cat` is a runtime category string; index a plain record (the policy struct keys are typed).
+  const policy = { ...(session.state.profile.intervention_policy ?? {}) } as Record<string, ReturnType<typeof updateArm>>;
+  policy[cat] = updateArm(policy[cat], reward);
+  session.state = {
+    ...session.state,
+    profile: { ...session.state.profile, intervention_policy: policy },
+  };
+  session.previousIntervention = null;
+  saveStateLocal(session.localId, session.state);
+  if (syncEnabled() && session.uid) void saveStateCloud(session.uid, session.state);
+}
+
 /** Re-evaluate the hum-native model(s) when ready + enough new labels. Promotion is the goal. */
 async function maybeRetrain(): Promise<void> {
   const size = session.corpus.examples.length;
@@ -408,10 +587,11 @@ async function maybeRetrain(): Promise<void> {
 
 async function runSynth(kind: SynthKind): Promise<void> {
   setBusy(true);
+  stage?.closeTray();
   setCaptureStatus(`Synthesizing a ${kind} hum…`);
   try {
-    const gate = await runOne(() => synthesize(kind));
-    setCaptureStatus(gate.accepted ? "Ready for the next hum." : HUM_AGAIN_MESSAGE);
+    const gate = await runOne(() => synthesize(kind), { advance: true });
+    setCaptureStatus(gate.accepted ? "" : HUM_AGAIN_MESSAGE);
   } catch (err) {
     setCaptureStatus(`Error: ${(err as Error).message}`);
   } finally {
@@ -421,20 +601,26 @@ async function runSynth(kind: SynthKind): Promise<void> {
 
 async function runMic(): Promise<void> {
   setBusy(true);
-  setCaptureStatus("Recording — hum steadily for 12 seconds…", 0);
+  stage?.go("hum");
+  orb?.setMode("capturing");
+  anchorOrbToHumButton();
+  setCaptureStatus("Listening… hold one steady note.", 0);
   try {
-    const gate = await runOne(() =>
-      recordHum({
-        seconds: 12,
-        onProgress: (f) => setCaptureStatus(`Recording — hum steadily… ${Math.round(f * 12)}s / 12s`, f),
-        onLevel: (level) => setLiveMeter(level),
-      }),
+    const gate = await runOne(
+      () =>
+        recordHum({
+          seconds: 12,
+          onProgress: (f) => setCaptureStatus(`Listening… ${Math.round(f * 12)}s of 12`, f),
+          onLevel: (level) => orb?.pushLevel(level),
+        }),
+      { advance: true },
     );
-    setCaptureStatus(gate.accepted ? "Done — read updated above." : HUM_AGAIN_MESSAGE);
+    setCaptureStatus(gate.accepted ? "" : HUM_AGAIN_MESSAGE);
   } catch (err) {
-    setCaptureStatus(`Mic unavailable (${(err as Error).message}). Try a simulated hum instead.`);
+    orb?.setMode("resting");
+    setCaptureStatus(`Mic unavailable (${(err as Error).message}). Open the tray to simulate a hum.`);
   } finally {
-    setLiveMeter(null);
+    orb?.pushLevel(null);
     setBusy(false);
   }
 }
@@ -444,7 +630,7 @@ async function runWeek(): Promise<void> {
   try {
     for (let i = 0; i < 7; i += 1) {
       setCaptureStatus(`Simulating a week of daily hums… ${i + 1} / 7`);
-      await runOne(() => synthesize("clean"));
+      await runOne(() => synthesize("clean"), { advance: false });
       await new Promise((r) => setTimeout(r, 120));
     }
     setCaptureStatus("Simulated a week — watch the baseline and stage advance above.");
@@ -460,7 +646,8 @@ async function runWeek(): Promise<void> {
 // of the cold-start "collecting history" message. Honest: it runs clean synthetic hums through
 // the SAME runOne cycle and enables the consent toggle for the demo — it does not fabricate a
 // clinical drift/monitoring signal (that needs genuinely worsening input, not synthesized here).
-// Gated behind ?demo so first-time real visitors still get the honest cold start.
+// Lives in the tray's "Simulate & reset" sandbox (clearly labelled a demo, cleared by Reset), so
+// the main first-run path still shows the honest cold start.
 async function runDemoSeed(): Promise<void> {
   setBusy(true);
   if (!isGranted(session.consent, "clinical_risk_surfacing")) {
@@ -471,15 +658,25 @@ async function runDemoSeed(): Promise<void> {
     const total = 22;
     for (let i = 0; i < total; i += 1) {
       setCaptureStatus(`Seeding longitudinal demo… ${i + 1} / ${total} daily hums`);
-      await runOne(() => synthesize("clean"));
+      await runOne(() => synthesize("clean"), { advance: false });
       await new Promise((r) => setTimeout(r, 50));
     }
-    setCaptureStatus("Seeded ~22 hums — the longitudinal model is now active above (demo data).");
+    setCaptureStatus("Seeded ~22 demo hums — your longitudinal trend is now active in the menu.");
+    revealLongitudinal();
   } catch (err) {
     setCaptureStatus(`Error: ${(err as Error).message}`);
   } finally {
     setBusy(false);
   }
+}
+
+/** Open the tray and reveal the (now-active) longitudinal trend panel after a demo seed. */
+function revealLongitudinal(): void {
+  stage?.openTray();
+  const card = document.getElementById("longitudinal-card");
+  const details = card?.closest("details") as HTMLDetailsElement | null;
+  if (details) details.open = true;
+  requestAnimationFrame(() => card?.scrollIntoView({ behavior: "smooth", block: "center" }));
 }
 
 // ── wire DOM ─────────────────────────────────────────────────────────────────
@@ -489,12 +686,18 @@ function wireControls(): void {
   document.getElementById("btn-noisy")?.addEventListener("click", () => void runSynth("noisy"));
   document.getElementById("btn-silence")?.addEventListener("click", () => void runSynth("silence"));
   document.getElementById("btn-week")?.addEventListener("click", () => void runWeek());
+  document.getElementById("btn-share")?.addEventListener("click", () => void onShare());
+  document.getElementById("btn-hum-again")?.addEventListener("click", () => focusHum());
+  document.getElementById("btn-tour")?.addEventListener("click", () => {
+    stage?.closeTray();
+    showOnboarding(onboardingOptions());
+  });
 
-  // ?demo reveals the longitudinal seeder (kept off the default first-visit surface).
-  if (new URLSearchParams(location.search).has("demo")) {
-    document.getElementById("btn-demo-seed")?.removeAttribute("hidden");
-    document.getElementById("btn-demo-seed")?.addEventListener("click", () => void runDemoSeed());
-  }
+  // The longitudinal seeder lives in the tray's sandbox ("Simulate & reset"), so an evaluator
+  // can SEE the diagnostic/longitudinal layer engage (one-time vs sustained, trend) without
+  // 20 real daily hums. It's clearly labelled a demo and Reset clears it.
+  document.getElementById("btn-demo-seed")?.removeAttribute("hidden");
+  document.getElementById("btn-demo-seed")?.addEventListener("click", () => void runDemoSeed());
 
   document
     .getElementById("consent-sync")
@@ -506,11 +709,43 @@ function wireControls(): void {
   document.getElementById("btn-reset")?.addEventListener("click", () => {
     session.state = newPersonalizationState(asUserId(session.uid ?? session.localId), nowTs(), MODEL_VERSION);
     session.log = [];
+    session.lastVisual = null;
+    session.lastCaption = null;
+    session.lastRead = null;
+    session.pending = null;
+    session.previousIntervention = null;
     saveStateLocal(session.localId, session.state);
     renderLadderForState(session.state);
     renderHistory(session.log);
+    resetReadSurfaces();
+    // Return the world to its idle neutral state and re-lock the result windows.
+    applyStateVisual(NEUTRAL_VISUAL);
+    orb?.setMode("resting");
+    showShare(false);
+    stage?.closeTray();
+    stage?.lock();
     setCaptureStatus("Reset — baseline cleared on this device.");
   });
+}
+
+// ── "Save today's Aura" — mint + share/download the poster (from a user gesture) ──
+async function onShare(): Promise<void> {
+  if (!session.lastVisual || !session.lastCaption) return;
+  const btn = document.getElementById("btn-share") as HTMLButtonElement | null;
+  const dateLabel = new Date().toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+  if (btn) btn.disabled = true;
+  const outcome = await saveAuraCard({
+    visual: session.lastVisual,
+    caption: session.lastCaption,
+    dateLabel,
+  });
+  if (btn) {
+    btn.textContent = outcome === "failed" ? "Couldn't save — try again" : "Saved ✓";
+    setTimeout(() => {
+      btn.textContent = "✦ Save today's Aura";
+      btn.disabled = false;
+    }, 2200);
+  }
 }
 
 void boot();

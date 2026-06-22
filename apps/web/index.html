@@ -2,134 +2,179 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hum AI — daily voice ritual (research preview)</title>
+    <!-- viewport-fit=cover so the world bleeds under notch / Dynamic Island / home indicator -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0b0f" />
+    <!-- store / WebView wrapping hints (iOS + Android) -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Hum AI — your hum, tuned into a living world</title>
     <meta
       name="description"
-      content="Hum AI — a private, local-first daily 12-second hum. The full affective read spine runs on-device; raw audio never leaves your device. Non-clinical, research-stage, not a diagnosis."
+      content="Hum AI — a private, local-first daily 12-second hum. The whole screen tunes itself to your inner state. On-device, non-clinical, research-stage, not a diagnosis."
     />
     <meta name="robots" content="noindex" />
   </head>
   <body>
-    <div class="page">
-      <div class="topbar">
-        <span class="badge badge-research">Research preview</span>
-        <span class="badge badge-nonclinical">Non-clinical · not a diagnosis</span>
-        <span class="badge badge-local">Local-first</span>
-      </div>
+    <!-- the state-adaptive world: a single GPU-cheap radial wash driven by --state-* custom props -->
+    <div class="atmosphere" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
+    <!-- the AURA orb — one luminous Canvas that IS your inner state, persistent across windows -->
+    <canvas id="orb-canvas" aria-hidden="true"></canvas>
 
-      <header class="hero">
-        <p class="hero-eyebrow">Hum AI</p>
-        <h1>Your voice, once a day.</h1>
-        <p class="hero-sub">
-          Hum for ~12 seconds and get a read <strong>from your very first hum</strong> —
-          a valence + arousal reflection computed <strong>on your device</strong>. Trained
-          priors refine it where they're in-domain; over time it quietly learns <em>your</em>
-          baseline and adds a longitudinal view. No 5-hum calibration wall. Raw audio never
-          leaves your device. Reflective and non-diagnostic.
-        </p>
-        <p id="model-status" class="model-status">Loading model…</p>
+    <div class="app">
+      <!-- honesty, worn up top -->
+      <header class="topbar">
+        <span class="wordmark">Hum&nbsp;AI</span>
+        <div class="badges">
+          <span class="badge">Research preview</span>
+          <span class="badge badge-warn">Non-clinical</span>
+          <span class="badge badge-ok">Local-first</span>
+        </div>
+        <button id="tray-handle" class="icon-btn" aria-label="Open your instrument tray — baseline, model, trend &amp; privacy">
+          <span class="icon-lines" aria-hidden="true"></span>
+        </button>
       </header>
 
-      <!-- consent -->
-      <section class="card">
-        <h2>Consent</h2>
-        <p class="muted small">
-          On-device processing is always local. Everything that leaves the device is opt-in.
-        </p>
-        <label class="toggle">
-          <input type="checkbox" id="consent-sync" />
-          <span>Back up <strong>derived-only</strong> summaries to my private cloud space (Firebase). No raw audio, ever.</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="consent-clinical" />
-          <span>Surface the consent-gated <strong>longitudinal / risk-marker</strong> view (non-diagnostic, ADR-0006).</span>
-        </label>
-        <p id="sync-status" class="sync-status muted small">Local-only.</p>
-      </section>
+      <main id="stage" data-step="hum">
+        <!-- ─────────────── WINDOW A · HUM ─────────────── -->
+        <section class="window window-hum" data-step="hum" aria-label="Hum">
+          <div class="hum-copy">
+            <p class="eyebrow">A daily ritual</p>
+            <h1 class="hum-title">Hum, and watch<br />the world tune to you.</h1>
+            <p id="idle-copy" class="lede">
+              When you’re ready, hum one steady note. I’ll listen for about twelve seconds.
+            </p>
+          </div>
 
-      <!-- capture -->
-      <section class="card">
-        <h2>Record a hum</h2>
-        <div class="controls">
-          <button id="btn-record" data-capture class="btn btn-primary">🎙 Record 12s hum</button>
-          <button id="btn-clean" data-capture class="btn">Simulate clean hum</button>
-          <button id="btn-noisy" data-capture class="btn">Simulate noisy</button>
-          <button id="btn-silence" data-capture class="btn">Simulate silence</button>
-          <button id="btn-week" data-capture class="btn btn-ghost">Simulate a week (×7)</button>
-          <button id="btn-demo-seed" data-capture class="btn btn-ghost" hidden>Seed longitudinal demo (×22)</button>
-          <button id="btn-reset" class="btn btn-ghost">Reset baseline</button>
-        </div>
-        <div id="live-meter" class="live-meter" hidden>
-          <div class="live-track"><span class="live-fill"></span></div>
-          <p class="live-read muted small"></p>
-        </div>
-        <div id="capture-progress" class="capture-progress" hidden><span></span></div>
-        <p id="capture-status" class="capture-status muted small">Ready. No mic? Use a simulated hum.</p>
-      </section>
+          <div class="hum-action">
+            <button id="btn-record" data-capture class="hum-btn" aria-label="Record a 12-second hum">
+              <span class="hum-btn-ring" aria-hidden="true"></span>
+              <span class="hum-btn-label">Hum</span>
+            </button>
+            <div id="capture-progress" class="capture-progress" hidden><span></span></div>
+            <p id="capture-status" class="capture-status" role="status" aria-live="polite" aria-atomic="true">No mic? Open the tray to simulate a hum.</p>
+          </div>
+          <p class="window-foot muted small">Raw audio never leaves your device · reflective, not a diagnosis.</p>
+        </section>
 
-      <!-- read -->
-      <section class="card read">
-        <h2>Today's read</h2>
-        <div id="read-card" class="read-card">
-          <p class="muted">Record or simulate a hum to see your reflective read.</p>
-        </div>
-        <div id="axes-card" class="bands-card"></div>
-        <!-- HiTL feedback: confirm/adjust the read → one row of native-hum truth (ADR-0011) -->
-        <div id="feedback-card" class="feedback-card" hidden></div>
-      </section>
+        <!-- ─────────────── WINDOW B · YOUR INNER STATE ─────────────── -->
+        <section class="window window-state" data-step="state" aria-label="Your inner state">
+          <div class="reveal">
+            <div id="read-card" class="read-card" tabindex="-1">
+              <p class="muted">Hum to see your reflective read.</p>
+            </div>
+            <div id="axes-card" class="axes-card"></div>
+            <!-- HiTL: confirm/adjust the read → one row of native-hum truth (ADR-0011) -->
+            <div id="feedback-card" class="feedback-card" hidden></div>
+            <div class="reveal-actions">
+              <button id="btn-hum-again" class="btn btn-ghost" hidden>↺ Hum again</button>
+              <button id="btn-share" class="btn btn-ghost" hidden>✦ Save today’s Aura</button>
+              <button class="btn btn-primary" data-nav="next" hidden>Today’s suggestion →</button>
+            </div>
+            <div id="provenance" class="provenance"></div>
+          </div>
+        </section>
 
-      <!-- your hum-native model: learns from your confirmations over time -->
-      <section class="card">
-        <div id="model-lab" class="model-lab">
-          <h3>Your hum model <span class="muted small">(learns from your feedback — non-diagnostic)</span></h3>
-          <p class="muted">Confirm or adjust your reads and Hum AI trains a model on <em>your own hums</em>, so the read fits you better over time.</p>
-        </div>
-      </section>
+        <!-- ─────────────── WINDOW C · TODAY'S SUGGESTION ─────────────── -->
+        <section class="window window-today" data-step="today" aria-label="Today's suggestion">
+          <div class="today">
+            <button class="btn btn-ghost btn-back" data-nav="back">← Your inner state</button>
+            <div id="intervention-card" class="intervention-card">
+              <h3>Today’s suggestion</h3>
+              <p class="muted">A gentle, optional next step appears here with your read.</p>
+            </div>
+            <div id="intervention-feedback-section" class="intervention-feedback" hidden>
+              <div id="intervention-feedback-card"></div>
+            </div>
+          </div>
+        </section>
+      </main>
 
-      <!-- intervention of the day -->
-      <section class="card">
-        <div id="intervention-card" class="intervention-card">
-          <h3>Today's suggestion</h3>
-          <p class="muted">A gentle, optional next step will appear here with your read.</p>
-        </div>
-      </section>
-
-      <!-- personalization status -->
-      <section class="card">
-        <div id="personalization-card" class="personalization-card">
-          <h3>Personalization <span class="muted small">(silent refinement — never gates the read)</span></h3>
-          <p class="muted">Your personal baseline forms as you hum. The read works from hum #1 regardless.</p>
-        </div>
-      </section>
-
-      <!-- maturity / ladder -->
-      <section class="card">
-        <div id="ladder-card" class="ladder-card"></div>
-      </section>
-
-      <!-- consent-gated longitudinal -->
-      <section class="card" id="longitudinal-card" hidden></section>
-
-      <!-- history -->
-      <section class="card">
-        <h2>This session</h2>
-        <ul id="history-list" class="history-list"></ul>
-      </section>
-
-      <!-- provenance + privacy -->
-      <section class="card provenance-card">
-        <h2>Provenance &amp; privacy</h2>
-        <div id="provenance" class="provenance">
-          <p class="muted small">Run a hum to see which model produced the read.</p>
-        </div>
-      </section>
-
-      <footer>
-        <span>Hum AI · research preview — not production, not a medical device.</span>
-        <span>Does not provide a diagnosis or medical advice. Not clinically validated. Not FDA-cleared.</span>
-      </footer>
+      <!-- redundant navigation: dots (swipe + buttons live in the windows + arrow keys too) -->
+      <nav class="stage-dots" aria-label="Steps">
+        <button data-goto="hum" class="dot on" aria-current="step"><span>Hum</span></button>
+        <button data-goto="state" class="dot" aria-current="false"><span>State</span></button>
+        <button data-goto="today" class="dot" aria-current="false"><span>Today</span></button>
+      </nav>
     </div>
+
+    <!-- ─────────────── INSTRUMENT TRAY · the diagnostic depth ─────────────── -->
+    <aside id="tray" class="tray" aria-hidden="true" aria-label="Your instrument tray">
+      <div id="tray-scrim" class="tray-scrim"></div>
+      <div class="tray-panel" role="dialog" aria-modal="true" aria-label="Diagnostics &amp; privacy">
+        <div class="tray-grip"></div>
+        <div class="tray-head">
+          <h2>Your instrument</h2>
+          <button id="tray-close" class="icon-btn" aria-label="Close">✕</button>
+        </div>
+        <p id="model-status" class="model-status">Loading your read engine…</p>
+
+        <details class="tray-section" open>
+          <summary>Your hum model</summary>
+          <div id="model-lab" class="model-lab">
+            <p class="muted small">Confirm or adjust your reads and Hum AI trains a model on <em>your own hums</em>.</p>
+          </div>
+        </details>
+
+        <details class="tray-section">
+          <summary>Your baseline</summary>
+          <div id="personalization-card" class="personalization-card">
+            <p class="muted small">Your personal baseline forms as you hum. The read works from hum #1 regardless.</p>
+          </div>
+        </details>
+
+        <details class="tray-section">
+          <summary>Read refinement</summary>
+          <div id="ladder-card" class="ladder-card"></div>
+        </details>
+
+        <details class="tray-section" open>
+          <summary>Your pattern over time · early-noticing</summary>
+          <section id="longitudinal-card" hidden></section>
+        </details>
+
+        <details class="tray-section">
+          <summary>Your gallery · this session</summary>
+          <ul id="history-list" class="history-list"></ul>
+        </details>
+
+        <details class="tray-section">
+          <summary>Privacy &amp; consent</summary>
+          <label class="toggle">
+            <input type="checkbox" id="consent-sync" />
+            <span>Back up <strong>derived-only</strong> summaries to my private cloud space. No raw audio, ever.</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="consent-clinical" />
+            <span><strong>Notice changes early.</strong> Let Hum remember your hums and show your <strong>pattern over time</strong>, so it can gently flag a drift from your usual. On-device, non-diagnostic.</span>
+          </label>
+          <p id="sync-status" class="sync-status muted small" role="status" aria-live="polite">Local-only.</p>
+        </details>
+
+        <details class="tray-section">
+          <summary>Simulate &amp; reset</summary>
+          <div class="controls">
+            <button id="btn-tour" class="btn btn-sm btn-ghost">How it works</button>
+            <button id="btn-clean" data-capture class="btn btn-sm">Simulate clean hum</button>
+            <button id="btn-noisy" data-capture class="btn btn-sm">Simulate noisy</button>
+            <button id="btn-silence" data-capture class="btn btn-sm">Simulate silence</button>
+            <button id="btn-week" data-capture class="btn btn-sm btn-ghost">Simulate a week (×7)</button>
+            <button id="btn-demo-seed" data-capture class="btn btn-sm btn-ghost" hidden>▶ Preview trend over time (demo ×22)</button>
+            <button id="btn-reset" class="btn btn-sm btn-ghost">Reset baseline</button>
+          </div>
+        </details>
+
+        <footer class="tray-foot">
+          <p class="disclaimer">
+            Hum AI · research preview — not a medical device. Does not provide a diagnosis or medical
+            advice. Not clinically validated. Not FDA-cleared. Raw audio is processed on your device.
+          </p>
+        </footer>
+      </div>
+    </aside>
 
     <script type="module" src="/src/app/main.ts"></script>
   </body>

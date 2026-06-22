@@ -31,7 +31,6 @@ import {
   type PersonalizationBenefit,
 } from "@hum-ai/native-corpus";
 import type { LoadedPrior } from "./prior";
-import type { CaptureLevel } from "./capture";
 import { isGranted } from "./consent";
 
 function esc(s: string): string {
@@ -116,10 +115,21 @@ export function renderRead(read: OrchestratedRead): void {
     const hint = read.internal.affectHint
       ? `<p class="muted small axis-hint">Leans: ${esc(formatEnumLabel(read.internal.affectHint))}.</p>`
       : "";
+    // The read's region — a safe, reflective description derived from the V-A read (the same
+    // signal the intervention is shaped for). This is the diagnostic "what it leans toward",
+    // qualitative and non-clinical (ADR-0008): e.g. "more activated and less steady than usual".
+    // Skipped for the longitudinal/safety_support region (its description is a multi-hum trend,
+    // not how THIS hum sounded — surfacing it as a single-read region would be dishonest).
+    const iod = read.userFacing.interventionOfDay;
+    const region = iod?.targetStateDescription;
+    const regionLine = region && iod?.category !== "safety_support"
+      ? `<p class="read-region">This hum read as <strong>${esc(region)}</strong>.</p>`
+      : "";
     axes.innerHTML = `
       <h3>Your read <span class="muted small">(valence + arousal · reflective, non-diagnostic)</span></h3>
       ${axisMeter("Mood", "subdued", "pleasant", a.valence)}
       ${axisMeter("Energy", "settled", "activated", a.arousal)}
+      ${regionLine}
       ${hint}
     `;
   }
@@ -133,18 +143,19 @@ function axisMeter(label: string, lowPole: string, highPole: string, res: AxisRe
     res.confidence >= EVIDENCE_BANDS.high ? "clear" : res.confidence >= EVIDENCE_BANDS.medium ? "moderate" : "developing";
   let prov: string;
   if (res.trainedContribution === "in_domain") {
-    // Qualitative only — no accuracy % in the per-read copy (ADR-0008). The gate-passed
-    // flag is honest provenance; the raw balanced-accuracy stays internal.
-    const gate = res.trainedPassedGate ? " (gate-passed)" : "";
-    prov = `Acoustic read, with the trained ${res.axis} prior${gate} agreeing — it was in-domain for this hum.`;
+    // Qualitative only — no accuracy % in the per-read copy (ADR-0008).
+    prov = `Acoustic read — the trained model agreed with the acoustic signal for this hum.`;
   } else if (res.trainedContribution === "abstained_ood") {
-    prov = `Transparent acoustic read. The trained ${res.axis} prior was held back — this hum sits outside its acted-speech training domain (ADR-0005).`;
+    prov = `Acoustic read — the trained model was set aside (this hum is outside the type of audio it was trained on).`;
   } else if (res.trainedContribution === "held_failed_gate") {
     // v3: a prior that has not passed its promotion gate never steers the read.
-    prov = `Transparent acoustic read. The trained ${res.axis} prior is held back — it hasn't passed its promotion gate, so it doesn't steer your read (gate-enforced).`;
+    prov = `Acoustic read — a trained model is available but isn't ready to steer your read yet.`;
   } else {
-    prov = `Transparent acoustic read (no trained ${res.axis} prior loaded).`;
+    prov = `Acoustic read (no trained ${res.axis} model loaded).`;
   }
+  // Qualitative lean for screen readers — the read as WORDS, never a number (ADR-0008).
+  const lean =
+    res.value >= 0.33 ? `leaning ${highPole}` : res.value <= -0.33 ? `leaning ${lowPole}` : "balanced";
   return `
     <div class="axis">
       <div class="axis-top">
@@ -153,7 +164,7 @@ function axisMeter(label: string, lowPole: string, highPole: string, res: AxisRe
       </div>
       <div class="meter">
         <span class="meter-pole">${esc(lowPole)}</span>
-        <div class="meter-track"><span class="meter-fill" style="left:${left.toFixed(1)}%"></span></div>
+        <div class="meter-track" role="img" aria-label="${esc(label)}, ${esc(lowPole)} to ${esc(highPole)}: ${esc(lean)}, ${conf} signal"><span class="meter-fill" style="left:${left.toFixed(1)}%"></span></div>
         <span class="meter-pole">${esc(highPole)}</span>
       </div>
       <p class="axis-prov muted small">${esc(prov)}</p>
@@ -399,34 +410,112 @@ export function renderInterventionOfDay(read: OrchestratedRead): void {
   if (!card) return;
   const iod = read.userFacing.interventionOfDay;
   const cat = IOD_CATEGORY_LABEL[iod.category] ?? formatEnumLabel(iod.category);
-  const duration = iod.durationMinutes > 0 ? ` · ${iod.durationMinutes} min` : "";
-  const basedOn = iod.basedOnSignals.length
-    ? `<div class="chips"><span class="muted small">Based on:</span> ${iod.basedOnSignals
-        .map((s) => `<span class="chip">${esc(s)}</span>`)
-        .join("")}</div>`
+  const durationChip =
+    iod.durationMinutes > 0 ? `<span class="iod-dur">${iod.durationMinutes} min</span>` : "";
+
+  // Lead-in: tie the step to the diagnostic read in one plain clause ("Because this one
+  // sounded …"). Only for an interpreted (non-abstained) affective read; the longitudinal
+  // safety_support region is a multi-hum trend, not how a single hum "sounded".
+  const forBlock =
+    iod.targetStateDescription && !read.userFacing.abstained && iod.category !== "safety_support"
+      ? `<p class="iod-for"><span class="iod-for-tag">Because</span> this one sounded ${esc(iod.targetStateDescription)}.</p>`
+      : "";
+
+  // Pick-one agency: two concrete micro-options the user chooses between (the strongest
+  // anti-"generic" lever — single-session-intervention "you're the expert" scaffolding).
+  const moves =
+    iod.microMoves && iod.microMoves.length
+      ? `<div class="iod-moves" role="group" aria-label="Two ways to do this — pick whichever fits">
+           ${iod.microMoves.map((m) => `<p class="iod-move">${esc(m)}</p>`).join("")}
+         </div>`
+      : "";
+
+  // One interoceptive pointer — somatic specificity is what reads as earned rather than generic.
+  const bodyCue = iod.bodyCue
+    ? `<p class="iod-bodycue"><span class="iod-bodycue-tag">Notice</span> ${esc(iod.bodyCue)}</p>`
     : "";
-  const notBasedOn = iod.notBasedOn.length
-    ? `<p class="muted small">Not based on: ${esc(iod.notBasedOn.join(", "))}.</p>`
-    : "";
+
   const music = iod.musicRecommendation ? musicBlock(iod.musicRecommendation) : "";
+
+  // "Why this" — the read-tied reason, ending in the named technique. Provenance (what shaped
+  // it + the sources) is tucked behind a disclosure so the card isn't a citation dump.
+  const provItems: string[] = [];
+  if (iod.basedOnSignals.length) {
+    provItems.push(
+      `<div class="chips"><span class="muted small">Read from:</span> ${iod.basedOnSignals
+        .map((s) => `<span class="chip">${esc(s)}</span>`)
+        .join("")}</div>`,
+    );
+  }
+  if (iod.sources.length) {
+    provItems.push(
+      `<ul class="iod-sources">${iod.sources
+        .map((s) => `<li><span class="src-label">${esc(s.label)}</span><span class="muted small">${esc(s.detail)}</span></li>`)
+        .join("")}</ul>`,
+    );
+  }
+  const provenance = provItems.length
+    ? `<details class="iod-prov"><summary>What shaped this</summary>${provItems.join("")}</details>`
+    : "";
+  const why = `
+    <div class="iod-research">
+      <p class="iod-rationale"><span class="iod-rationale-tag">Why this</span> ${esc(iod.whySuggested)} <span class="iod-technique">(${esc(iod.technique)})</span></p>
+      ${provenance}
+    </div>`;
+
   const escalationCopy = iod.escalation?.show ? iod.escalation.copy : undefined;
   const escalation = escalationCopy ? `<p class="monitor">${esc(escalationCopy)}</p>` : "";
   const safety = iod.safetyNote ? `<p class="disclaimer">${esc(iod.safetyNote)}</p>` : "";
+
+  // Collapse the old confidence line + "not based on" wall into ONE de-emphasized footer.
+  const conf = esc(IOD_CONFIDENCE_LABEL[iod.confidenceLanguage] ?? iod.confidenceLanguage);
+  const footer = `<p class="iod-foot muted small">${conf} · reflective only — no medical label, clinical instrument, or certainty score.</p>`;
+
   card.innerHTML = `
     <div class="iod-head">
       <h3>Today's suggestion</h3>
-      <span class="iod-cat">${esc(cat)}${esc(duration)}</span>
+      <span class="iod-cat">${esc(cat)}</span>
     </div>
-    <p class="iod-title"><strong>${esc(iod.title)}</strong></p>
+    ${forBlock}
+    <div class="iod-move-head">
+      <p class="iod-title"><strong>${esc(iod.title)}</strong></p>
+      ${durationChip}
+    </div>
     <p class="iod-instruction">${esc(iod.instruction)}</p>
-    <p class="muted iod-why">${esc(iod.whySuggested)}</p>
-    <p class="muted small iod-conf">${esc(IOD_CONFIDENCE_LABEL[iod.confidenceLanguage] ?? iod.confidenceLanguage)}</p>
+    ${moves}
+    ${bodyCue}
     ${music}
-    ${basedOn}
-    ${notBasedOn}
+    ${why}
     ${escalation}
     ${safety}
+    ${footer}
   `;
+}
+
+// ── inter-hum intervention feedback ("did yesterday's suggestion help?") ────────
+export function renderInterventionFeedback(onResponse: (helpful: boolean) => void): void {
+  const section = document.getElementById("intervention-feedback-section") as HTMLElement | null;
+  const card = $("intervention-feedback-card");
+  if (!section || !card) return;
+  card.innerHTML = `
+    <p class="muted small">How did yesterday's suggestion land?</p>
+    <div class="controls">
+      <button id="iof-yes" class="btn btn-small">Helped</button>
+      <button id="iof-no" class="btn btn-small btn-ghost">Not really</button>
+    </div>
+  `;
+  section.hidden = false;
+  const respond = (helpful: boolean) => {
+    onResponse(helpful);
+    section.hidden = true;
+  };
+  document.getElementById("iof-yes")?.addEventListener("click", () => respond(true), { once: true });
+  document.getElementById("iof-no")?.addEventListener("click", () => respond(false), { once: true });
+}
+
+export function clearInterventionFeedback(): void {
+  const section = document.getElementById("intervention-feedback-section") as HTMLElement | null;
+  if (section) section.hidden = true;
 }
 
 // ── personalization status (honest engaging-state, from hum #1) ────────────────
@@ -497,6 +586,10 @@ const TREND_COPY: Record<"improving" | "worsening" | "stable" | "uncertain", str
   uncertain: "Your recent pattern isn't clear enough to call yet.",
 };
 
+// The standing honesty frame for the pattern view — a mirror, not a verdict.
+const PATTERN_MIRROR_NOTE =
+  "A mirror, not a verdict. It compares you only to you, can't see why anything shifted, and never decides anything for you. If you're struggling, please reach out to someone you trust or a support line. Research-stage and non-clinical — not a medical evaluation.";
+
 export function renderLongitudinal(
   read: OrchestratedRead | null,
   consent: ConsentState,
@@ -506,14 +599,15 @@ export function renderLongitudinal(
   if (!card) return;
   // ADR-0006: the longitudinal DATA stays consent-gated — but the PANEL is always
   // discoverable, so a first-time user can see the view exists and how to turn it on
-  // (rather than it being invisible). When consent is off we render a clear locked state.
+  // (rather than it being invisible). When consent is off we render a clear locked state —
+  // framed as THE early-noticing feature, not a buried risk toggle.
   card.hidden = false;
   if (!isGranted(consent, "clinical_risk_surfacing")) {
     card.innerHTML = `
-      <h3>Longitudinal view <span class="badge-mini">locked · consent-gated · non-diagnostic</span></h3>
-      <p class="muted">This view looks at your pattern <em>across many hums</em> — a gentle trend direction and sustained-change monitoring, in words only. It never diagnoses, and stays off until you turn it on.</p>
-      <p class="muted small">Turn on “Surface the consent-gated longitudinal / risk-marker view” in <strong>Consent</strong> above to see it. Your per-hum read is exactly the same either way.</p>
-      <p class="disclaimer">Research-stage and non-clinical. Hum AI does not diagnose, and this view is not a medical evaluation.</p>
+      <h3>Your pattern over time <span class="badge-mini">off until you turn it on · not a medical view</span></h3>
+      <p class="muted">This is the part that makes Hum more than a daily mood check. It learns <em>your</em> normal — your steady pattern — so it can gently flag when you've drifted away from it, <strong>early</strong>. It can't do that without remembering your hums, so it stays off until you say yes.</p>
+      <p class="muted small">Turn on <strong>“Notice changes early”</strong> under <strong>Privacy &amp; consent</strong> below. Your per-hum read is exactly the same either way.</p>
+      <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
     `;
     return;
   }
@@ -521,13 +615,24 @@ export function renderLongitudinal(
   const n = read ? read.internal.eligibleHumCount : eligibleHumCount;
 
   // Before a personal baseline forms there is no within-you longitudinal judgement yet
-  // (also the pre-first-hum case, read === null). The per-hum read is never affected.
+  // (also the pre-first-hum case, read === null). Lead with INTENT — today is baseline-
+  // building, which is what later lets Hum notice change early — never surfacing
+  // riskHypothesis, relapseDrift, or any clinical field (all null/insufficient when abstained).
   if (!read || !lg || lg.abstained) {
-    const count = n > 0 ? ` <span class="small">(${n} eligible hum${n === 1 ? "" : "s"} so far.)</span>` : "";
+    let progressCopy: string;
+    if (n === 0) {
+      progressCopy =
+        "Baseline-building starts with your first hum. We learn what “usual” sounds like for you — the noticing comes once there's enough of your own history to compare against.";
+    } else if (n < 5) {
+      progressCopy = `Baseline forming · ${n} hum${n === 1 ? "" : "s"} in. Each one adds a snapshot of your usual. Your personal pattern engages around hum 5; the trend view, as it grows.`;
+    } else {
+      progressCopy = `Your personal baseline is active · ${n} hums in. The early-noticing trend view sharpens as your pattern grows (around 20 daily hums) — but it's already learning your usual.`;
+    }
     card.innerHTML = `
-      <h3>Longitudinal view <span class="badge-mini">consented · non-diagnostic</span></h3>
-      <p class="muted">Collecting your longitudinal history. A trend read starts once your own baseline forms, and sustained-pattern monitoring sharpens as more daily hums come in.${count} The per-hum read above is unaffected.</p>
-      <p class="disclaimer">Research-stage and non-clinical. Hum AI does not diagnose, and this view is not a medical evaluation.</p>
+      <h3>Your pattern over time <span class="badge-mini">on · non-diagnostic</span></h3>
+      <p class="muted">${esc(progressCopy)}</p>
+      <p class="muted small">Your per-hum read above is unaffected by this.</p>
+      <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
     `;
     return;
   }
@@ -577,58 +682,30 @@ export function renderLongitudinal(
   const provenance = chips ? `<div class="chips"><span class="muted small">Based on:</span> ${chips}</div>` : "";
 
   card.innerHTML = `
-    <h3>Longitudinal view <span class="badge-mini">consented · non-diagnostic</span></h3>
+    <h3>Your pattern over time <span class="badge-mini">on · non-diagnostic</span></h3>
     ${parts.join("")}
     ${provenance}
-    <p class="disclaimer">Research-stage and non-clinical. Hum AI does not diagnose, and this view is not a medical evaluation.</p>
+    <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
   `;
 }
 
 // ── provenance + privacy footer ──────────────────────────────────────────────
-export function renderProvenance(read: OrchestratedRead, prior: LoadedPrior | null, synced: boolean): void {
+export function renderProvenance(read: OrchestratedRead, _prior: LoadedPrior | null, synced: boolean): void {
   const el = $("provenance");
   if (!el) return;
   const a = read.internal.axis;
-  const axisLine = `Dimensional read: transparent on-domain acoustic mapping of your hum. Trained valence/arousal priors ${
-    a.valence.trainedContribution === "in_domain" || a.arousal.trainedContribution === "in_domain"
-      ? "contributed where in-domain"
-      : "were held back (this hum is outside their acted-speech domain)"
-  }.`;
-  const mp = read.internal.modelProvenance;
-  const affectLine =
-    mp.priorContribution === "fused"
-      ? `Secondary affect-label hint from the trained 6-class prior${mp.gatePassed === false ? " (below its promotion gate; far-domain, penalized)" : ""}.`
-      : mp.priorContribution === "held_failed_gate"
-        ? "Secondary affect-label hint from the heuristic ensemble — the trained 6-class prior was held back (it hasn't passed its promotion gate, so it doesn't steer your read)."
-        : "Secondary affect-label hint from the heuristic ensemble (no trained model present).";
-  const gate = prior?.promotion.evaluated ? `<span class="muted small">${esc(prior.promotion.note)}</span>` : "";
+  const trainedUsed =
+    a.valence.trainedContribution === "in_domain" || a.arousal.trainedContribution === "in_domain";
+  const modelLine = trainedUsed
+    ? "On-device read from an acoustic mapping of your hum, with a trained model that agreed where it applied."
+    : "On-device acoustic read. A trained model was available but set aside — it only contributes when the hum type matches its training.";
+  const privacyLine = synced
+    ? "Raw audio never left your device — only derived summaries are backed up to your private space."
+    : "Raw audio never left your device — everything runs locally.";
   el.innerHTML = `
-    <p>${esc(axisLine)}</p>
-    <p class="muted small">${esc(affectLine)}</p>
-    ${gate}
-    <p class="muted small">Raw audio never left your device — only derived features are used${synced ? ", and derived-only summaries are backed up to your private cloud space." : "."}</p>
+    <p class="muted small">${esc(modelLine)}</p>
+    <p class="muted small">${esc(privacyLine)}</p>
   `;
-}
-
-// ── live capture meter ────────────────────────────────────────────────────────
-export function setLiveMeter(level: CaptureLevel | null): void {
-  const bar = $("live-meter");
-  if (!bar) return;
-  if (level === null) {
-    bar.hidden = true;
-    return;
-  }
-  bar.hidden = false;
-  const fill = bar.querySelector(".live-fill") as HTMLElement | null;
-  const read = bar.querySelector(".live-read") as HTMLElement | null;
-  if (fill) {
-    fill.style.width = `${Math.round(level.level * 100)}%`;
-    fill.classList.toggle("live-fill-on", level.voiced);
-  }
-  if (read) {
-    const pitch = level.pitchHz ? `${Math.round(level.pitchHz)} Hz` : "—";
-    read.textContent = level.voiced ? `🎵 hearing your hum · ${pitch}` : "🔇 too quiet — hum a little louder";
-  }
 }
 
 // ── session history list ─────────────────────────────────────────────────────

@@ -78,21 +78,30 @@ export function innerStateLine(
   const loA = arousal < -T;
   const hiV = valence > T;
   const loV = valence < -T;
-  let core: string;
-  if (hiA && hiV) core = "bright and energized";
-  else if (hiA && loV) core = "keyed up and a little tense";
-  else if (loA && hiV) core = "calm and at ease";
-  else if (loA && loV) core = "low and subdued";
-  else if (hiA) core = "energized";
-  else if (loA) core = "quiet and settled";
-  else if (hiV) core = "warm and even";
-  else if (loV) core = "a little flat";
-  else core = "fairly steady and even";
-  const lean =
-    affectHint && affectHint !== "neutral_close_to_usual"
-      ? ` — leaning toward ${userFacingLabel(AFFECT_HEADS[affectHint].internalLabel)}`
-      : "";
-  return `Right now you read as ${core}${lean}.`;
+
+  // One earned, granular observation — energy QUALIFIES the mood word (never two robot
+  // meters), and the read is held as a hypothesis from inside the sentence ("if that's
+  // close") rather than with a bolted-on hedge. Affect-labeling research (Lieberman/Torre):
+  // a precise, specific naming is what takes the edge off, so we avoid bin labels like
+  // "energized"/"stressed". Tentative + non-diagnostic; screened at the boundary.
+  if (hiA && hiV) return "There's a bright, slightly buzzing energy to you right now — up, but not quite landed.";
+  if (hiA && loV) return "Reads a bit wound-up — keyed up, and maybe tired of being keyed up, if that's close.";
+  if (loA && hiV) return "You sound settled, like the noise finally dropped a notch.";
+  if (loA && loV) return "Something feels low and slow in this one — more flat than down, maybe.";
+  if (hiA) return "A restless, can't-quite-settle quality to this one.";
+  if (loA) return "Quiet and even — running on a smaller flame than usual.";
+  if (hiV) return "Warm and steady, nothing pushing at the edges.";
+  if (loV) return "A little flat today — even-toned, but the warmth's dialled down, if that fits.";
+
+  // Near the centre, a subtle lean from the secondary 6-way prior colours the adjective
+  // (it is never named as a label — ADR-0005 keeps it tentative, not a verdict).
+  if (affectHint === "anxiety_like_tension")
+    return "Mostly even, with a faint thread of tension running under it, if that fits.";
+  if (affectHint === "sadness_low_mood")
+    return "Even-keeled, though it sits a touch on the quiet side today.";
+  if (affectHint === "fatigue_low_recovery")
+    return "Steady enough, but it sounds like there isn't a lot in reserve right now.";
+  return "Fairly steady and even — nothing loud in either direction.";
 }
 
 /**
@@ -110,6 +119,8 @@ export function readNote(opts: {
   if (opts.divergenceActive && opts.divergenceMagnitude >= 1.0) {
     return "This one sits a little apart from your recent usual.";
   }
-  if (opts.isEarlyBaseline) return "Still learning what's usual for you — early reads are rough.";
-  return "Close to what we've learned is usual for you.";
+  // Frame an early read as baseline-BUILDING, not as doubt — each hum teaches Hum your
+  // normal, which is what later lets it notice change early.
+  if (opts.isEarlyBaseline) return "One of your early hums — each one teaches Hum a little more of your usual.";
+  return "This sits close to the pattern Hum has come to know as yours.";
 }
