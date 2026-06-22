@@ -12,6 +12,7 @@ import {
   REGULATION_STATE_DESCRIPTION,
   type HumRegulationState,
   type LongitudinalStatus,
+  type RecentAffectSummary,
   type RegulationStateMeta,
 } from "./states";
 import {
@@ -64,6 +65,17 @@ export interface InterventionOfDay {
   /** A short, plain technique tag cited inline with the rationale (e.g. "paced exhale"). */
   readonly technique: string;
   /**
+   * One plain sentence placing today in the context of the user's RECENT hums (history-aware
+   * support — "over your last few hums you've sounded …"). Absent until there are enough recent
+   * reads. Non-clinical; screened with the rest of the copy.
+   */
+  readonly recentContext?: string;
+  /**
+   * One optional sentence tying the step to the user's tentative hum-personality signature
+   * (e.g. "this leans into your steadier way of humming"). Exploratory; screened with the copy.
+   */
+  readonly personalNote?: string;
+  /**
    * Two concrete micro-options the user can choose between — the single biggest anti-"generic"
    * lever (single-session-intervention "you're the expert" agency). Omitted for meta states
    * (poor_capture / low_confidence / not_enough_history) where there's nothing to act on.
@@ -99,6 +111,18 @@ export interface InterventionOfDayInput {
   readonly baselineMature: boolean;
   /** Abstracted within-user trend (safe; never clinical labels). */
   readonly longitudinal?: LongitudinalStatus;
+  /** Recent-reads summary so the step reflects recent history, not just today's hum. */
+  readonly recentAffect?: RecentAffectSummary;
+  /**
+   * Tentative hum-personality lean (from `@hum-ai/personality-signature`, mapped by the caller
+   * to this minimal shape so this package stays decoupled). Adds one personalised sentence.
+   */
+  readonly personality?: {
+    /** A safe adjective for the dominant lean (e.g. "steady", "expressive"), or null. */
+    readonly adjective: string | null;
+    /** Emotional-steadiness tendency in [-1,1] (gentler framing when low). */
+    readonly steadiness: number;
+  };
   /** Safety gate: support-escalation copy is only offered when true. */
   readonly safetyAllowsEscalation?: boolean;
   /**
@@ -394,10 +418,34 @@ function buildEscalation(
   };
 }
 
+/**
+ * One plain sentence summarising the user's RECENT hums (history-aware support). Returns
+ * undefined when there isn't enough recent history to characterise. Non-clinical.
+ */
+function recentContextLine(ra: RecentAffectSummary | undefined): string | undefined {
+  if (!ra || ra.count < 2) return undefined;
+  const v = ra.meanValence;
+  const a = ra.meanArousal;
+  if (v < -0.2 && a > 0.2) return "Over your last few hums you've sounded a bit wound-up and on the lower side.";
+  if (v < -0.2) return "Over your last few hums you've sounded on the quieter, lower side.";
+  if (v > 0.2 && a > 0.2) return "Over your last few hums you've sounded bright and full of energy.";
+  if (a < -0.2) return "Over your last few hums you've sounded calm and low-key.";
+  if (v > 0.2) return "Over your last few hums you've sounded warm and fairly settled.";
+  return "Over your last few hums you've sounded fairly steady.";
+}
+
+/** One optional sentence tying the step to the user's tentative hum-personality lean. */
+function personalNoteLine(p: InterventionOfDayInput["personality"]): string | undefined {
+  if (!p || !p.adjective) return undefined;
+  return `This leans into your more ${p.adjective} way of humming — go with what fits.`;
+}
+
 /** Gather every user-facing string on an InterventionOfDay for the safety screen. */
 export function interventionOfDayStrings(iod: InterventionOfDay): string[] {
   const strings = [iod.title, iod.instruction, iod.whySuggested, ...iod.basedOnSignals, ...iod.notBasedOn];
   strings.push(iod.targetStateDescription, iod.researchRationale, iod.technique);
+  if (iod.recentContext) strings.push(iod.recentContext);
+  if (iod.personalNote) strings.push(iod.personalNote);
   if (iod.microMoves) strings.push(...iod.microMoves);
   if (iod.bodyCue) strings.push(iod.bodyCue);
   for (const s of iod.sources) strings.push(s.label, s.detail);
@@ -446,6 +494,7 @@ export function selectInterventionOfDay(input: InterventionOfDayInput): Interven
     captureUsable: input.captureUsable,
     baselineMature: input.baselineMature,
     longitudinal: input.longitudinal,
+    recentAffect: input.recentAffect,
     evidence: input.evidence,
   };
   const state = deriveRegulationState(input.view, meta);
@@ -478,6 +527,8 @@ export function selectInterventionOfDay(input: InterventionOfDayInput): Interven
     targetStateDescription: REGULATION_STATE_DESCRIPTION[state],
     researchRationale: CATEGORY_RATIONALE[template.category],
     technique: CATEGORY_TECHNIQUE[template.category],
+    ...(recentContextLine(input.recentAffect) ? { recentContext: recentContextLine(input.recentAffect) } : {}),
+    ...(personalNoteLine(input.personality) ? { personalNote: personalNoteLine(input.personality) } : {}),
     ...(CATEGORY_MICRO_MOVES[template.category] ? { microMoves: CATEGORY_MICRO_MOVES[template.category] } : {}),
     ...(CATEGORY_BODY_CUE[template.category] ? { bodyCue: CATEGORY_BODY_CUE[template.category] } : {}),
     sources: sourcesFor(template.sourceRefs),

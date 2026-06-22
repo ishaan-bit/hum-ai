@@ -22,10 +22,12 @@ import type { HumSelfReport } from "@hum-ai/affect-model-contracts";
 import {
   buildFeedbackRequest,
   applyFeedback,
+  humHistoryFromState,
   type OrchestratedRead,
   type PersonalizationState,
   type AffectAxisPriors,
 } from "@hum-ai/orchestrator";
+import { assessPersonalitySignature, type PersonalitySignature } from "@hum-ai/personality-signature";
 import {
   emptyCorpus,
   appendExample,
@@ -73,6 +75,7 @@ import {
   clearInterventionFeedback,
   renderLadder,
   renderLongitudinal,
+  renderSignature,
   renderProvenance,
   renderPersonalization,
   renderHistory,
@@ -138,6 +141,11 @@ interface Session {
   lastVisual: StateVisual | null;
   /** The safety-screened reveal caption for the share poster (uf.innerState ?? uf.headline). */
   lastCaption: string | null;
+  /** Rolling buffer of recent reads' dimensional V-A (most-recent last) — makes today's
+   *  intervention reflect recent history, not just this hum. In-memory for the session. */
+  recentReads: { valence: number; arousal: number }[];
+  /** The tentative within-user hum-personality signature (recomputed after each usable read). */
+  signature: PersonalitySignature | null;
 }
 
 const session: Session = {
@@ -157,7 +165,21 @@ const session: Session = {
   lastRetrainSize: 0,
   lastVisual: null,
   lastCaption: null,
+  recentReads: [],
+  signature: null,
 };
+
+/** Recent-reads buffer cap — a "last week or so" window for the history-aware intervention. */
+const RECENT_READS_MAX = 8;
+
+/**
+ * The tentative within-user personality signature, computed from the longitudinal baseline
+ * (the personal feature windows) — exploratory, non-clinical (see @hum-ai/personality-signature).
+ */
+function currentSignature(): PersonalitySignature {
+  const hist = humHistoryFromState(session.state, nowTs());
+  return assessPersonalitySignature(hist.eligibleSamplesByFeature, hist.priorEligibleCount);
+}
 
 /** The persistent AURA orb (one Canvas, shared across windows) + the windowed stage controller. */
 let orb: Orb | null = null;
@@ -207,6 +229,9 @@ function setupExperience(): void {
 
 /** Re-anchor the orb as the active window changes (it is the shared element that travels). */
 function anchorOrbForStep(step: Step): void {
+  // Mirror the step on <body> so CSS can quiet the orb behind the read/today windows — the
+  // ripple over the read card read as noise (ASK 3); the read card is the hero there.
+  if (typeof document !== "undefined") document.body.dataset.step = step;
   if (!orb) return;
   // Landscape phones: orb sits left, the content column sits right (see the landscape @media).
   const land = window.innerWidth > window.innerHeight && window.innerHeight < 600;
@@ -250,6 +275,14 @@ function presentRead(read: OrchestratedRead, advance: boolean): void {
     anchorOrbForStep("state");
     stage?.go("state");
     document.getElementById("btn-hum-again")?.toggleAttribute("hidden", false);
+    // THE UNFURL (ASK 3): re-trigger the cinematic reveal animation on the reveal column by
+    // toggling the class (force a reflow between remove + add so it always replays).
+    const reveal = document.querySelector(".window-state .reveal") as HTMLElement | null;
+    if (reveal) {
+      reveal.classList.remove("unfurl");
+      void reveal.offsetWidth; // reflow
+      reveal.classList.add("unfurl");
+    }
     // Move focus to the read so screen-reader users hear the reveal (#read-card is tabindex=-1).
     requestAnimationFrame(() => document.getElementById("read-card")?.focus());
   }
@@ -421,6 +454,9 @@ async function runOne(
 ): Promise<CaptureGateDecision> {
   const advance = opts.advance ?? false;
   const audio = await getAudio();
+  // The tentative hum-personality lean (from the baseline so far) personalises today's step;
+  // the recent-reads buffer makes that step reflect recent history, not just this hum (ADR-0010).
+  const sigBefore = currentSignature();
   const result = await runHumCycle({
     audio,
     state: session.state,
@@ -433,6 +469,9 @@ async function runOne(
     featureImportance: session.featureImportance,
     // A promoted hum-native fusion meta-learner sharpens the secondary affect read.
     metaLearner: session.metaLearner,
+    // History-aware intervention + exploratory personality personalisation.
+    recentReads: session.recentReads,
+    personalityLean: { adjective: sigBefore.lean.adjective, steadiness: sigBefore.lean.steadiness },
   });
 
   // STAGE ① — a rejected capture is never read for affect. Show "hum again", surface NO
@@ -456,11 +495,20 @@ async function runOne(
   session.state = result.nextState;
   session.lastRead = result.read;
 
+  // Update the recent-reads buffer (usable, non-abstained reads only) so the NEXT hum's
+  // intervention is informed by recent history; then recompute the signature off the new baseline.
+  if (!result.read.userFacing.abstained) {
+    const d = result.read.internal.axis.dimensional;
+    session.recentReads = [...session.recentReads, { valence: d.valence, arousal: d.arousal }].slice(-RECENT_READS_MAX);
+  }
+  session.signature = currentSignature();
+
   renderRead(result.read);
   renderInterventionOfDay(result.read);
   renderPersonalization(result.read);
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
   renderLongitudinal(result.read, session.consent, result.read.internal.eligibleHumCount);
+  renderSignature(session.signature ?? currentSignature(), result.read, session.consent, result.read.internal.eligibleHumCount);
   renderProvenance(result.read, session.prior, syncEnabled());
 
   // THE TUNING — tune the whole world to this read; on a single capture, reveal + advance.

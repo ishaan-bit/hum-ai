@@ -79,6 +79,17 @@ zip entry for the `.docx`. Raw extracted text was cached locally under `.extract
 - **Key facts:** 48 adolescent MDD patients, **paired pre/post treatment** voice. Proposed **DVDSA (Dual Voice-based Depressive State Analysis)** → categorizes intra-patient change as **recovery / worsening / unchanged**. WavLM F1 **78.05%** binary, **70.58%** on DVDSA; classic ML topped out at F1 65.83%. Only **F0** changed significantly at the individual-feature level (Holm-Bonferroni). Mean pre→post interval ≈107 days.
 - **Governance note:** Anchors the relapse engine as **personalized within-user paired comparison**, not group-level classification. Hum extends DVDSA's 3 classes to `recovery | stable | worsening | relapse_drift | uncertain`.
 
+### `singing_voice_detection_dataset` — Brocal et al.pdf (DALI)
+- **Status:** ✅ EXTRACTED (~3,000 words via pdftotext)
+- **Citation:** Meseguer-Brocal, G., Cohen-Hadria, A., Peeters, G. "DALI: A Large Dataset of Synchronized Audio, Lyrics and Notes, Automatically Created Using Teacher-Student Machine Learning Paradigm." *Proc. 19th ISMIR Conf.*, Paris, 2018, pp. 431–437.
+- **Role:** **Methodology source for sung-voice detection + self-training.** Two ideas are carried into the build:
+  1. **Singing-Voice Detection (SVD) as a frame-level voiced PROBABILITY** `p(t) ∈ [0,1]` (≈1 when voice is present), computed from 80 Log-Mel-band patches via a ConvNet; a track is judged on its *voiced content over time*, not on the absence of gaps. Frame accuracy ≈ 80–87% (cross-dataset is the real test).
+  2. **Teacher–Student paradigm:** a teacher trained on little ground-truth labels a much larger *imperfect* candidate set (matched by normalised cross-correlation, accept threshold `Tcorr = 0.8`); a student trained on that set GENERALISES BETTER than the teacher, especially cross-dataset. "In deep learning it is better to have an imperfect but large dataset than a small, perfect one."
+- **Key facts carried into the build:**
+  - **Pause tolerance in the capture gate (`@hum-ai/signal-lab/capture-gate`):** people hum in short bursts separated by breath pauses; the DALI voiced-content lens motivates judging a hum on its VOICED evidence (voicing coverage + harmonic clarity + a held stable segment) and DISCOUNTING the silence penalty by that evidence — so a burst-voiced hum is accepted while noise/speech/silence still fail (melodic-range + ZCR/flatness/brightness cues are independent of the gaps). This fixed the reported false-rejection of paused hums.
+  - **HiTL native-corpus loop (`@hum-ai/native-corpus` + main.ts) reframed as teacher→student:** the far-domain acted-speech prior is the *teacher*; the user's growing set of confirmed hums is the larger, imperfect *student* set; the promoted hum-native model is the *student* that outperforms the teacher in-domain. DALI is the methodological grounding for that loop.
+- **Governance note:** DALI is a MUSIC/sung-voice MIR dataset — used here for **detection methodology and self-training discipline only**, never as hum affect/clinical ground truth (ADR-0005 domain-gap rule). No DALI audio is downloaded or shipped.
+
 ---
 
 ## Tier 2 — Intervention Support

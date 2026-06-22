@@ -85,6 +85,25 @@ export interface LongitudinalStatus {
   readonly persistent: boolean;
 }
 
+/**
+ * A safe summary of the user's RECENT reads (last few hums), so today's step is "about today
+ * but informed by recent history" rather than reacting to a single hum (ADR-0010 spirit). The
+ * dimensional means are over the recent window only; carries no clinical label.
+ */
+export interface RecentAffectSummary {
+  /** How many recent reads informed this summary. */
+  readonly count: number;
+  /** Mean valence over the recent window, [-1, 1]. */
+  readonly meanValence: number;
+  /** Mean arousal over the recent window, [-1, 1]. */
+  readonly meanArousal: number;
+}
+
+/** Weight of TODAY'S read vs. the recent mean when deriving the regulation state (today leads). */
+export const TODAY_WEIGHT = 0.7;
+/** Minimum recent reads before recent history is allowed to colour the state at all. */
+export const MIN_RECENT_FOR_BLEND = 2;
+
 /** Safe, abstracted meta the deriver needs beyond the sanitized affect view. */
 export interface RegulationStateMeta {
   /** False when the capture itself was too weak to interpret → repeat the hum. */
@@ -93,6 +112,8 @@ export interface RegulationStateMeta {
   readonly baselineMature: boolean;
   /** Abstracted within-user trend; absent until the relapse model is active. */
   readonly longitudinal?: LongitudinalStatus;
+  /** Recent-reads summary (last few hums) so today's step reflects more than one hum. */
+  readonly recentAffect?: RecentAffectSummary;
   /**
    * Qualitative evidence band for THIS single read (ADR-0010). A confident single read
    * is interpreted from hum #1 — before any personal baseline exists — and the baseline
@@ -145,7 +166,19 @@ export function deriveRegulationState(
   //    before the mixed/uncertain catch, so a confident strong read keeps its
   //    downshift/recovery step instead of being overridden by bare meta-uncertainty
   //    (mirrors the predicate order in `selectInterventionFromView`).
-  const { valence, arousal } = view.dimensional;
+  //
+  //    HISTORY-AWARE (ADR-0010 spirit): today's step is "about today but informed by recent
+  //    history" — we blend today's read with the recent-window mean (TODAY leads at 70%) so a
+  //    single off hum doesn't whipsaw the suggestion, and a steady recent pattern gently
+  //    reinforces it. Today still dominates, so a strongly tense/low hum today still routes.
+  const ra = meta.recentAffect;
+  const useRecent = ra !== undefined && ra.count >= MIN_RECENT_FOR_BLEND;
+  const valence = useRecent
+    ? TODAY_WEIGHT * view.dimensional.valence + (1 - TODAY_WEIGHT) * ra!.meanValence
+    : view.dimensional.valence;
+  const arousal = useRecent
+    ? TODAY_WEIGHT * view.dimensional.arousal + (1 - TODAY_WEIGHT) * ra!.meanArousal
+    : view.dimensional.arousal;
 
   // High, tense activation → downshift region (stress/anxiety/anger/fear collapsed).
   if (arousal >= AROUSAL_ACTIVATED && valence < 0) return "high_activation_negative";

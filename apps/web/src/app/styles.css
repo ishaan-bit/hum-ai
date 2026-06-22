@@ -1227,3 +1227,202 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
   .icon-btn:hover { border-color: color-mix(in srgb, var(--state-accent) 55%, transparent); }
   .dot:hover:not(:disabled):not(.on) { color: var(--ink-soft); }
 }
+
+/* ============================================================================
+   v4 — direct reveal, gamified mood field, breath pacer, hum signature.
+   ============================================================================ */
+
+/* THE UNFURL (ASK 3): the read column unrolls cinematically on reveal. */
+@keyframes unfurl-in {
+  0%   { opacity: 0; transform: translateY(10px) scaleY(0.86); filter: blur(3px); }
+  60%  { opacity: 1; filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+.reveal.unfurl > * {
+  transform-origin: top center;
+  animation: unfurl-in 0.7s var(--ease-bloom) both;
+}
+.reveal.unfurl > *:nth-child(1) { animation-delay: 0.02s; }
+.reveal.unfurl > *:nth-child(2) { animation-delay: 0.12s; }
+.reveal.unfurl > *:nth-child(3) { animation-delay: 0.22s; }
+.reveal.unfurl > *:nth-child(4) { animation-delay: 0.32s; }
+.reveal.unfurl > *:nth-child(5) { animation-delay: 0.42s; }
+.reveal.unfurl > *:nth-child(n+6) { animation-delay: 0.5s; }
+
+/* Orb de-emphasis: the ripple over the read read as noise — quiet it behind result windows. */
+body[data-step="state"] #orb-canvas,
+body[data-step="today"] #orb-canvas {
+  opacity: 0.4;
+  transition: opacity 0.6s var(--ease);
+}
+body[data-step="hum"] #orb-canvas { opacity: 1; transition: opacity 0.6s var(--ease); }
+
+/* GAMIFIED mood-energy field (ASK 4). */
+.mood-field {
+  position: relative;
+  width: 100%;
+  max-width: 16rem;
+  aspect-ratio: 1;
+  margin: 0.4rem auto 0.7rem;
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 120% at 50% 50%, color-mix(in srgb, var(--state-accent) 12%, transparent), transparent 70%),
+    rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-line);
+  overflow: hidden;
+}
+.mood-grid { position: absolute; inset: 0; }
+.mood-cross-h, .mood-cross-v { position: absolute; background: rgba(255, 255, 255, 0.08); }
+.mood-cross-h { left: 0; right: 0; top: 50%; height: 1px; }
+.mood-cross-v { top: 0; bottom: 0; left: 50%; width: 1px; }
+.mood-axis-label {
+  position: absolute;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.mal-top { top: 0.4rem; left: 50%; transform: translateX(-50%); }
+.mal-bottom { bottom: 0.4rem; left: 50%; transform: translateX(-50%); }
+.mal-left { left: 0.4rem; top: 50%; transform: translateY(-50%) rotate(-90deg); transform-origin: left center; }
+.mal-right { right: 0.4rem; top: 50%; transform: translateY(-50%) rotate(90deg); transform-origin: right center; }
+.mood-zone {
+  position: absolute;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--ink-mute);
+  opacity: 0.55;
+  padding: 0.5rem 0.6rem;
+  transition: opacity 0.4s, color 0.4s;
+}
+.mood-zone.on { opacity: 1; color: var(--ink); text-shadow: 0 0 16px color-mix(in srgb, var(--state-accent) 60%, transparent); }
+.mz-rt { top: 1.3rem; right: 0.4rem; }
+.mz-lt { top: 1.3rem; left: 0.4rem; }
+.mz-lb { bottom: 1.3rem; left: 0.4rem; }
+.mz-rb { bottom: 1.3rem; right: 0.4rem; }
+.mood-marker {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 38% 34%, #fff, var(--state-accent) 70%);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--state-accent) 30%, transparent),
+    0 0 26px 6px color-mix(in srgb, var(--state-accent) 70%, transparent);
+  transition: left 0.9s var(--ease-bloom), top 0.9s var(--ease-bloom);
+}
+.mood-field.mood-developing .mood-marker { filter: blur(1.2px); opacity: 0.8; }
+.mood-field.mood-moderate .mood-marker { opacity: 0.92; }
+.mood-zone-now {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.mood-conf { font-weight: 600; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.mood-conf-clear { color: #7bd391; }
+.mood-conf-moderate { color: #e6cf6a; }
+.mood-conf-developing { color: #c0a7e6; }
+
+/* BREATH PACER (ASK 6). */
+.breath { margin: 0.6rem 0 0.2rem; }
+.breath-stage { display: grid; place-items: center; height: 168px; }
+.breath-disc {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  transform: scale(0.6);
+  background: radial-gradient(circle at 40% 36%, rgba(255,255,255,0.4), transparent 60%),
+    radial-gradient(circle at 50% 60%, var(--state-accent), color-mix(in srgb, var(--state-accent) 35%, #11141b));
+  box-shadow: 0 0 40px -6px color-mix(in srgb, var(--state-accent) 60%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.breath-cue { font-weight: 700; font-size: 0.92rem; color: #fff; text-shadow: 0 1px 10px rgba(0,0,0,0.4); }
+.breath-controls { display: flex; gap: 0.6rem; justify-content: center; margin-top: 0.2rem; }
+.breath-count { text-align: center; min-height: 1.1em; margin: 0.4rem 0 0; }
+
+/* HUM SIGNATURE (ASK 7). */
+.signature-card {
+  margin-top: 0.7rem;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 18px;
+  padding: 1.1rem 1.15rem 1.2rem;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.8);
+}
+.signature-card .badge-mini {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  margin-left: 0.4rem;
+}
+.sig-type {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.2rem 0 0.5rem;
+}
+.sig-type-letters {
+  font: 800 1.5rem/1 "Iowan Old Style", Georgia, serif;
+  letter-spacing: 0.12em;
+  color: #fff;
+  padding: 0.35rem 0.7rem;
+  border-radius: 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--state-accent) 48%, var(--glass)), color-mix(in srgb, var(--state-accent) 26%, var(--glass)));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 22px -12px color-mix(in srgb, var(--state-accent) 75%, transparent);
+}
+.sig-type-nick { font-style: italic; color: var(--ink-soft); font-size: 1.02rem; }
+.sig-headline { color: var(--ink-soft); margin: 0.2rem 0 0.7rem; }
+.sig-traits { display: flex; flex-direction: column; gap: 0.55rem; margin: 0.3rem 0 0.6rem; }
+.trait-poles { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--ink-mute); margin-bottom: 0.18rem; }
+.trait-poles .on { color: var(--ink); font-weight: 700; }
+.trait-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--state-accent) 8%, rgba(255,255,255,0.06)),
+    color-mix(in srgb, var(--state-accent) 24%, rgba(255,255,255,0.04)));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.trait-fill {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-accent) 42%, transparent),
+    0 0 12px 1px color-mix(in srgb, var(--state-accent) 65%, transparent);
+  transition: left 0.8s var(--ease-bloom);
+}
+.sig-trend { margin: 0.5rem 0 0.3rem; }
+
+/* History-aware + personality lines on the daily step (ASK 8 / ASK 7). */
+.iod-recent { color: var(--ink-soft); margin: 0.2rem 0 0.5rem; }
+.iod-recent-tag {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 800;
+  color: var(--state-accent);
+  margin-right: 0.35rem;
+}
+.iod-personal { color: var(--ink-soft); font-style: italic; margin: 0.3rem 0 0.4rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal.unfurl > * { animation: none; }
+  .mood-marker, .trait-fill { transition: none; }
+  .breath-disc { transition: none !important; }
+}

@@ -35,6 +35,7 @@ auditable **without** shipping the documents themselves.
 | `vocal_biomarker_and_singing_protocol_support` | Scientific basis for the sung/hum protocol |
 | `ser_mental_health_review` | Affect prior + methodology guardrail (multi-head, abstention) |
 | `longitudinal_voice_treatment_response_source` | Relapse/recovery engine inspiration (DVDSA) |
+| `singing_voice_detection_dataset` | Sung-voice detection + teacher-student self-training (DALI) — gate pause-tolerance + HiTL grounding |
 | `intervention_support_source` | Intervention support only (music & stress) — never diagnosis |
 
 ## Reproducing extraction (local only)

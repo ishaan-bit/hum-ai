@@ -32,6 +32,8 @@ import {
 } from "@hum-ai/native-corpus";
 import type { LoadedPrior } from "./prior";
 import { isGranted } from "./consent";
+import { createBreathPacer, type BreathPacer } from "./breath";
+import type { PersonalitySignature } from "@hum-ai/personality-signature";
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
@@ -126,74 +128,143 @@ export function renderRead(read: OrchestratedRead): void {
       ? `<p class="read-region">This hum read as <strong>${esc(region)}</strong>.</p>`
       : "";
     axes.innerHTML = `
-      <h3>Your read <span class="muted small">(valence + arousal · reflective, non-diagnostic)</span></h3>
-      ${axisMeter("Mood", "subdued", "pleasant", a.valence)}
-      ${axisMeter("Energy", "settled", "activated", a.arousal)}
+      <h3>Where you are <span class="muted small">(mood + energy · reflective, non-diagnostic)</span></h3>
+      ${moodField(a.valence, a.arousal)}
       ${regionLine}
+      <p class="axis-prov muted small">${esc(axisProvenance(a.valence))}</p>
       ${hint}
     `;
   }
 }
 
-/** A single axis meter with qualitative confidence + honest trained-prior provenance. */
-function axisMeter(label: string, lowPole: string, highPole: string, res: AxisResolution): string {
-  const left = Math.max(0, Math.min(100, ((res.value + 1) / 2) * 100));
-  // Use the canonical evidence-band thresholds (ADR-0008) — never re-hardcode the cutoffs.
-  const conf =
-    res.confidence >= EVIDENCE_BANDS.high ? "clear" : res.confidence >= EVIDENCE_BANDS.medium ? "moderate" : "developing";
-  let prov: string;
-  if (res.trainedContribution === "in_domain") {
-    // Qualitative only — no accuracy % in the per-read copy (ADR-0008).
-    prov = `Acoustic read — the trained model agreed with the acoustic signal for this hum.`;
-  } else if (res.trainedContribution === "abstained_ood") {
-    prov = `Acoustic read — the trained model was set aside (this hum is outside the type of audio it was trained on).`;
-  } else if (res.trainedContribution === "held_failed_gate") {
-    // v3: a prior that has not passed its promotion gate never steers the read.
-    prov = `Acoustic read — a trained model is available but isn't ready to steer your read yet.`;
-  } else {
-    prov = `Acoustic read (no trained ${res.axis} model loaded).`;
-  }
-  // Qualitative lean for screen readers — the read as WORDS, never a number (ADR-0008).
-  const lean =
-    res.value >= 0.33 ? `leaning ${highPole}` : res.value <= -0.33 ? `leaning ${lowPole}` : "balanced";
+/** The four named zones of the valence–arousal circumplex (friendly, non-clinical). */
+const MOOD_ZONES: ReadonlyArray<{ readonly hiV: boolean; readonly hiA: boolean; readonly label: string }> = [
+  { hiV: true, hiA: true, label: "Energised" },
+  { hiV: false, hiA: true, label: "Tense" },
+  { hiV: false, hiA: false, label: "Low" },
+  { hiV: true, hiA: false, label: "Calm" },
+];
+
+function zoneFor(valence: number, arousal: number): string {
+  if (valence > -0.12 && valence < 0.12 && arousal > -0.12 && arousal < 0.12) return "Balanced";
+  return arousal >= 0
+    ? valence >= 0
+      ? "Energised"
+      : "Tense"
+    : valence >= 0
+      ? "Calm"
+      : "Low";
+}
+
+/**
+ * GAMIFIED mood–energy field (ASK 4): the read plotted as a glowing marker on a 2-D circumplex
+ * — horizontal = mood (low ↔ bright), vertical = energy (calm ↔ charged) — with the four named
+ * zones lit around it. Magnitude lives in the marker's POSITION + glow, never a number (ADR-0008).
+ * The overall confidence sets how sharp/bright the marker reads.
+ */
+function moodField(vRes: AxisResolution, aRes: AxisResolution): string {
+  const v = Math.max(-1, Math.min(1, vRes.value));
+  const a = Math.max(-1, Math.min(1, aRes.value));
+  const left = ((v + 1) / 2) * 100;
+  const top = (1 - (a + 1) / 2) * 100; // arousal high → top
+  const conf = Math.max(vRes.confidence, aRes.confidence);
+  const band = conf >= EVIDENCE_BANDS.high ? "clear" : conf >= EVIDENCE_BANDS.medium ? "moderate" : "developing";
+  const zone = zoneFor(v, a);
+  const zones = MOOD_ZONES.map((z) => {
+    const on = z.label === zone;
+    const pos = `mz-${z.hiV ? "r" : "l"}${z.hiA ? "t" : "b"}`;
+    return `<span class="mood-zone ${pos}${on ? " on" : ""}">${esc(z.label)}</span>`;
+  }).join("");
+  const aria = `Mood and energy: ${zone}, ${band} signal. Mood ${v >= 0.12 ? "bright" : v <= -0.12 ? "low" : "neutral"}, energy ${a >= 0.12 ? "charged" : a <= -0.12 ? "calm" : "even"}.`;
   return `
-    <div class="axis">
-      <div class="axis-top">
-        <span class="axis-name">${esc(label)}</span>
-        <span class="axis-conf axis-conf-${conf}">${conf} signal</span>
+    <div class="mood-field mood-${band}" role="img" aria-label="${esc(aria)}">
+      <div class="mood-grid" aria-hidden="true">
+        <span class="mood-axis-label mal-top">charged</span>
+        <span class="mood-axis-label mal-bottom">calm</span>
+        <span class="mood-axis-label mal-left">low</span>
+        <span class="mood-axis-label mal-right">bright</span>
+        <span class="mood-cross-h"></span>
+        <span class="mood-cross-v"></span>
+        ${zones}
       </div>
-      <div class="meter">
-        <span class="meter-pole">${esc(lowPole)}</span>
-        <div class="meter-track" role="img" aria-label="${esc(label)}, ${esc(lowPole)} to ${esc(highPole)}: ${esc(lean)}, ${conf} signal"><span class="meter-fill" style="left:${left.toFixed(1)}%"></span></div>
-        <span class="meter-pole">${esc(highPole)}</span>
-      </div>
-      <p class="axis-prov muted small">${esc(prov)}</p>
+      <span class="mood-marker" style="left:${left.toFixed(1)}%; top:${top.toFixed(1)}%"></span>
+      <span class="mood-zone-now">${esc(zone)} <span class="mood-conf mood-conf-${band}">· ${band} signal</span></span>
     </div>`;
+}
+
+/** Honest trained-prior provenance line for the read (qualitative only, no accuracy %). */
+function axisProvenance(res: AxisResolution): string {
+  if (res.trainedContribution === "in_domain")
+    return "On-device acoustic read — the trained model agreed with the signal for this hum.";
+  if (res.trainedContribution === "abstained_ood")
+    return "On-device acoustic read — the trained model was set aside (this hum is outside its training domain).";
+  if (res.trainedContribution === "held_failed_gate")
+    return "On-device acoustic read — a trained model is available but isn't ready to steer your read yet.";
+  return "On-device acoustic read (no trained model loaded).";
 }
 
 // ── rejected capture (Stage ① — not a usable hum) ────────────────────────────
 // A non-hum (noise/silence/speech/sigh/whistle/too-quiet) is NEVER given an affect read.
 // We clear every read surface and ask for another hum — no axis meters, no suggestion, no
 // history entry, nothing learned or saved. The raw hum-likeness number is never shown.
-export function renderCaptureRejected(_decision: CaptureGateDecision): void {
+//
+// We DO tell the user exactly WHY it wasn't usable (from the gate's specific reason code), so
+// the next take is an informed retry rather than a guess. Burst hums with breath pauses are
+// accepted upstream (Brocal/DALI pause tolerance), so a "too_choppy" message only appears for a
+// clip that really was mostly silence.
+const HUM_AGAIN_REASON: Record<string, { title: string; note: string }> = {
+  too_short: {
+    title: "That was a little too short",
+    note: "I only caught a moment of it. Hold one steady note for the full twelve seconds and I'll read it.",
+  },
+  too_quiet: {
+    title: "That came through very quietly",
+    note: "Almost no sound reached the mic. Move a bit closer and hum a touch louder — nothing was read or saved from this take.",
+  },
+  too_noisy: {
+    title: "There was too much background noise",
+    note: "The hum got lost in the room. Find a quieter spot and try once more — nothing was read or saved from this take.",
+  },
+  sounded_like_speech: {
+    title: "That sounded more like talking than humming",
+    note: "I heard pitch moving around like speech or a tune. Hum one steady, even note — lips closed — and hold it. Nothing was read or saved.",
+  },
+  not_voiced: {
+    title: "I couldn't find a steady tone",
+    note: "That read more like a breath or a sigh than a hum. Hum a clear, even note you can feel buzzing. Nothing was read or saved from this take.",
+  },
+  too_choppy: {
+    title: "That was mostly pauses",
+    note: "A few breath pauses are fine, but this was mostly quiet. Keep the hum going a little more of the time — nothing was read or saved.",
+  },
+  unclear: {
+    title: "I didn't catch a clear hum",
+    note: "That take didn't sound like a sustained hum. Find a quiet spot and hum one steady note for the full twelve seconds. Nothing was read or saved.",
+  },
+};
+
+export function renderCaptureRejected(decision: CaptureGateDecision): void {
+  const r = HUM_AGAIN_REASON[decision.reasonCode || "unclear"] ?? HUM_AGAIN_REASON.unclear!;
   const card = $("read-card");
   if (card) {
     card.innerHTML = `
       <div class="read-head">
         <span class="evidence evidence-low">hum again</span>
       </div>
-      <h2 class="headline">Didn't catch a clear hum</h2>
-      <p class="note">That take didn't sound like a sustained hum — it may have been too quiet, too noisy, speech, or silence. Find a quieter spot and hum one steady note for the full 12 seconds. Nothing was read or saved from this take.</p>
+      <h2 class="headline">${esc(r.title)}</h2>
+      <p class="note">${esc(r.note)}</p>
     `;
   }
   const axes = $("axes-card");
-  if (axes) axes.innerHTML = `<p class="muted">No read — we only interpret a clear, sustained hum.</p>`;
+  if (axes) axes.innerHTML = `<p class="muted">No read this time — I only interpret a clear, sustained hum.</p>`;
   const intervention = $("intervention-card");
   if (intervention) intervention.innerHTML = "";
   const personalization = $("personalization-card");
   if (personalization) personalization.innerHTML = "";
   const longitudinal = $("longitudinal-card");
   if (longitudinal) longitudinal.hidden = true;
+  const signature = $("signature-card");
+  if (signature) signature.hidden = true;
   const provenance = $("provenance");
   if (provenance) provenance.innerHTML = "";
   clearFeedbackPrompt();
@@ -243,23 +314,24 @@ export function renderFeedbackPrompt(
   const v0 = Math.round(predicted.valence * 100);
   const a0 = Math.round(predicted.arousal * 100);
   card.hidden = false;
+  // ASK 5: no separate "Adjust" toggle — the sliders are right here, pre-set to the read. Nudge
+  // them if it's off and hit Save; or tap "Spot on" if the read already fits. One obvious path.
   card.innerHTML = `
-    <h4>Does this match how you feel right now? <span class="muted small">teaches your hum model</span></h4>
+    <h4>Does this match how you feel? <span class="muted small">nudge the sliders if not — it teaches your hum model</span></h4>
     <p class="muted small">${esc(request.note)}</p>
-    <div class="feedback-actions">
-      <button id="fb-confirm" class="btn btn-primary btn-sm">Yes, that's right</button>
-      <button id="fb-toggle-adjust" class="btn btn-sm">Adjust</button>
-    </div>
-    <div id="fb-adjust" class="feedback-adjust" hidden>
+    <div class="feedback-adjust">
       <label class="fb-slider">
-        <span>Mood <span class="muted small">subdued ↔ pleasant</span></span>
+        <span>Mood <span class="muted small">low ↔ bright</span></span>
         <input type="range" id="fb-valence" min="-100" max="100" step="5" value="${v0}" />
       </label>
       <label class="fb-slider">
-        <span>Energy <span class="muted small">settled ↔ activated</span></span>
+        <span>Energy <span class="muted small">calm ↔ charged</span></span>
         <input type="range" id="fb-arousal" min="-100" max="100" step="5" value="${a0}" />
       </label>
+    </div>
+    <div class="feedback-actions">
       <button id="fb-save" class="btn btn-primary btn-sm">Save how I feel</button>
+      <button id="fb-confirm" class="btn btn-sm btn-ghost">Spot on — leave it</button>
     </div>
     <p class="muted small disclaimer">Stored as derived features + your self-report only — never raw audio. Non-clinical.</p>
   `;
@@ -274,17 +346,18 @@ export function renderFeedbackPrompt(
     onSubmit({ label: predicted, source: "self_report_confirm", agreedWithRead: true });
     thank();
   });
-  $("fb-toggle-adjust")?.addEventListener("click", () => {
-    const adj = $("fb-adjust");
-    if (adj) adj.hidden = !adj.hidden;
-  });
   $("fb-save")?.addEventListener("click", () => {
     const vEl = document.getElementById("fb-valence") as HTMLInputElement | null;
     const aEl = document.getElementById("fb-arousal") as HTMLInputElement | null;
     const valence = vEl ? Number(vEl.value) / 100 : predicted.valence;
     const arousal = aEl ? Number(aEl.value) / 100 : predicted.arousal;
+    // Unmoved sliders ⇒ this IS a confirmation of the read (agreedWithRead true).
     const agreed = Math.abs(valence - predicted.valence) < 0.2 && Math.abs(arousal - predicted.arousal) < 0.2;
-    onSubmit({ label: { valence, arousal }, source: "self_report_adjust", agreedWithRead: agreed });
+    onSubmit({
+      label: { valence, arousal },
+      source: agreed ? "self_report_confirm" : "self_report_adjust",
+      agreedWithRead: agreed,
+    });
     thank();
   });
 }
@@ -405,9 +478,17 @@ function musicBlock(m: MusicRecommendation): string {
     </div>`;
 }
 
+// The live breath pacer (one at a time) — destroyed whenever the card re-renders for a new hum.
+let breathPacer: BreathPacer | null = null;
+
 export function renderInterventionOfDay(read: OrchestratedRead): void {
   const card = $("intervention-card");
   if (!card) return;
+  // Tear down any pacer from a previous hum before we replace the card's DOM.
+  if (breathPacer) {
+    breathPacer.destroy();
+    breathPacer = null;
+  }
   const iod = read.userFacing.interventionOfDay;
   const cat = IOD_CATEGORY_LABEL[iod.category] ?? formatEnumLabel(iod.category);
   const durationChip =
@@ -419,6 +500,20 @@ export function renderInterventionOfDay(read: OrchestratedRead): void {
   const forBlock =
     iod.targetStateDescription && !read.userFacing.abstained && iod.category !== "safety_support"
       ? `<p class="iod-for"><span class="iod-for-tag">Because</span> this one sounded ${esc(iod.targetStateDescription)}.</p>`
+      : "";
+
+  // History-aware (ASK 8): "over your last few hums you've sounded …", plus the exploratory
+  // personality note. Both already safety-screened by the spine before reaching here.
+  const recentBlock = iod.recentContext
+    ? `<p class="iod-recent"><span class="iod-recent-tag">Lately</span> ${esc(iod.recentContext)}</p>`
+    : "";
+  const personalBlock = iod.personalNote ? `<p class="iod-personal">${esc(iod.personalNote)}</p>` : "";
+
+  // Breath pacer (ASK 6): a follow-along animation the user can breathe with, paced to their
+  // read (longer exhale when more activated). Only for the breath step + a non-abstained read.
+  const breathMount =
+    iod.category === "breath_regulation" && !read.userFacing.abstained
+      ? `<div class="breath-mount" data-no-swipe></div>`
       : "";
 
   // Pick-one agency: two concrete micro-options the user chooses between (the strongest
@@ -477,19 +572,28 @@ export function renderInterventionOfDay(read: OrchestratedRead): void {
       <span class="iod-cat">${esc(cat)}</span>
     </div>
     ${forBlock}
+    ${recentBlock}
     <div class="iod-move-head">
       <p class="iod-title"><strong>${esc(iod.title)}</strong></p>
       ${durationChip}
     </div>
     <p class="iod-instruction">${esc(iod.instruction)}</p>
+    ${breathMount}
     ${moves}
     ${bodyCue}
+    ${personalBlock}
     ${music}
     ${why}
     ${escalation}
     ${safety}
     ${footer}
   `;
+
+  // Mount the live breath pacer once the card DOM exists, paced to this read's arousal.
+  if (iod.category === "breath_regulation" && !read.userFacing.abstained) {
+    const mount = card.querySelector(".breath-mount") as HTMLElement | null;
+    if (mount) breathPacer = createBreathPacer(mount, { arousal: read.internal.axis.arousal.value });
+  }
 }
 
 // ── inter-hum intervention feedback ("did yesterday's suggestion help?") ────────
@@ -570,6 +674,76 @@ export function renderLadder(stage: string, n: number): void {
       ${chip(n >= 20, "Longitudinal view")}
     </div>
     <p class="muted small">There's no calibration wall: every hum gets a full read. These layers switch on quietly as your own pattern builds, refining a read you already have.</p>
+  `;
+}
+
+// ── the hum signature (ASK 7): the within-you assessment, first-class in the State window ──
+//
+// Surfaces the tentative, EXPLORATORY personality signature (Big Five tendencies + a playful
+// 4-letter "hum type") computed from the longitudinal baseline, alongside a compact within-you
+// trend line. This is the "real assessment of your internal state over time" the read leads
+// toward — non-clinical, a mirror not a verdict. All strings are screen-safe (see the
+// @hum-ai/personality-signature package test); we esc() them anyway.
+
+/** A single trait bar: low pole ←•→ high pole, with the lean lit. */
+function traitBar(t: PersonalitySignature["traits"][number]): string {
+  const left = Math.max(0, Math.min(100, ((t.value + 1) / 2) * 100));
+  return `
+    <div class="trait" title="${esc(t.blurb)}">
+      <div class="trait-poles"><span class="${t.lean === "low" ? "on" : ""}">${esc(t.lowPole)}</span><span class="${t.lean === "high" ? "on" : ""}">${esc(t.highPole)}</span></div>
+      <div class="trait-track"><span class="trait-fill" style="left:${left.toFixed(1)}%"></span></div>
+    </div>`;
+}
+
+const SIG_TREND_COPY: Record<"improving" | "worsening" | "stable" | "uncertain", string> = {
+  improving: "easing toward steadier lately",
+  worsening: "a little more unsettled than your usual lately",
+  stable: "holding steady lately",
+  uncertain: "still gathering your pattern",
+};
+
+export function renderSignature(
+  sig: PersonalitySignature,
+  read: OrchestratedRead | null,
+  consent: ConsentState,
+  eligibleHumCount: number,
+): void {
+  const card = $("signature-card");
+  if (!card) return;
+  card.hidden = false;
+  const n = read ? read.internal.eligibleHumCount : eligibleHumCount;
+
+  // The within-you trend line: live + consent-on shows the real trend; otherwise an honest hint.
+  let trendLine: string;
+  if (!isGranted(consent, "clinical_risk_surfacing")) {
+    trendLine = `<p class="sig-trend muted small">Turn on <strong>“Notice changes early”</strong> (in the menu) to track how this shifts over time.</p>`;
+  } else if (read && !read.internal.longitudinal.abstained) {
+    trendLine = `<p class="sig-trend muted small">Your recent pattern is <strong>${esc(SIG_TREND_COPY[read.internal.longitudinal.trendDirection])}</strong>.</p>`;
+  } else {
+    trendLine = `<p class="sig-trend muted small">Your within-you trend sharpens as your pattern grows — ${n} hum${n === 1 ? "" : "s"} in.</p>`;
+  }
+
+  if (sig.status === "forming") {
+    card.innerHTML = `
+      <h3>Your hum signature <span class="badge-mini">forming · exploratory, not a test</span></h3>
+      <p class="muted">${esc(sig.headline)}</p>
+      ${trendLine}
+    `;
+    return;
+  }
+
+  const typeChip =
+    sig.type && sig.typeNickname
+      ? `<div class="sig-type"><span class="sig-type-letters">${esc(sig.type)}</span><span class="sig-type-nick">${esc(sig.typeNickname)}</span></div>`
+      : "";
+  const bars = sig.traits.map(traitBar).join("");
+  card.innerHTML = `
+    <h3>Your hum signature <span class="badge-mini">${sig.status === "tentative" ? "tentative" : "early"} · exploratory, not a test</span></h3>
+    ${typeChip}
+    <p class="sig-headline">${esc(sig.headline)}</p>
+    <div class="sig-traits">${bars}</div>
+    ${trendLine}
+    <p class="disclaimer">A playful mirror of how your hums tend to sound over time — not a personality test, not a diagnosis.</p>
   `;
 }
 

@@ -44,15 +44,15 @@ export function axisHeadline(valence: number, arousal: number, abstained: boolea
   const loA = arousal < -T;
   const hiV = valence > T;
   const loV = valence < -T;
-  if (hiA && hiV) return "This hum sounded bright and energized.";
-  if (hiA && loV) return "This hum sounded tense and activated.";
-  if (loA && hiV) return "This hum sounded calm and settled.";
-  if (loA && loV) return "This hum sounded subdued and low in energy.";
-  if (hiA) return "This hum sounded activated.";
-  if (loA) return "This hum sounded quiet and settled.";
-  if (hiV) return "This hum sounded warm and even.";
-  if (loV) return "This hum sounded a little flat.";
-  return "This hum sounded steady and close to neutral.";
+  if (hiA && hiV) return "Bright and energised.";
+  if (hiA && loV) return "Tense and wound-up.";
+  if (loA && hiV) return "Calm and content.";
+  if (loA && loV) return "Low and flat.";
+  if (hiA) return "Restless and activated.";
+  if (loA) return "Quiet and subdued.";
+  if (hiV) return "Warm and steady.";
+  if (loV) return "A little flat.";
+  return "Steady and even.";
 }
 
 /**
@@ -62,9 +62,13 @@ export function axisHeadline(valence: number, arousal: number, abstained: boolea
  * abstract meters. Reflective and non-diagnostic (it describes how the read came out,
  * never a clinical state or a certainty), and screened at the boundary like all copy.
  *
- * The lean rides on the far-domain 6-way prior, so it is phrased tentatively ("leaning
- * toward …") and the neutral "close to your usual" head is dropped (it implies a baseline
- * that may not exist yet and adds nothing). ADR-0005 / ADR-0010.
+ * The lean rides on the far-domain 6-way prior, so it is held lightly. ADR-0005 / ADR-0010.
+ *
+ * DIRECTNESS (v4): the read now LEADS with a plain present-tense statement of the user's state
+ * of mind ("Right now you're …"), then a short, specific qualifier — instead of the older
+ * cryptic, poetic phrasings. Affect-labeling research (Lieberman/Torre) still applies: the
+ * naming is specific, not a vague bin. It stays tentative ("reads as") and non-diagnostic, and
+ * is screened at the boundary (no clinical label, no number).
  */
 export function innerStateLine(
   valence: number,
@@ -79,29 +83,24 @@ export function innerStateLine(
   const hiV = valence > T;
   const loV = valence < -T;
 
-  // One earned, granular observation — energy QUALIFIES the mood word (never two robot
-  // meters), and the read is held as a hypothesis from inside the sentence ("if that's
-  // close") rather than with a bolted-on hedge. Affect-labeling research (Lieberman/Torre):
-  // a precise, specific naming is what takes the edge off, so we avoid bin labels like
-  // "energized"/"stressed". Tentative + non-diagnostic; screened at the boundary.
-  if (hiA && hiV) return "There's a bright, slightly buzzing energy to you right now — up, but not quite landed.";
-  if (hiA && loV) return "Reads a bit wound-up — keyed up, and maybe tired of being keyed up, if that's close.";
-  if (loA && hiV) return "You sound settled, like the noise finally dropped a notch.";
-  if (loA && loV) return "Something feels low and slow in this one — more flat than down, maybe.";
-  if (hiA) return "A restless, can't-quite-settle quality to this one.";
-  if (loA) return "Quiet and even — running on a smaller flame than usual.";
-  if (hiV) return "Warm and steady, nothing pushing at the edges.";
-  if (loV) return "A little flat today — even-toned, but the warmth's dialled down, if that fits.";
+  if (hiA && hiV) return "Right now you're upbeat and energised — bright, with real charge behind it.";
+  if (hiA && loV) return "Right now you read as tense and wound-up — keyed up, and maybe a little on edge.";
+  if (loA && hiV) return "Right now you're calm and content — settled, with an easy warmth to it.";
+  if (loA && loV) return "Right now you read as low and flat — quiet, and running on not very much.";
+  if (hiA) return "Right now you're restless and activated — energy that hasn't quite settled.";
+  if (loA) return "Right now you're quiet and subdued — turned down low, taking it easy.";
+  if (hiV) return "Right now you're warm and steady — comfortable, nothing pushing at the edges.";
+  if (loV) return "Right now you read as a little flat and downbeat — even-toned, but the warmth's dialled down.";
 
-  // Near the centre, a subtle lean from the secondary 6-way prior colours the adjective
+  // Near the centre, a subtle lean from the secondary 6-way prior sharpens the read
   // (it is never named as a label — ADR-0005 keeps it tentative, not a verdict).
   if (affectHint === "anxiety_like_tension")
-    return "Mostly even, with a faint thread of tension running under it, if that fits.";
+    return "Right now you're mostly even, with a thread of tension running underneath.";
   if (affectHint === "sadness_low_mood")
-    return "Even-keeled, though it sits a touch on the quiet side today.";
+    return "Right now you're fairly even, sitting a touch on the quiet, low side today.";
   if (affectHint === "fatigue_low_recovery")
-    return "Steady enough, but it sounds like there isn't a lot in reserve right now.";
-  return "Fairly steady and even — nothing loud in either direction.";
+    return "Right now you're steady, but it sounds like there isn't much left in reserve.";
+  return "Right now you read as steady and even — balanced, nothing pulling hard either way.";
 }
 
 /**

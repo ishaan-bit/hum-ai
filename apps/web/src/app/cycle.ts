@@ -44,6 +44,10 @@ export interface HumCycleInput {
   readonly featureImportance?: Record<string, number>;
   /** Promoted hum-native fusion meta-learner (secondary read only); null ⇒ stub fallback. */
   readonly metaLearner?: MetaLearner | null;
+  /** Recent reads (most-recent last) so today's intervention reflects recent history, not one hum. */
+  readonly recentReads?: readonly { readonly valence: number; readonly arousal: number }[];
+  /** Tentative hum-personality lean (adjective + steadiness) → one exploratory, personalised line. */
+  readonly personalityLean?: { readonly adjective: string | null; readonly steadiness: number };
 }
 
 export type HumCycleResult =
@@ -88,7 +92,12 @@ export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult>
   // 2. Project the persisted baseline into read-time history, then run the full spine.
   //    The HiTL feature-importance hint (when present) is merged so personalization weights
   //    the features that track this user's reported affect.
-  const history = { ...humHistoryFromState(input.state, now), featureImportance: input.featureImportance };
+  const history = {
+    ...humHistoryFromState(input.state, now),
+    featureImportance: input.featureImportance,
+    recentReads: input.recentReads,
+    personalityLean: input.personalityLean,
+  };
   const read = await orchestrateHumRead({
     features,
     consent: input.consent,

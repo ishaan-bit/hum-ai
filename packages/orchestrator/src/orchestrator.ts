@@ -169,6 +169,19 @@ export interface HumHistory {
    * them. Omitted ⇒ salience is unchanged (no-op without HiTL data).
    */
   readonly featureImportance?: Record<string, number>;
+  /**
+   * Recent within-user READS (most-recent last; dimensional valence/arousal of the last few
+   * hums), so today's Intervention of the Day is "about today but informed by recent history"
+   * (ADR-0010 spirit), rather than reacting to a single hum. The orchestrator summarises these
+   * into a RecentAffectSummary for the intervention engine. Omitted ⇒ today's read stands alone.
+   */
+  readonly recentReads?: readonly { readonly valence: number; readonly arousal: number }[];
+  /**
+   * Tentative hum-PERSONALITY lean (from @hum-ai/personality-signature, reduced by the caller
+   * to a minimal {adjective, steadiness} shape so the orchestrator/intervention engine stay
+   * decoupled from that package). Adds one exploratory, personalised sentence to the daily step.
+   */
+  readonly personalityLean?: { readonly adjective: string | null; readonly steadiness: number };
 }
 
 /**
@@ -745,6 +758,17 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   // confidence + abstracted trend the rest of the safe layer uses. No clinical
   // label, no raw confidence number; self-screened, then screened again below.
   const daySeed = Number(now.slice(5, 7)) * 31 + Number(now.slice(8, 10));
+  // HISTORY-AWARE (ADR-0010): summarise the recent within-user reads so today's step reflects
+  // more than a single hum. Today's read still leads (the engine blends 70/30 toward today).
+  const recentReads = history.recentReads ?? [];
+  const recentAffect =
+    recentReads.length > 0
+      ? {
+          count: recentReads.length,
+          meanValence: recentReads.reduce((s, r) => s + r.valence, 0) / recentReads.length,
+          meanArousal: recentReads.reduce((s, r) => s + r.arousal, 0) / recentReads.length,
+        }
+      : undefined;
   const interventionOfDay: InterventionOfDay = selectInterventionOfDay({
     view: recommendationView,
     captureUsable: quality.decision !== "rejected",
@@ -756,6 +780,8 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
           persistent: interventionCtx.persistentRiskPattern === true,
         }
       : undefined,
+    recentAffect,
+    personality: history.personalityLean,
     safetyAllowsEscalation: interventionCtx.safetyAllowsEscalation,
     rotationSeed: Number.isFinite(daySeed) ? daySeed : 0,
   });
