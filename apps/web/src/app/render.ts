@@ -975,9 +975,11 @@ const CH_H = 132;
 const CH_PADX = 16;
 const CH_TOP = 16;
 const CH_BOT = 18;
+const CH_PLOT = CH_H - CH_TOP - CH_BOT; // usable pixel height
 const chX = (i: number, n: number): number =>
   n <= 1 ? CH_W / 2 : CH_PADX + (i / (n - 1)) * (CH_W - 2 * CH_PADX);
-const chY = (v: number): number => CH_TOP + (1 - (clampUnit(v) + 1) / 2) * (CH_H - CH_TOP - CH_BOT);
+// Fixed-domain mapper used only for the ghost placeholder (stable decorative look).
+const chY = (v: number): number => CH_TOP + (1 - (clampUnit(v) + 1) / 2) * CH_PLOT;
 
 interface NormalBand {
   readonly mid: number;
@@ -996,6 +998,26 @@ function normalBand(values: readonly number[]): NormalBand | null {
   const mad = median(values.map((v) => Math.abs(v - mid)));
   const spread = Math.max(mad * 1.4826, 0.12); // a visible floor so the band never collapses
   return { mid, lo: clampUnit(mid - spread), hi: clampUnit(mid + spread) };
+}
+
+/**
+ * Adaptive y-domain so the chart fills its plotting area even when all hums cluster in a
+ * narrow valence range. Anchors to the data range + band bounds, adds 20% padding on each
+ * side, enforces a minimum visible span of 0.36 units, and clamps to [-1, 1].
+ * The normalBand is always fully visible inside the domain.
+ */
+function chartDomain(pts: readonly DiaryPoint[], band: NormalBand | null): readonly [number, number] {
+  if (pts.length === 0) return [-1, 1];
+  const vals = pts.map((p) => p.valence);
+  let lo = Math.min(...vals);
+  let hi = Math.max(...vals);
+  if (band) { lo = Math.min(lo, band.lo); hi = Math.max(hi, band.hi); }
+  const pad = Math.max((hi - lo) * 0.2, 0.1);
+  lo -= pad; hi += pad;
+  // enforce minimum span so a perfectly flat series still shows as a visible stripe
+  const center = (lo + hi) / 2;
+  const half = Math.max((hi - lo) / 2, 0.18);
+  return [Math.max(center - half, -1), Math.min(center + half, 1)];
 }
 
 /** Where one hum sits relative to the user's own usual range. */
@@ -1050,13 +1072,24 @@ function diaryChart(points: readonly DiaryPoint[], band: NormalBand | null, focu
   const pts = points.slice(-30); // a readable window; the headline count stays authoritative
   const n = pts.length;
   if (n === 0) return diaryGhost();
-  const coords = pts.map((p, i) => [chX(i, n), chY(p.valence)] as const);
+
+  // Adaptive y-domain: fit to the actual data range so the series fills the canvas even when all
+  // hums cluster in a narrow valence band (e.g. consistently high arousal). The band bounds are
+  // always included so the "usual range" rect is never clipped.
+  const [domLo, domHi] = chartDomain(pts, band);
+  const domSpan = domHi - domLo;
+  const chYD = (v: number): number => {
+    const clamped = v < domLo ? domLo : v > domHi ? domHi : v;
+    return CH_TOP + (1 - (clamped - domLo) / domSpan) * CH_PLOT;
+  };
+
+  const coords = pts.map((p, i) => [chX(i, n), chYD(p.valence)] as const);
 
   let bandLayer = "";
   if (band) {
-    const yHi = chY(band.hi);
-    const yMid = chY(band.mid);
-    const h = (chY(band.lo) - yHi).toFixed(1);
+    const yHi = chYD(band.hi);
+    const yMid = chYD(band.mid);
+    const h = (chYD(band.lo) - yHi).toFixed(1);
     bandLayer =
       `<rect class="diary-band" x="0" y="${yHi.toFixed(1)}" width="${CH_W}" height="${h}" rx="7"/>` +
       `<line class="diary-band-mid" x1="0" y1="${yMid.toFixed(1)}" x2="${CH_W}" y2="${yMid.toFixed(1)}"/>`;
