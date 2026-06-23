@@ -808,20 +808,35 @@ export function renderLadder(stage: string, n: number): void {
 
 // ── the hum signature (ASK 7): the within-you assessment, first-class in the State window ──
 //
-// Surfaces the tentative, EXPLORATORY personality signature (Big Five tendencies + a playful
-// 4-letter "hum type") computed from the longitudinal baseline, alongside a compact within-you
-// trend line. This is the "real assessment of your internal state over time" the read leads
-// toward — non-clinical, a mirror not a verdict. All strings are screen-safe (see the
-// @hum-ai/personality-signature package test); we esc() them anyway.
+// Surfaces the tentative, EXPLORATORY Big Five (OCEAN) signature computed from the longitudinal
+// baseline, foregrounding the two best voice-recoverable traits — Openness and Conscientiousness
+// — alongside a compact within-you trend line. This is the "real assessment of your internal
+// state over time" the read leads toward — non-clinical, a mirror not a verdict. All strings are
+// screen-safe (see the @hum-ai/personality-signature package test); we esc() them anyway.
 
-/** A single trait bar: low pole ←•→ high pole, with the lean lit. */
+/** A single trait bar: low pole ←•→ high pole, with the lean lit. Foregrounded OCEAN traits get `.primary`. */
 function traitBar(t: PersonalitySignature["traits"][number]): string {
   const left = Math.max(0, Math.min(100, ((t.value + 1) / 2) * 100));
   return `
-    <div class="trait" title="${esc(t.blurb)}">
+    <div class="trait${t.primary ? " primary" : ""}" title="${esc(t.label)}: ${esc(t.blurb)}">
+      <div class="trait-head"><span class="trait-name">${esc(t.label)}</span></div>
       <div class="trait-poles"><span class="${t.lean === "low" ? "on" : ""}">${esc(t.lowPole)}</span><span class="${t.lean === "high" ? "on" : ""}">${esc(t.highPole)}</span></div>
       <div class="trait-track"><span class="trait-fill" style="left:${left.toFixed(1)}%"></span></div>
     </div>`;
+}
+
+/** The OCEAN lede: the two foregrounded traits (Openness, Conscientiousness) as a prominent pair. */
+function oceanLede(primaryTraits: PersonalitySignature["primaryTraits"]): string {
+  if (primaryTraits.length === 0) return "";
+  const cell = (t: PersonalitySignature["traits"][number]): string => {
+    const word = t.lean === "high" ? t.highPole : t.lean === "low" ? t.lowPole : "balanced";
+    return `
+      <div class="sig-ocean-trait">
+        <span class="sig-ocean-name">${esc(t.label)}</span>
+        <span class="sig-ocean-lean ${t.lean}">${esc(word)}</span>
+      </div>`;
+  };
+  return `<div class="sig-ocean" role="group" aria-label="Your foregrounded Big Five traits">${primaryTraits.map(cell).join("")}</div>`;
 }
 
 const SIG_TREND_COPY: Record<"improving" | "worsening" | "stable" | "uncertain", string> = {
@@ -861,18 +876,15 @@ export function renderSignature(
     return;
   }
 
-  const typeChip =
-    sig.type && sig.typeNickname
-      ? `<div class="sig-type"><span class="sig-type-letters">${esc(sig.type)}</span><span class="sig-type-nick">${esc(sig.typeNickname)}</span></div>`
-      : "";
+  const lede = oceanLede(sig.primaryTraits);
   const bars = sig.traits.map(traitBar).join("");
   card.innerHTML = `
-    <h3>${icon("spark")} Your hum signature <span class="badge-mini">${sig.status === "tentative" ? "tentative" : "early"} · exploratory, not a test</span></h3>
-    ${typeChip}
+    <h3>${icon("spark")} Your hum signature <span class="badge-mini">Big Five (OCEAN) · ${sig.status === "tentative" ? "tentative" : "early"} · exploratory, not a test</span></h3>
+    ${lede}
     <p class="sig-headline">${esc(sig.headline)}</p>
     <div class="sig-traits">${bars}</div>
     ${trendLine}
-    <p class="disclaimer">A playful mirror of how your hums tend to sound over time; not a personality test, not a diagnosis.</p>
+    <p class="disclaimer">An exploratory mirror of how your hums tend to sound over time, leaning on the two traits most legible in a voice (openness and conscientiousness); not a personality test, not a clinical read.</p>
   `;
 }
 

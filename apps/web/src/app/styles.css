@@ -1681,24 +1681,42 @@ h3 .ic,
   padding: 0.16rem 0.5rem;
   margin-left: 0.4rem;
 }
-.sig-type {
+/* OCEAN lede: the two foregrounded traits (Openness, Conscientiousness). */
+.sig-ocean {
   display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  margin: 0.2rem 0 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.2rem 0 0.6rem;
 }
-.sig-type-letters {
-  font: 800 1.5rem/1 "Iowan Old Style", Georgia, serif;
-  letter-spacing: 0.12em;
-  color: #fff;
-  padding: 0.35rem 0.7rem;
-  border-radius: 12px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--state-accent) 48%, var(--glass)), color-mix(in srgb, var(--state-accent) 26%, var(--glass)));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 22px -12px color-mix(in srgb, var(--state-accent) 75%, transparent);
+.sig-ocean-trait {
+  flex: 1 1 0;
+  min-width: 8.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--state-accent) 22%, var(--glass)), color-mix(in srgb, var(--state-accent) 11%, var(--glass)));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 8px 22px -14px color-mix(in srgb, var(--state-accent) 70%, transparent);
 }
-.sig-type-nick { font-style: italic; color: var(--ink-soft); font-size: 1.02rem; }
+.sig-ocean-name {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 800;
+  color: var(--ink-mute);
+}
+.sig-ocean-lean {
+  font: 700 1.15rem/1.1 "Iowan Old Style", Georgia, serif;
+  color: var(--ink);
+}
+.sig-ocean-lean.balanced { color: var(--ink-soft); }
 .sig-headline { color: var(--ink-soft); margin: 0.2rem 0 0.7rem; }
 .sig-traits { display: flex; flex-direction: column; gap: 0.55rem; margin: 0.3rem 0 0.6rem; }
+.trait.primary .trait-name { color: var(--state-accent); }
+.trait.primary .trait-track { box-shadow: 0 0 0 1px color-mix(in srgb, var(--state-accent) 22%, transparent); }
+.trait-head { margin-bottom: 0.1rem; }
+.trait-name { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 800; color: var(--ink-mute); }
 .trait-poles { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--ink-mute); margin-bottom: 0.18rem; }
 .trait-poles .on { color: var(--ink); font-weight: 700; }
 .trait-track {

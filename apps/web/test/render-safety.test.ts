@@ -41,7 +41,9 @@ import {
   renderPersonalization,
   renderProvenance,
   renderCaptureRejected,
+  renderSignature,
 } from "../src/app/render";
+import { assessPersonalitySignature } from "@hum-ai/personality-signature";
 
 // ── tiny DOM stub (no jsdom) ──────────────────────────────────────────────────
 interface StubEl {
@@ -259,6 +261,50 @@ test("a read produced with a HELD gate-failed prior renders safe provenance (v3 
   const prov = els.get("provenance");
   assert.ok(prov && prov.innerHTML.length > 0, "provenance must render");
   assertAllCapturedSafe("held-prior");
+});
+
+// The OCEAN hum-signature card (renderSignature) carries render-ONLY copy — the badge and the
+// disclaimer — that lives nowhere else and is NOT covered by the @hum-ai/personality-signature
+// package's safety test. Screen the WHOLE visible card text for forbidden phrases here so any
+// future edit reintroducing diagnosis/overclaim language into the card fails the build. (We scope
+// the validateUserFacingText screen to THIS card because its disclaimers deliberately avoid the
+// "diagnos*" token — unlike other surfaces' protective disclaimers, which legitimately use it.)
+test("the OCEAN hum-signature card renders only safe copy, incl. the render-only badge + disclaimer", async () => {
+  const rep = (v: number): number[] => Array.from({ length: 20 }, () => v);
+  // A balanced (sparse-feature) signature AND a leaning one (steady → low openness, high conscientiousness),
+  // so both headline branches + the OCEAN lede pole words are exercised.
+  const leaningWindows: Record<string, number[]> = {
+    pitchRangeSemitones: rep(0.4), musicalityScore: rep(0.3), vibratoRegularity: rep(0.2),
+    controlledExpressionScore: rep(0.9), amplitudeStability: rep(0.97), pitchStability: rep(0.98),
+    residualInstabilityScore: rep(0.12), shimmerProxy: rep(0.06), jitter: rep(0.006),
+    meanRms: rep(0.06), peakAmplitude: rep(0.2), activeFrameRatio: rep(0.5), spectralCentroidHz: rep(720),
+    smoothnessScore: rep(0.9), breathinessProxy: rep(0.15), residualPitchInstability: rep(0.06),
+  };
+  const sigs = [
+    assessPersonalitySignature(matureHistory.eligibleSamplesByFeature, matureHistory.priorEligibleCount), // ~balanced
+    assessPersonalitySignature(leaningWindows, 30), // leaning (deliberate / grounded)
+  ];
+  for (const sig of sigs) {
+    installDom();
+    const read = await orchestrateHumRead({
+      features: computeFeatures(synthHum({ seed: 8, f0: 128, targetPeak: 0.65 })),
+      consent: withConsent("local_processing", "clinical_risk_surfacing"),
+      modelVersion,
+      now,
+      history: matureHistory,
+    });
+    renderSignature(sig, read, withConsent("local_processing", "clinical_risk_surfacing"), read.internal.eligibleHumCount);
+    const card = els.get("signature-card");
+    assert.ok(card && card.innerHTML.length > 0, "signature card must render");
+    assertHtmlSafe(card.innerHTML, "signature-card"); // raw% / clinical id / raw-audio
+    const text = visibleText(card.innerHTML);
+    assert.equal(validateUserFacingText(text).ok, true, `forbidden phrase in signature card: "${text}"`);
+    // The MBTI overlay must never reappear in the rendered card.
+    assert.ok(!/\b[EI][NS][FT][JP]\b/.test(text), `MBTI-like code rendered in signature card: "${text}"`);
+    // The OCEAN framing + the anti-overclaim frame are present.
+    assert.match(text, /OCEAN/);
+    assert.match(text, /not a personality test/);
+  }
 });
 
 // Smoke check that the safety asserters actually reject unsafe copy (guards the guards).

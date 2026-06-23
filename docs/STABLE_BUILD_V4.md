@@ -15,8 +15,10 @@ a **UX + assessment overhaul plus one new science source**, without adding any n
 > accepted, and a rejected take says exactly why); the read *speaks plainly* and *unfurls* instead of
 > hiding behind a ripple; mood/energy is a *place you can see*; today's step depends on *recent days, not
 > one hum*; and the longitudinal within-you assessment is now *first-class on screen* — including a
-> tentative, exploratory **hum-personality signature** (Big Five + a playful 4-letter type) that
-> personalises the experience. One new source — **Brocal et al. (DALI)** — grounds the gate's pause
+> tentative, exploratory **hum-personality signature** (Big Five + a playful 4-letter type — the
+> 4-letter type was **removed in v5.x**, see §3 note, leaving an OCEAN-only read foregrounding
+> Openness & Conscientiousness) that personalises the experience. One new source — **Brocal et al.
+> (DALI)** — grounds the gate's pause
 > tolerance and the HiTL loop.
 
 ---
@@ -100,15 +102,22 @@ A **pure, DOM-free** package that reads only the longitudinal baseline's derived
 surface) and produces a tentative, **exploratory** signature:
 
 - **Substrate — Big Five (OCEAN) tendencies**, each a within-user value in `[-1, 1]` mapped from robust feature
-  centres by directional heuristics (extraversion ← loudness/energy/pitch-variation; openness ← pitch range /
-  musicality; conscientiousness ← control/steadiness; agreeableness ← warmth/smoothness; emotional steadiness ←
-  inverse vocal perturbation). "Apparent personality from speech" has a *real but limited* basis, which is why the
+  centres by directional heuristics (openness ← pitch range / musicality; conscientiousness ← control/steadiness;
+  extraversion ← loudness/energy/pitch-variation; agreeableness ← warmth/smoothness; emotional steadiness ←
+  inverse vocal perturbation). "Apparent personality from voice" has a *real but modest* basis, which is why the
   read is framed as exploratory.
-- **Overlay — a playful 4-letter "hum type"** (E/I←extraversion, N/S←openness, F/T←agreeableness, J/P←conscientiousness)
-  with a friendly nickname. Explicitly "a mirror of your voice, not a personality test."
-- **Confidence gating:** `forming` (< 5 hums, no type) → `emerging` (5–11) → `tentative` (≥ 12). Never beyond
-  "tentative". All surfaced strings pass the safety-language screen (test-enforced) — warm, plain pole words
+- **Foregrounded traits — Openness & Conscientiousness** (the two most reliably voice-recoverable, and the two
+  that map cleanly onto a sustained hum). They lead the card (a two-tile lede) and the headline; the other three
+  axes show as trait bars below. Explicitly "a mirror of your voice, not a personality test." See
+  `docs/research/voice-big-five.md` for the cited basis.
+- **Confidence gating:** `forming` (< 5 hums, no primary read) → `emerging` (5–11) → `tentative` (≥ 12). Never
+  beyond "tentative". All surfaced strings pass the safety-language screen (test-enforced) — warm, plain pole words
   ("steady ↔ sensitive", never "neurotic").
+
+> **Update (v5.x, 2026-06-23):** the **Myers-Briggs-style 4-letter "hum type" overlay was removed entirely** (no
+> acoustic evidence base) in favour of an OCEAN-only surface that foregrounds **Openness** and **Conscientiousness**.
+> `humType`/`TYPE_NICKNAME` and the `type`/`typeNickname`/`typeBlurb` fields are gone; the signature now exposes
+> `primaryTraits` and a per-trait `label`/`primary`. See `docs/research/voice-big-five.md`.
 
 **Wired across:** the signature is computed in the web client from the baseline and (a) rendered first-class in the
 State window (`renderSignature`), and (b) reduced to a `{adjective, steadiness}` **lean** that is threaded

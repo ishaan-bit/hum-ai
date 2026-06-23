@@ -31,10 +31,10 @@ const STEADY = {
   smoothnessScore: 0.9, breathinessProxy: 0.15, jitter: 0.006, shimmerProxy: 0.06, residualPitchInstability: 0.06,
 };
 
-test("forming below the emerging gate — no type yet", () => {
+test("forming below the emerging gate — no primary read yet", () => {
   const sig = assessPersonalitySignature(win(STEADY, EMERGING_HUMS - 1), EMERGING_HUMS - 1);
   assert.equal(sig.status, "forming");
-  assert.equal(sig.type, null);
+  assert.equal(sig.primaryTraits.length, 0);
   assert.equal(sig.lean.dominant, null);
   assert.equal(sig.traits.length, 5);
 });
@@ -57,7 +57,33 @@ test("a steady profile reads high on emotional steadiness + conscientiousness", 
   const consc = sig.traits.find((t) => t.key === "conscientiousness")!;
   assert.equal(steadiness.lean, "high");
   assert.equal(consc.lean, "high");
-  assert.equal(sig.type!.length, 4);
+});
+
+test("the surface foregrounds Openness + Conscientiousness (the two primary OCEAN traits)", () => {
+  const sig = assessPersonalitySignature(win(STEADY, TENTATIVE_HUMS), TENTATIVE_HUMS);
+  // Traits are ordered with the two foregrounded traits first.
+  assert.deepEqual(sig.traits.slice(0, 2).map((t) => t.key), ["openness", "conscientiousness"]);
+  // primaryTraits surfaces exactly those two, flagged primary, with human-readable labels.
+  assert.deepEqual(sig.primaryTraits.map((t) => t.key), ["openness", "conscientiousness"]);
+  assert.ok(sig.primaryTraits.every((t) => t.primary));
+  assert.deepEqual(sig.primaryTraits.map((t) => t.label), ["Openness", "Conscientiousness"]);
+  // The headline leads with the OCEAN framing.
+  assert.match(sig.headline, /OCEAN/);
+});
+
+test("no Myers-Briggs / 4-letter type leaks into any surfaced string", () => {
+  const mbti = /\b[EI][NS][FT][JP]\b/; // ENFP, INTJ, ...
+  for (const profile of [EXPRESSIVE, STEADY]) {
+    for (const n of [0, EMERGING_HUMS, TENTATIVE_HUMS, TENTATIVE_HUMS + 40]) {
+      const sig = assessPersonalitySignature(win(profile, n), n);
+      // The shape carries no type field at all.
+      assert.ok(!("type" in sig), "signature should not carry a 4-letter type field");
+      for (const s of personalitySignatureStrings(sig)) {
+        assert.ok(!mbti.test(s), `MBTI-like code leaked: "${s}"`);
+        assert.ok(!/myers|briggs|mbti/i.test(s), `MBTI term leaked: "${s}"`);
+      }
+    }
+  }
 });
 
 test("an expressive profile reads more outgoing than a steady one", () => {
