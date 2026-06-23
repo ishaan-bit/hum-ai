@@ -509,6 +509,9 @@ async function runOne(
   // STAGE ① — a rejected capture is never read for affect. Show "hum again", surface NO
   // affect, and persist/learn nothing (the state came back unchanged). ADR-0005.
   if (!result.accepted) {
+    // Diagnostic breadcrumb (console only; derived on-device values, no raw audio): if a real hum
+    // is ever rejected again, this single line shows exactly which cue drove the Stage-① decision.
+    console.debug("[hum-ai] capture rejected →", result.captureGate.reason);
     session.state = result.nextState;
     session.lastRead = null;
     session.pending = null;
