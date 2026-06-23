@@ -325,6 +325,14 @@ async function boot(): Promise<void> {
   session.state =
     pickFurthest(cloud, local) ?? newPersonalizationState(asUserId(effectiveId), nowTs(), MODEL_VERSION);
 
+  // Backfill the recent-reads buffer from persisted relapseHistory so the diary chart
+  // shows real data on page reload instead of the ghost placeholder.
+  if (session.state.relapseHistory.length > 0) {
+    session.recentReads = session.state.relapseHistory
+      .slice(-RECENT_READS_MAX)
+      .map(s => ({ valence: s.dimensional.valence, arousal: s.dimensional.arousal }));
+  }
+
   renderLadderForState(session.state);
   renderHistory(session.log);
   updateSyncStatus();

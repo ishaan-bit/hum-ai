@@ -801,6 +801,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       isEarlyBaseline: confidence.isEarlyBaseline,
       divergenceActive: divergence.anchored,
       divergenceMagnitude: divergence.magnitude,
+      trendDirection,
     }),
     suggestion: inference.abstained
       ? null

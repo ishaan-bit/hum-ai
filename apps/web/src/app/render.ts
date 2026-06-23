@@ -268,15 +268,9 @@ function moodSpectra(vRes: AxisResolution, aRes: AxisResolution): string {
     </div>`;
 }
 
-/** Honest trained-prior provenance line for the read (qualitative only, no accuracy %). */
-function axisProvenance(res: AxisResolution): string {
-  if (res.trainedContribution === "in_domain")
-    return "On-device acoustic read; the trained model agreed with the signal for this hum.";
-  if (res.trainedContribution === "abstained_ood")
-    return "On-device acoustic read; the trained model was set aside (this hum is outside its training domain).";
-  if (res.trainedContribution === "held_failed_gate")
-    return "On-device acoustic read; a trained model is available but isn't ready to steer your read yet.";
-  return "On-device acoustic read (no trained model loaded).";
+/** Provenance line for the read — user-facing, no model-status detail. */
+function axisProvenance(_res: AxisResolution): string {
+  return "On-device acoustic read.";
 }
 
 // ── richer diagnostics: a small tile grid of everything Hum noticed (qualitative only) ──

@@ -113,6 +113,7 @@ export function readNote(opts: {
   readonly isEarlyBaseline: boolean;
   readonly divergenceActive: boolean;
   readonly divergenceMagnitude: number;
+  readonly trendDirection?: "improving" | "worsening" | "stable" | "uncertain";
 }): string {
   if (opts.abstained) return "We'll try again next time — this one wasn't clear enough to read.";
   if (opts.divergenceActive && opts.divergenceMagnitude >= 1.0) {
@@ -121,5 +122,8 @@ export function readNote(opts: {
   // Frame an early read as baseline-BUILDING, not as doubt — each hum teaches Hum your
   // normal, which is what later lets it notice change early.
   if (opts.isEarlyBaseline) return "One of your early hums — each one teaches Hum a little more of your usual.";
+  // Bridge per-hum vs trend so they don't contradict each other.
+  if (opts.trendDirection === "worsening")
+    return "Today's hum is within your usual range, though your recent pattern has been running a little heavier.";
   return "This sits close to the pattern Hum has come to know as yours.";
 }
