@@ -67,6 +67,13 @@ import {
   saveFusionParamsLocal,
 } from "./corpus-store";
 import { signInAnon, getFirebase } from "./firebase";
+import {
+  loadDiaryContext,
+  saveDiaryContext,
+  toggleEntryTag,
+  patchEntryContext,
+  type DiaryContextMap,
+} from "./diary-store";
 import { humAgainMessage, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import {
   renderRead,
@@ -84,6 +91,7 @@ import {
   clearFeedbackPrompt,
   renderModelLab,
   setCaptureStatus,
+  setCaptureProgress,
   setSyncStatus,
   setBusy,
   type HistoryEntry,
@@ -147,6 +155,10 @@ interface Session {
   recentReads: { valence: number; arousal: number }[];
   /** The tentative within-user hum-personality signature (recomputed after each usable read). */
   signature: PersonalitySignature | null;
+  /** Self-authored, local-only diary context (chips + note) per hum, keyed by capture time. */
+  diaryContext: DiaryContextMap;
+  /** Which hum the diary currently has open for inspection (null = the most recent). */
+  diaryFocus: string | null;
 }
 
 const session: Session = {
@@ -168,6 +180,8 @@ const session: Session = {
   lastCaption: null,
   recentReads: [],
   signature: null,
+  diaryContext: {},
+  diaryFocus: null,
 };
 
 /** Recent-reads buffer cap — a "last week or so" window for the history-aware intervention. */
@@ -205,6 +219,23 @@ function syncEnabled(): boolean {
   return isGranted(session.consent, "derived_feature_sync") && session.uid !== null;
 }
 
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+// ── THE LISTENING: the recording ritual's phases ────────────────────────────────
+// The hum capture is staged so each beat feels intentional, not like a recorder running:
+//   ready     — the calm invitation (chrome present).
+//   listening — tapped Hum; the world quiets (CSS recedes the chrome) and the orb takes over.
+//   faint     — live sub-state: we can barely hear you, nudge gently closer.
+//   settling  — the hum landed; the orb blooms in place, a held beat of arrival before the read.
+// The phase is mirrored on <body data-hum-phase> so the whole recede/return is pure CSS.
+type HumPhase = "ready" | "listening" | "faint" | "settling";
+function setHumPhase(phase: HumPhase): void {
+  if (typeof document !== "undefined") document.body.dataset.humPhase = phase;
+}
+
+/** The resting invitation under the Hum button — calm, never a "no mic?" instrument prompt. */
+const READY_PROMPT = "When you’re ready.";
+
 // ── AURA experience: the orb + the windowed stage ───────────────────────────────
 function setupExperience(): void {
   const canvas = document.getElementById("orb-canvas") as HTMLCanvasElement | null;
@@ -214,6 +245,7 @@ function setupExperience(): void {
     orb.setMode("resting");
     orb.start();
   }
+  setHumPhase("ready");
   // Boot the world in its honest, idle neutral state — listening, not pretending.
   applyStateVisual(NEUTRAL_VISUAL);
 
@@ -325,20 +357,22 @@ async function boot(): Promise<void> {
   session.state =
     pickFurthest(cloud, local) ?? newPersonalizationState(asUserId(effectiveId), nowTs(), MODEL_VERSION);
 
-  // Backfill the recent-reads buffer from persisted relapseHistory so the diary chart
-  // shows real data on page reload instead of the ghost placeholder.
+  // Backfill the recent-reads buffer from persisted relapseHistory so today's history-aware
+  // intervention reflects recent reads even on a fresh page load.
   if (session.state.relapseHistory.length > 0) {
     session.recentReads = session.state.relapseHistory
       .slice(-RECENT_READS_MAX)
       .map(s => ({ valence: s.dimensional.valence, arousal: s.dimensional.arousal }));
   }
+  // The user's own optional context (chips + notes), local-only.
+  session.diaryContext = loadDiaryContext(session.localId);
 
   renderLadderForState(session.state);
   renderHistory(session.log);
   updateSyncStatus();
   // Render the diary panel up front (locked when consent is off) so it's discoverable from the
-  // first visit, before any hum. The data stays consent-gated; the trail starts as a ghost.
-  renderLongitudinal(null, session.consent, session.state.eligibleHumCount, session.recentReads);
+  // first visit, before any hum. The data stays consent-gated; the chart starts as a ghost.
+  renderDiary(null);
 
   // Load the user's NATIVE-HUM corpus + retrained model (local; merge cloud when consented).
   // This is the HiTL asset: their own confirmed hums and the model trained on them (ADR-0011).
@@ -392,8 +426,31 @@ function studyRelapseLine(): string | null {
   return null;
 }
 
+/**
+ * Render the Diary of Hums from a SINGLE source of truth. The chart + moments come from the
+ * real on-device relapse ring (timestamped mood + risk, up to 64 hums), NOT the 8-slot
+ * intervention buffer — so the chart, the moments, and the header count all agree. The header
+ * count stays `eligibleHumCount` (the lived total Hum has learned from). Optional self-authored
+ * context (local-only) and the inspected moment ride alongside.
+ */
+function renderDiary(read: OrchestratedRead | null): void {
+  const points = session.state.relapseHistory.map((s) => ({
+    at: s.capturedAt as string,
+    valence: s.dimensional.valence,
+    risk: s.riskScore,
+  }));
+  renderLongitudinal(
+    read,
+    session.consent,
+    read?.internal.eligibleHumCount ?? session.state.eligibleHumCount,
+    { points, context: session.diaryContext, focusAt: session.diaryFocus },
+  );
+}
+
 function focusHum(): void {
   stage?.go("hum");
+  setHumPhase("ready");
+  setCaptureStatus(READY_PROMPT);
   (document.getElementById("btn-record") as HTMLElement | null)?.focus();
 }
 
@@ -457,12 +514,7 @@ function reflectConsentInputs(): void {
 async function onConsentChange(scope: ToggleableScope, granted: boolean): Promise<void> {
   session.consent = setScope(session.consent, scope, granted);
   if (scope === "clinical_risk_surfacing") {
-    renderLongitudinal(
-      session.lastRead,
-      session.consent,
-      session.lastRead?.internal.eligibleHumCount ?? session.state.eligibleHumCount,
-      session.recentReads,
-    );
+    renderDiary(session.lastRead);
   }
   if (scope === "derived_feature_sync") {
     if (granted) {
@@ -562,7 +614,9 @@ async function runOne(
   renderInterventionOfDay(result.read);
   renderPersonalization(result.read);
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
-  renderLongitudinal(result.read, session.consent, result.read.internal.eligibleHumCount, session.recentReads);
+  // A fresh usable hum becomes the newly-inspected moment (its context panel is ready immediately).
+  if (!result.read.userFacing.abstained) session.diaryFocus = null;
+  renderDiary(result.read);
   renderSignature(session.signature ?? currentSignature(), result.read, session.consent, result.read.internal.eligibleHumCount);
   renderProvenance(result.read, session.prior, syncEnabled());
 
@@ -702,25 +756,93 @@ async function runSynth(kind: SynthKind): Promise<void> {
   }
 }
 
+/**
+ * The held beat of arrival. The hum landed: the orb blooms into its read colour right where you
+ * hummed, then a short pause before the read unfurls — so completion FEELS like an arrival, not a
+ * jump cut. Wordless on purpose (the read itself is announced for screen readers a moment later).
+ */
+async function arrive(abstained: boolean): Promise<void> {
+  setHumPhase("settling");
+  if (abstained) {
+    setCaptureStatus("");
+    await delay(360);
+    return;
+  }
+  setCaptureStatus("There you are.");
+  orb?.setMode("revealed"); // bloom the orb's colour in place, over the Hum button
+  orb?.pulse();
+  await delay(700);
+}
+
 async function runMic(): Promise<void> {
   setBusy(true);
   stage?.go("hum");
   orb?.setMode("capturing");
   anchorOrbToHumButton();
-  setCaptureStatus("Listening… hold one steady note.", 0);
+  // Enter the ritual: the world quiets to listen (the chrome recedes in CSS).
+  setHumPhase("listening");
+  setCaptureStatus("Listening.", 0);
+
+  // A gentle live read of the room from the SAME telemetry the orb uses — never a level meter.
+  // Once we've clearly heard the hum we latch to "listening" (breath pauses won't nag); if nothing
+  // carries by a third of the way through, we nudge closer.
+  let phaseNow: HumPhase = "listening";
+  let voicedRun = 0;
+  let heard = false;
+  let saidAlmost = false;
+  const cue = (p: HumPhase, text: string): void => {
+    if (p !== phaseNow) {
+      phaseNow = p;
+      setHumPhase(p);
+    }
+    setCaptureStatus(text);
+  };
+
   try {
     const gate = await runOne(
       () =>
         recordHum({
           seconds: 12,
-          onProgress: (f) => setCaptureStatus(`Listening… ${Math.round(f * 12)}s of 12`, f),
-          onLevel: (level) => orb?.pushLevel(level),
+          onProgress: (f) => setCaptureProgress(f), // hairline echo; the orb ring is the hero progress
+          onLevel: (level) => {
+            orb?.pushLevel(level);
+            if (level.voiced || level.level > 0.07) {
+              voicedRun += 1;
+              if (voicedRun >= 3 && !heard) {
+                heard = true;
+                cue("listening", "I can hear you.");
+              }
+            } else {
+              voicedRun = 0;
+              if (!heard && level.fraction > 0.3 && phaseNow !== "faint") {
+                cue("faint", "A little closer. Let the note carry.");
+              }
+            }
+            if (heard && !saidAlmost && level.fraction > 0.85) {
+              saidAlmost = true;
+              setCaptureStatus("Almost there.");
+            }
+          },
         }),
-      { advance: true },
+      // Hold the advance: render the read into the (hidden) result window, but let runMic stage the
+      // arrival beat before we cross over, so the reveal feels earned.
+      { advance: false },
     );
-    setCaptureStatus(gate.accepted ? "" : humAgainMessage(gate.reasonCode));
+    if (gate.accepted) {
+      const abstained = session.lastRead?.userFacing.abstained ?? false;
+      await arrive(abstained);
+      if (session.lastRead) presentRead(session.lastRead, true);
+      setHumPhase("ready");
+      setCaptureStatus("");
+    } else {
+      // A miss is part of the ritual, not an error screen: the chrome returns and the orb settles to
+      // its hollow listening ring while we say, plainly and kindly, what to try next.
+      setHumPhase("ready");
+      setCaptureStatus(humAgainMessage(gate.reasonCode));
+    }
   } catch (err) {
     orb?.setMode("resting");
+    setHumPhase("ready");
     setCaptureStatus(`Mic unavailable (${(err as Error).message}). Open the tray to simulate a hum.`);
   } finally {
     orb?.pushLevel(null);
@@ -803,6 +925,41 @@ function wireControls(): void {
   document.getElementById("btn-demo-seed")?.removeAttribute("hidden");
   document.getElementById("btn-demo-seed")?.addEventListener("click", () => void runDemoSeed());
 
+  // ── Diary interactions (delegated; the card's innerHTML is replaced on every render) ──────────
+  const diaryCard = document.getElementById("longitudinal-card");
+  // The `at` of the hum whose context the chips/note edit (the inspected/focus moment).
+  const focusTarget = (): string | null =>
+    diaryCard?.querySelector<HTMLElement>(".diary-focus")?.dataset.focusAt ?? null;
+  diaryCard?.addEventListener("click", (e) => {
+    const el = e.target as HTMLElement;
+    // Inspect a moment — tapping a chart dot or a "recent check-ins" row.
+    const pick = el.closest<HTMLElement>("[data-at]");
+    if (pick && pick.dataset.at) {
+      session.diaryFocus = pick.dataset.at;
+      renderDiary(session.lastRead);
+      return;
+    }
+    // Toggle a life-context chip on the inspected hum.
+    const chip = el.closest<HTMLElement>("[data-ctx-tag]");
+    if (chip && chip.dataset.ctxTag) {
+      const at = focusTarget();
+      if (!at) return;
+      session.diaryContext = toggleEntryTag(session.diaryContext, at, chip.dataset.ctxTag);
+      saveDiaryContext(session.localId, session.diaryContext);
+      renderDiary(session.lastRead);
+    }
+  });
+  // Save a note on blur/enter (not per keystroke, so the field never re-renders mid-typing).
+  diaryCard?.addEventListener("change", (e) => {
+    const input = (e.target as HTMLElement).closest<HTMLInputElement>("[data-ctx-note]");
+    if (!input) return;
+    const at = focusTarget();
+    if (!at) return;
+    session.diaryContext = patchEntryContext(session.diaryContext, at, { note: input.value });
+    saveDiaryContext(session.localId, session.diaryContext);
+    renderDiary(session.lastRead);
+  });
+
   document
     .getElementById("consent-sync")
     ?.addEventListener("change", (e) => void onConsentChange("derived_feature_sync", (e.target as HTMLInputElement).checked));
@@ -825,6 +982,7 @@ function wireControls(): void {
     // Return the world to its idle neutral state and re-lock the result windows.
     applyStateVisual(NEUTRAL_VISUAL);
     orb?.setMode("resting");
+    setHumPhase("ready");
     showShare(false);
     stage?.closeTray();
     stage?.lock();

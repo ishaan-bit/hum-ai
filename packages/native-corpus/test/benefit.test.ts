@@ -7,7 +7,7 @@ import { assessPersonalizationBenefit, BENEFIT_MIN_EXAMPLES } from "../src/benef
 import { makeExample } from "./fixtures";
 
 // The fixtures' BASE features (a 12 s 180 Hz sine) have a FIXED acoustic backbone of
-// ≈ { valence: 0.46, arousal: 0.18 }. Every example below reuses BASE, so the backbone
+// ≈ { valence: 0.66, arousal: 0.18 }. Every example below reuses BASE, so the backbone
 // prediction is constant and we can place the self-report + the personalized prediction
 // relative to it to drive each verdict deterministically.
 function corpusOf(predicted: HumLabel, label: HumLabel, count: number): NativeCorpus {
@@ -29,7 +29,7 @@ test("below threshold returns insufficient_evidence (abstain, no verdict)", () =
 });
 
 test("personalized predictions beating the backbone returns personalization_helping", () => {
-  // Self-report is far from the backbone (0.46/0.18); the personalized read nails it.
+  // Self-report is far from the backbone (0.66/0.18); the personalized read nails it.
   const c = corpusOf({ valence: -0.6, arousal: -0.6 }, { valence: -0.6, arousal: -0.6 }, 10);
   const r = assessPersonalizationBenefit(c);
   assert.equal(r.status, "personalization_helping");
@@ -39,7 +39,7 @@ test("personalized predictions beating the backbone returns personalization_help
 
 test("personalized predictions worse than the backbone returns personalization_worsening", () => {
   // Self-report sits right on the backbone; the personalized read is far off.
-  const c = corpusOf({ valence: -0.6, arousal: -0.6 }, { valence: 0.45, arousal: 0.2 }, 10);
+  const c = corpusOf({ valence: -0.6, arousal: -0.6 }, { valence: 0.66, arousal: 0.18 }, 10);
   const r = assessPersonalizationBenefit(c);
   assert.equal(r.status, "personalization_worsening");
   assert.ok(r.improvement !== null && r.improvement < 0);
@@ -47,7 +47,7 @@ test("personalized predictions worse than the backbone returns personalization_w
 
 test("a small/equal difference returns neutral_or_unclear", () => {
   // Personalized prediction == backbone ⇒ identical error ⇒ improvement 0 ⇒ unclear.
-  const c = corpusOf({ valence: 0.459, arousal: 0.185 }, { valence: -0.5, arousal: 0.5 }, 10);
+  const c = corpusOf({ valence: 0.659, arousal: 0.185 }, { valence: -0.5, arousal: 0.5 }, 10);
   const r = assessPersonalizationBenefit(c);
   assert.equal(r.status, "neutral_or_unclear");
   assert.ok(r.improvement !== null && Math.abs(r.improvement) <= 0.03 + 1e-9);

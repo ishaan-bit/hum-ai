@@ -329,20 +329,25 @@ body {
   min-height: 1.2em;
   margin: 0;
   max-width: 22rem;
+  text-align: center;
 }
+/* A delicate hairline echo of the timer — the orb's own ring is the hero progress, so this stays
+   barely-there (and is the non-canvas / reduced-motion fallback). */
 .capture-progress {
-  width: min(60vw, 16rem);
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  width: min(46vw, 11rem);
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   overflow: hidden;
+  opacity: 0.65;
 }
 .capture-progress > span {
   display: block;
   height: 100%;
   width: 0;
-  background: var(--state-accent);
-  transition: width 0.1s linear;
+  background: linear-gradient(90deg, transparent, var(--state-accent));
+  box-shadow: 0 0 8px var(--state-glow);
+  transition: width 0.18s linear;
 }
 .window-foot {
   margin: 0;
@@ -1463,16 +1468,23 @@ h3 .ic,
   -webkit-backdrop-filter: blur(16px) saturate(1.2);
   box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.8);
 }
+/* ── Diary of Hums (the private field-notebook) ─────────────────────────────── */
 .diary-svg {
   display: block;
   width: 100%;
   height: auto;
-  margin: 0.3rem 0 0.8rem;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+  margin: 0.5rem 0 0.2rem;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 70%);
   overflow: visible;
 }
-.diary-axis { stroke: rgba(255, 255, 255, 0.1); stroke-width: 1; stroke-dasharray: 3 5; }
+/* the user's own usual mood range — the "compared to what is normal for me" anchor */
+.diary-band {
+  fill: color-mix(in srgb, var(--state-accent) 13%, transparent);
+  stroke: color-mix(in srgb, var(--state-accent) 26%, transparent);
+  stroke-width: 1;
+}
+.diary-band-mid { stroke: color-mix(in srgb, var(--state-accent) 30%, transparent); stroke-width: 1; stroke-dasharray: 2 5; }
 .diary-line {
   stroke: var(--state-accent);
   stroke-width: 2;
@@ -1481,24 +1493,142 @@ h3 .ic,
   filter: drop-shadow(0 0 5px var(--state-glow));
   stroke-dasharray: 1200;
   stroke-dashoffset: 1200;
-  animation: diary-draw 1.5s var(--ease-bloom) forwards;
+  animation: diary-draw 1.4s var(--ease-bloom) forwards;
 }
 @keyframes diary-draw { to { stroke-dashoffset: 0; } }
 .diary-dot {
   transform-box: fill-box;
   transform-origin: center;
+  fill: var(--state-accent);
+  cursor: pointer;
   animation: diary-pop 0.5s var(--ease-bloom) both;
-  animation-delay: calc(var(--i, 0) * 0.06s + 0.25s);
+  animation-delay: calc(var(--i, 0) * 0.05s + 0.2s);
 }
 @keyframes diary-pop { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
-.diary-hi { fill: var(--state-accent-2); }
-.diary-mid { fill: var(--state-accent); }
-.diary-lo { fill: color-mix(in srgb, var(--state-accent-deep) 55%, var(--state-accent)); }
-.diary-today { fill: #fff; filter: drop-shadow(0 0 7px var(--state-glow)); }
-.diary-ghost { fill: rgba(255, 255, 255, 0.16); animation: none; }
-.diary-svg-ghost { opacity: 0.7; }
-.diary-trend-improving { color: #8fd6a4; }
-.diary-trend-worsening { color: #e6c79a; }
+.diary-dot.pos-usual { fill: var(--state-accent); }
+.diary-dot.pos-above { fill: var(--state-accent-2); }
+.diary-dot.pos-below { fill: color-mix(in srgb, var(--state-accent-deep) 55%, var(--state-accent)); }
+.diary-dot.pos-farBelow { fill: #e6b07a; }
+.diary-today { stroke: #fff; stroke-width: 1.4; }
+.diary-dot.is-focus { stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 7px var(--state-glow)); }
+.diary-ghost { fill: rgba(255, 255, 255, 0.16); cursor: default; animation: none; }
+.diary-svg-ghost { opacity: 0.6; }
+
+.diary-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.66rem;
+  color: var(--ink-mute);
+  margin: 0 0.1rem 0.7rem;
+}
+.diary-scale-legend { font-style: italic; opacity: 0.85; }
+
+/* the resolved "Lately" reading — one tone-tinted block, never self-contradictory */
+.diary-lately-block {
+  margin: 0.2rem 0 0.7rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  border-left: 3px solid var(--state-accent);
+  background: color-mix(in srgb, var(--state-accent) 6%, var(--glass));
+}
+.diary-lately-block.tone-unsettled { border-left-color: #e6b07a; }
+.diary-lately-block.tone-easing { border-left-color: #8fd6a4; }
+.diary-lately-tag {
+  font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 800;
+  color: var(--state-accent);
+}
+.diary-lately-block.tone-unsettled .diary-lately-tag { color: #e6b07a; }
+.diary-lately-block.tone-easing .diary-lately-tag { color: #8fd6a4; }
+.diary-lately { color: var(--ink); font-size: 1.02rem; line-height: 1.4; margin: 0.2rem 0 0; }
+.diary-lately-block .muted { margin: 0.25rem 0 0; }
+
+/* per-moment "vs your usual" tags */
+.diary-tag {
+  font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+  padding: 0.12rem 0.5rem; border-radius: 999px;
+  border: 1px solid var(--glass-line); color: var(--ink-soft);
+}
+.diary-tag.tag-above { color: #8fd6a4; border-color: rgba(143, 214, 164, 0.4); }
+.diary-tag.tag-below { color: #e6c79a; border-color: rgba(230, 199, 154, 0.35); }
+.diary-tag.tag-farBelow { color: #e6b07a; border-color: rgba(230, 176, 122, 0.45); }
+
+/* the inspected moment + optional, low-friction context capture */
+.diary-focus {
+  margin: 0.2rem 0 0.6rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 14px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+}
+.diary-focus-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.diary-focus-head strong { color: var(--ink); font-size: 0.95rem; }
+.diary-ctx-label { margin: 0.55rem 0 0.35rem; }
+.diary-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.diary-chip {
+  font-size: 0.74rem; padding: 0.28rem 0.62rem; border-radius: 999px;
+  border: 1px solid var(--glass-line); background: rgba(255, 255, 255, 0.03);
+  color: var(--ink-soft); cursor: pointer; transition: background 0.18s var(--ease-bloom), border-color 0.18s var(--ease-bloom), color 0.18s var(--ease-bloom);
+}
+.diary-chip:hover { border-color: color-mix(in srgb, var(--state-accent) 40%, var(--glass-line)); }
+.diary-chip.on {
+  background: color-mix(in srgb, var(--state-accent) 24%, var(--glass));
+  border-color: color-mix(in srgb, var(--state-accent) 55%, transparent);
+  color: #fff;
+}
+.diary-note { display: block; margin-top: 0.55rem; }
+.diary-note input {
+  width: 100%; box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--glass-line);
+  border-radius: 10px; padding: 0.5rem 0.65rem; color: var(--ink);
+  font: inherit; font-size: 0.88rem;
+}
+.diary-note input::placeholder { color: var(--ink-mute); }
+.diary-note input:focus-visible { outline: 2px solid color-mix(in srgb, var(--state-accent) 60%, transparent); outline-offset: 1px; }
+
+/* recent check-ins — the individual hums, inspectable (and the keyboard path to the chart) */
+.diary-moments { margin: 0.4rem 0 0.6rem; }
+.diary-section-label { margin: 0 0 0.35rem; }
+.diary-moment {
+  display: grid;
+  grid-template-columns: 5.2rem auto 1fr;
+  align-items: center; gap: 0.5rem;
+  width: 100%; text-align: left;
+  padding: 0.5rem 0.55rem; margin-bottom: 0.3rem;
+  background: rgba(255, 255, 255, 0.02); border: 1px solid transparent;
+  border-radius: 11px; color: var(--ink-soft); cursor: pointer;
+  transition: background 0.16s, border-color 0.16s;
+}
+.diary-moment:hover { background: rgba(255, 255, 255, 0.05); }
+.diary-moment.on { border-color: color-mix(in srgb, var(--state-accent) 45%, transparent); background: color-mix(in srgb, var(--state-accent) 8%, transparent); }
+.diary-moment .m-when { font-weight: 700; color: var(--ink); font-size: 0.82rem; }
+.diary-moment .m-note { font-size: 0.78rem; color: var(--ink-mute); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the calm "what the next check-ins can clarify" line */
+.diary-next {
+  display: flex; gap: 0.5rem; align-items: flex-start;
+  color: var(--ink-soft); font-size: 0.9rem; line-height: 1.45;
+  margin: 0.5rem 0;
+}
+.diary-next .ic { color: var(--state-accent); margin-top: 0.1rem; flex-shrink: 0; }
+
+/* "how this works" — the optional explainer where the model/uncertainty language lives */
+.diary-how { margin: 0.5rem 0 0.2rem; border-top: 1px solid var(--glass-line); padding-top: 0.4rem; }
+.diary-how summary {
+  cursor: pointer; font-size: 0.8rem; font-weight: 700; color: var(--ink-soft);
+  list-style: none; padding: 0.3rem 0;
+}
+.diary-how summary::-webkit-details-marker { display: none; }
+.diary-how summary::before { content: "▸ "; color: var(--state-accent); }
+.diary-how[open] summary::before { content: "▾ "; }
+.diary-how-body { padding: 0.2rem 0 0.3rem; }
+.diary-how-body .chip { margin: 0.15rem 0.2rem 0.15rem 0; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 
 /* ── per-category accent on Today's suggestion (a little colour variety) ───── */
 .iod-cat-breath_regulation .iod-cat { color: #6fd3c6; }
@@ -1737,3 +1867,84 @@ h3 .ic,
 .clin-v { font-weight: 600; }
 .clin-warn { border-color: color-mix(in srgb, #ff8a8a 50%, var(--glass-line)); }
 .clin-audit { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
+
+/* ============================================================================
+   THE LISTENING — the recording ritual.
+   Tapping Hum quiets the whole world to listen: the top bar, the nav dots, the
+   invitation copy and the footer all breathe out, leaving just the orb and one
+   soft prompt. Each beat is intentional — ready · listening · faint · settling —
+   and progress lives in the orb's own timer ring, never a recorder bar.
+   Driven by <body data-hum-phase> (set in main.ts); fully reversible, pure CSS.
+   ============================================================================ */
+
+/* the chrome eases out while we listen, and back in when we're done */
+.topbar,
+.stage-dots,
+.window-foot,
+.hum-copy {
+  transition: opacity 0.8s var(--ease), transform 0.8s var(--ease-bloom), filter 0.8s var(--ease);
+}
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"])
+  :is(.topbar, .stage-dots, .window-foot) {
+  opacity: 0;
+  pointer-events: none;
+}
+/* the invitation doesn't snap away — it sinks and softens, as if the room dimmed to listen */
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-copy {
+  opacity: 0;
+  transform: translateY(-12px);
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+/* the prompt becomes the only words in the room — a quiet, centred line beneath the orb */
+.capture-status {
+  transition: color 0.5s var(--ease), font-size 0.5s var(--ease), transform 0.5s var(--ease-bloom);
+}
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .capture-status {
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  text-shadow: 0 1px 18px rgba(0, 0, 0, 0.55);
+}
+body[data-hum-phase="faint"] .capture-status { color: #e9c79a; }
+body[data-hum-phase="settling"] .capture-status { color: var(--state-accent-2); transform: scale(1.04); }
+
+/* during the ritual the orb is the sole focal point: the button's own label + pulse-ring step
+   back so the live canvas (level, voicing, timer ring) reads cleanly through it */
+.hum-btn-label { transition: opacity 0.5s var(--ease); }
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-btn-label { opacity: 0; }
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-btn-ring {
+  opacity: 0;
+  animation: none;
+}
+
+/* ARRIVAL — a soft bloom of the read's own light rises from where you hummed, once */
+body[data-hum-phase="settling"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: radial-gradient(58% 48% at 50% 56%, var(--state-glow), transparent 72%);
+  animation: arrival-bloom 0.9s var(--ease-bloom);
+}
+@keyframes arrival-bloom {
+  0% { opacity: 0; }
+  28% { opacity: 0.7; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* keep the recede, drop the travel/blur/bloom — a plain, quick fade reads calmest */
+  .topbar, .stage-dots, .window-foot, .hum-copy, .capture-status, .hum-btn-label {
+    transition: opacity 0.25s ease;
+  }
+  body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-copy {
+    transform: none;
+    filter: none;
+  }
+  body[data-hum-phase="settling"] .capture-status { transform: none; }
+  body[data-hum-phase="settling"]::after { display: none; }
+}

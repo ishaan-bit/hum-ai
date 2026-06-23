@@ -34,6 +34,7 @@ import type { LoadedPrior } from "./prior";
 import { isGranted } from "./consent";
 import { createBreathPacer, type BreathPacer } from "./breath";
 import type { PersonalitySignature } from "@hum-ai/personality-signature";
+import { LIFE_CONTEXT, type DiaryContextMap } from "./diary-store";
 
 // esc() also de-dashes (house style: NO em dashes anywhere a user can see). Folding deDash() in
 // here means EVERY escaped string — our static copy AND the orchestrator's generated read copy —
@@ -875,172 +876,375 @@ export function renderSignature(
   `;
 }
 
-// ── consent-gated longitudinal panel (qualitative direction + provenance; non-diagnostic) ──
+// ── the diary of hums (the private field-notebook view) ──────────────────────
 //
-// Surfaces the within-you longitudinal SHAPE — trend direction, recovery vs sustained
-// drift, gentle routing, and which of YOUR signals informed it — as words only. It never
-// renders riskHypothesis.confidence, driftMagnitude, or any number/percent (the 88% clinical
-// cap is a no-numbers-in-copy rule here), never a clinical label, and stays consent-gated.
-const TREND_COPY: Record<"improving" | "worsening" | "stable" | "uncertain", string> = {
-  improving: "Your recent pattern looks like it's gently easing toward steadier.",
-  worsening: "Your recent pattern looks a little more unsettled than your usual.",
-  stable: "Your recent pattern looks steady.",
-  uncertain: "Your recent pattern isn't clear enough to call yet.",
-};
+// The longitudinal SHAPE — is this recent stretch typical or different for YOU, is it a
+// one-off or a run, is it settling or holding — rendered as a personal record: a time-aware
+// chart with YOUR usual range shaded, inspectable individual hums, your own optional context,
+// and one plain-language "lately" line. Everything is words + geometry; it never renders
+// riskHypothesis.confidence, driftMagnitude, any percent, or any clinical label, and the DATA
+// stays consent-gated. Model/feature terminology lives only in the "How this works" disclosure.
 
-// The standing honesty frame for the pattern view: a mirror, not a verdict.
-const PATTERN_MIRROR_NOTE =
-  "A mirror, not a verdict. It compares you only to you, can't see why anything shifted, and never decides anything for you. If you're struggling, please reach out to someone you trust or a support line. Research-stage and non-clinical, not a medical evaluation.";
-
-// ── the diary trail (graphic): recent hums as a glowing constellation over time ──
-// A small responsive SVG sparkline of the user's recent reads — mood (valence) as the height,
-// each dot tinted by its zone, today's hum lit brightest, the path drawing itself in on reveal.
-// Pure geometry in attributes (stripped by the render-safety screen) — no number ever shows.
-const DIARY_W = 300;
-const DIARY_H = 92;
-const DIARY_PAD = 12;
-const diaryX = (i: number, n: number): number =>
-  n <= 1 ? DIARY_W / 2 : DIARY_PAD + (i / (n - 1)) * (DIARY_W - 2 * DIARY_PAD);
-const diaryY = (v: number): number => {
-  const t = (clampUnit(v) + 1) / 2; // 0 low → 1 bright
-  return DIARY_H - DIARY_PAD - t * (DIARY_H - 2 * DIARY_PAD); // brighter mood sits higher
-};
-
-function diaryTrail(recent: ReadonlyArray<{ valence: number; arousal: number }>): string {
-  const pts = recent.slice(-12);
-  const n = pts.length;
-  if (n === 0) return diaryGhost();
-  const mid = (DIARY_H / 2).toFixed(1);
-  const coords = pts.map((p, i) => `${diaryX(i, n).toFixed(1)},${diaryY(p.valence).toFixed(1)}`);
-  const line = n > 1 ? `<polyline class="diary-line" fill="none" points="${coords.join(" ")}"/>` : "";
-  const dots = pts
-    .map((p, i) => {
-      const tone = p.valence >= 0.12 ? "hi" : p.valence <= -0.12 ? "lo" : "mid";
-      const last = i === n - 1;
-      const [cx, cy] = coords[i]!.split(",");
-      return `<circle class="diary-dot diary-${tone}${last ? " diary-today" : ""}" cx="${cx}" cy="${cy}" r="${last ? "4.4" : "2.9"}" style="--i:${i}"/>`;
-    })
-    .join("");
-  return `<svg class="diary-svg" viewBox="0 0 ${DIARY_W} ${DIARY_H}" role="img" aria-label="A trail of your recent hums over time."><line class="diary-axis" x1="${DIARY_PAD}" y1="${mid}" x2="${DIARY_W - DIARY_PAD}" y2="${mid}"/>${line}${dots}</svg>`;
+/** One stored hum, as the diary sees it: when it was, its mood, and its (hidden) risk weight. */
+export interface DiaryPoint {
+  readonly at: string;
+  readonly valence: number;
+  readonly risk: number;
 }
 
-/** A faint, static placeholder trail so the diary reads as graphical even before there's data. */
+/** Everything the diary needs beyond the live read + consent. All optional (degrades to a ghost). */
+export interface DiaryData {
+  /** The user's real hum history (oldest→newest), from the on-device relapse ring. */
+  readonly points?: readonly DiaryPoint[];
+  /** Self-authored, local-only context per hum (chips + note), keyed by `at`. */
+  readonly context?: DiaryContextMap;
+  /** Which hum is open for inspection (defaults to the most recent). */
+  readonly focusAt?: string | null;
+}
+
+/** The internal longitudinal view (consent-gated surfacing only; never rendered with numbers). */
+type LongitudinalView = OrchestratedRead["internal"]["longitudinal"];
+
+// The standing honesty frame for the pattern view: a mirror, not a verdict (compact, one line).
+const PATTERN_MIRROR_NOTE =
+  "A mirror, not a verdict. It only ever compares you to you, can't see why anything shifted, and decides nothing for you.";
+
+// ── pattern state: ONE resolved reading, so the headline and the sub-line never contradict ──
+type PatternTone = "forming" | "steady" | "easing" | "unsettled";
+interface PatternState {
+  readonly tone: PatternTone;
+  /** The lead "Lately" sentence. */
+  readonly lately: string;
+  /** Where it appears to be heading — always consistent with `lately`. */
+  readonly heading: string;
+  /** A calm note on what the next few check-ins can clarify. */
+  readonly next: string;
+}
+
+function derivePattern(lg: LongitudinalView | null, sustained: boolean): PatternState {
+  // No personal judgement yet (pre-baseline, abstained, or uncertain) → "forming", never a verdict.
+  if (!lg || lg.abstained || (lg.trendDirection === "uncertain" && !lg.recovery && !lg.relapseDrift)) {
+    return {
+      tone: "forming",
+      lately: "Your pattern is still forming.",
+      heading: "There isn't enough of your own history yet to call a direction.",
+      next: "Each hum adds a page. Your usual range appears once there are a few more to compare against.",
+    };
+  }
+  if (lg.relapseDrift || lg.trendDirection === "worsening") {
+    return {
+      tone: "unsettled",
+      lately: "This recent stretch looks less like your usual pattern.",
+      heading: sustained
+        ? "It has held across several recent hums, not just a single off day."
+        : "It reads as a recent shift for now, not a long run.",
+      next: "A few more check-ins this week will show whether this settles or holds. Reaching out to someone you trust is never a bad idea.",
+    };
+  }
+  if (lg.recovery || lg.trendDirection === "improving") {
+    return {
+      tone: "easing",
+      lately: "This recent stretch looks like it is easing back toward your steadier.",
+      heading: "Your last few hums have been moving the gentle way.",
+      next: "A few more check-ins will show whether this keeps settling.",
+    };
+  }
+  return {
+    tone: "steady",
+    lately: "This recent stretch looks much like your usual.",
+    heading: "Your hums have been sitting close to your normal range.",
+    next: "Keep checking in. The picture only gets clearer the more pages your diary has.",
+  };
+}
+
+// ── chart geometry: time-aware sparkline with the user's personal-normal band shaded ──────────
+const CH_W = 320;
+const CH_H = 132;
+const CH_PADX = 16;
+const CH_TOP = 16;
+const CH_BOT = 18;
+const chX = (i: number, n: number): number =>
+  n <= 1 ? CH_W / 2 : CH_PADX + (i / (n - 1)) * (CH_W - 2 * CH_PADX);
+const chY = (v: number): number => CH_TOP + (1 - (clampUnit(v) + 1) / 2) * (CH_H - CH_TOP - CH_BOT);
+
+interface NormalBand {
+  readonly mid: number;
+  readonly lo: number;
+  readonly hi: number;
+}
+function median(xs: readonly number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+}
+/** The user's typical mood range, as a robust centre ± spread. Null until there's enough history. */
+function normalBand(values: readonly number[]): NormalBand | null {
+  if (values.length < 4) return null;
+  const mid = median(values);
+  const mad = median(values.map((v) => Math.abs(v - mid)));
+  const spread = Math.max(mad * 1.4826, 0.12); // a visible floor so the band never collapses
+  return { mid, lo: clampUnit(mid - spread), hi: clampUnit(mid + spread) };
+}
+
+/** Where one hum sits relative to the user's own usual range. */
+type Pos = "usual" | "above" | "below" | "farBelow";
+function positionOf(v: number, band: NormalBand | null): Pos {
+  if (!band) return "usual";
+  if (v > band.hi) return "above";
+  if (v >= band.lo) return "usual";
+  const spread = band.mid - band.lo;
+  return v < band.mid - 2 * spread ? "farBelow" : "below";
+}
+const POS_LONG: Record<Pos, string> = {
+  usual: "much like your usual",
+  above: "brighter than your usual",
+  below: "a little below your usual",
+  farBelow: "well below your usual",
+};
+const POS_SHORT: Record<Pos, string> = {
+  usual: "like your usual",
+  above: "brighter",
+  below: "a little below",
+  farBelow: "well below",
+};
+
+// ── when-labels (relative, human; no confidence numbers, so render-safe) ──────────────────────
+const DAY_MS = 24 * 60 * 60 * 1000;
+const startOfDay = (ms: number): number => {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+function relativeDay(at: string, now: number): string {
+  const t = Date.parse(at);
+  if (!Number.isFinite(t)) return "A recent hum";
+  const days = Math.round((startOfDay(now) - startOfDay(t)) / DAY_MS);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  const d = new Date(t);
+  return days < 7
+    ? d.toLocaleDateString([], { weekday: "long" })
+    : d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+function whenLabel(at: string, now: number): string {
+  const t = Date.parse(at);
+  if (!Number.isFinite(t)) return "A recent hum";
+  const time = new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return `${relativeDay(at, now)}, ${time}`;
+}
+
+/** The time-aware chart: a shaded personal-normal band, a mood line, one tappable dot per hum. */
+function diaryChart(points: readonly DiaryPoint[], band: NormalBand | null, focusAt: string | null): string {
+  const pts = points.slice(-30); // a readable window; the headline count stays authoritative
+  const n = pts.length;
+  if (n === 0) return diaryGhost();
+  const coords = pts.map((p, i) => [chX(i, n), chY(p.valence)] as const);
+
+  let bandLayer = "";
+  if (band) {
+    const yHi = chY(band.hi);
+    const yMid = chY(band.mid);
+    const h = (chY(band.lo) - yHi).toFixed(1);
+    bandLayer =
+      `<rect class="diary-band" x="0" y="${yHi.toFixed(1)}" width="${CH_W}" height="${h}" rx="7"/>` +
+      `<line class="diary-band-mid" x1="0" y1="${yMid.toFixed(1)}" x2="${CH_W}" y2="${yMid.toFixed(1)}"/>`;
+  }
+  const line =
+    n > 1
+      ? `<polyline class="diary-line" fill="none" points="${coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")}"/>`
+      : "";
+  const dots = pts
+    .map((p, i) => {
+      const [x, y] = coords[i]!;
+      const last = i === n - 1;
+      const focused = focusAt ? p.at === focusAt : last;
+      const pos = positionOf(p.valence, band);
+      const cls = `diary-dot pos-${pos}${last ? " diary-today" : ""}${focused ? " is-focus" : ""}`;
+      return `<circle class="${cls}" data-at="${esc(p.at)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${focused ? "5" : last ? "4.2" : "3"}" style="--i:${i}"/>`;
+    })
+    .join("");
+  return `<svg class="diary-svg" viewBox="0 0 ${CH_W} ${CH_H}" role="img" aria-label="Your recent hums over time, with your usual mood range shaded.">${bandLayer}${line}${dots}</svg>`;
+}
+
+/** A faint, static placeholder chart so the diary reads as graphical before there's data. */
 function diaryGhost(): string {
-  const mid = DIARY_H / 2;
-  const heights = [0.62, 0.42, 0.55, 0.34, 0.5, 0.3, 0.46];
+  const heights = [0.6, 0.42, 0.55, 0.34, 0.5, 0.3, 0.46, 0.4];
   const n = heights.length;
   const dots = heights
     .map((t, i) => {
-      const cx = diaryX(i, n).toFixed(1);
-      const cy = (DIARY_H - DIARY_PAD - t * (DIARY_H - 2 * DIARY_PAD)).toFixed(1);
-      return `<circle class="diary-dot diary-ghost" cx="${cx}" cy="${cy}" r="2.6"/>`;
+      const cx = chX(i, n).toFixed(1);
+      const cy = (CH_TOP + (1 - t) * (CH_H - CH_TOP - CH_BOT)).toFixed(1);
+      return `<circle class="diary-dot diary-ghost" cx="${cx}" cy="${cy}" r="2.7"/>`;
     })
     .join("");
-  return `<svg class="diary-svg diary-svg-ghost" viewBox="0 0 ${DIARY_W} ${DIARY_H}" aria-hidden="true"><line class="diary-axis" x1="${DIARY_PAD}" y1="${mid.toFixed(1)}" x2="${DIARY_W - DIARY_PAD}" y2="${mid.toFixed(1)}"/>${dots}</svg>`;
+  return `<svg class="diary-svg diary-svg-ghost" viewBox="0 0 ${CH_W} ${CH_H}" aria-hidden="true">${dots}</svg>`;
+}
+
+/** Date scale under the chart (plain dates — no confidence numbers). */
+function chartScale(points: readonly DiaryPoint[], now: number): string {
+  const pts = points.slice(-30);
+  if (pts.length < 2) return "";
+  const first = relativeDay(pts[0]!.at, now);
+  const last = relativeDay(pts[pts.length - 1]!.at, now);
+  return `<div class="diary-scale"><span>${esc(first)}</span><span class="diary-scale-legend">shaded = your usual range</span><span>${esc(last)}</span></div>`;
+}
+
+/** The life-context chips + optional note for ONE hum (the inspected / most-recent moment). */
+function focusPanel(point: DiaryPoint, pos: Pos, ctx: { tags: readonly string[]; note: string }, now: number): string {
+  const chips = LIFE_CONTEXT.map((tag) => {
+    const on = ctx.tags.includes(tag);
+    return `<button type="button" class="diary-chip${on ? " on" : ""}" data-ctx-tag="${esc(tag)}" aria-pressed="${on}">${esc(tag)}</button>`;
+  }).join("");
+  return `
+    <div class="diary-focus" data-focus-at="${esc(point.at)}">
+      <div class="diary-focus-head">
+        <strong>${esc(whenLabel(point.at, now))}</strong>
+        <span class="diary-tag tag-${pos}">${esc(POS_LONG[pos])}</span>
+      </div>
+      <p class="muted small diary-ctx-label">Add your own context (optional, stays on this device)</p>
+      <div class="diary-chips" role="group" aria-label="Life context for this hum">${chips}</div>
+      <label class="diary-note">
+        <span class="visually-hidden">A note for this hum</span>
+        <input type="text" data-ctx-note maxlength="120" placeholder="A few words for future you…" value="${esc(ctx.note)}" />
+      </label>
+    </div>`;
+}
+
+/** The recent check-ins as inspectable rows (newest first). The keyboard-accessible way in. */
+function momentsList(
+  points: readonly DiaryPoint[],
+  band: NormalBand | null,
+  context: DiaryContextMap,
+  focusAt: string | null,
+  now: number,
+): string {
+  const recent = points.slice(-6).reverse();
+  if (recent.length < 2) return "";
+  const focus = focusAt ?? points[points.length - 1]?.at ?? null;
+  const rows = recent
+    .map((p) => {
+      const pos = positionOf(p.valence, band);
+      const note = context[p.at]?.note?.trim();
+      const tags = context[p.at]?.tags ?? [];
+      const ctxBit = note ? `“${esc(note)}”` : tags.length ? esc(tags.join(" · ")) : "";
+      return `<button type="button" class="diary-moment${p.at === focus ? " on" : ""}" data-moment data-at="${esc(p.at)}">
+        <span class="m-when">${esc(relativeDay(p.at, now))}</span>
+        <span class="diary-tag tag-${pos}">${esc(POS_SHORT[pos])}</span>
+        <span class="m-note">${ctxBit}</span>
+      </button>`;
+    })
+    .join("");
+  return `<div class="diary-moments"><p class="muted small diary-section-label">Recent check-ins</p>${rows}</div>`;
+}
+
+/** The "How this works" disclosure — where uncertainty, provenance, and boundaries live, OUT of
+ *  the main flow (so trust comes from clarity, not a wall of legal copy). Words only. */
+function diaryExplainer(lg: LongitudinalView | null): string {
+  const sources: ReadonlyArray<readonly [boolean, string]> = lg
+    ? [
+        [lg.evidenceSources.personalBaseline, "your personal baseline"],
+        [lg.evidenceSources.longitudinalTrend, "your trend over time"],
+        [lg.evidenceSources.relapseModel, "your own pattern model"],
+        [lg.evidenceSources.recoverySignature, "your steadier-period signature"],
+      ]
+    : [];
+  const chips = sources
+    .filter(([on]) => on)
+    .map(([, label]) => `<span class="chip">${esc(label)}</span>`)
+    .join("");
+  const basedOn = chips ? `<p class="muted small">This view is shaped by: ${chips}</p>` : "";
+  return `
+    <details class="diary-how">
+      <summary>How this works</summary>
+      <div class="diary-how-body">
+        <p class="muted small">The chart plots each hum's mood over time. The shaded band is your own usual range, worked out only from your past hums, so "different" always means different <em>for you</em>, not different from anyone else.</p>
+        <p class="muted small">It reads patterns in your voice, not your situation. It can't see why anything changed, and a single unusual hum is never treated as a trend.</p>
+        ${basedOn}
+        <p class="muted small">Research-stage and non-clinical. It does not diagnose, and it is not a medical evaluation. If you are struggling, please reach out to someone you trust or a support line.</p>
+      </div>
+    </details>`;
 }
 
 export function renderLongitudinal(
   read: OrchestratedRead | null,
   consent: ConsentState,
   eligibleHumCount: number,
-  recent: ReadonlyArray<{ valence: number; arousal: number }> = [],
+  diary: DiaryData = {},
 ): void {
   const card = $("longitudinal-card");
   if (!card) return;
-  // ADR-0006: the longitudinal DATA stays consent-gated, but the PANEL is always discoverable,
-  // so a first-time user can see the view exists and how to turn it on (rather than it being
-  // invisible). When consent is off we render a clear locked state, framed as THE early-noticing
-  // "diary of hums", not a buried risk toggle.
+  const points = diary.points ?? [];
+  const context = diary.context ?? {};
+  const now = Date.now();
+
+  // ADR-0006: the DATA stays consent-gated, but the PANEL is always discoverable, so a first-time
+  // user sees the view exists and how to turn it on. Locked state is framed as THE diary, kindly.
   card.hidden = false;
   if (!isGranted(consent, "clinical_risk_surfacing")) {
     card.innerHTML = `
-      <h3>${icon("book")} Your diary of hums <span class="badge-mini">off until you turn it on · not a medical view</span></h3>
+      <h3>${icon("book")} Your diary of hums <span class="badge-mini">off until you turn it on</span></h3>
       ${diaryGhost()}
-      <p class="muted">This is the part that makes Hum more than a daily mood check. It quietly keeps a private diary of your hums, learns <em>your</em> normal, your steady pattern, and gently flags when you've drifted from it, <strong>early</strong>. It only does that if you say yes.</p>
+      <p class="muted">This is the part that makes Hum more than a daily check. It keeps a private record of your hums, learns what is <em>usual</em> for you, and gently shows when a recent stretch looks different, <strong>early</strong>. It only does this if you say yes.</p>
       <p class="muted small">Turn on <strong>“Notice changes early”</strong> under <strong>Privacy &amp; consent</strong> in the menu. Your per-hum read is exactly the same either way.</p>
       <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
     `;
     return;
   }
+
   const lg = read ? read.internal.longitudinal : null;
   const n = read ? read.internal.eligibleHumCount : eligibleHumCount;
-  const trail = recent.length ? diaryTrail(recent) : diaryGhost();
+  const countBadge = `${n} hum${n === 1 ? "" : "s"} · private`;
 
-  // Before a personal baseline forms there is no within-you longitudinal judgement yet (also the
-  // pre-first-hum case, read === null). Lead with INTENT: today is diary-building, which is what
-  // later lets Hum notice change early — never surfacing riskHypothesis, relapseDrift, or any
-  // clinical field (all null/insufficient when abstained).
-  if (!read || !lg || lg.abstained) {
-    let progressCopy: string;
-    if (n === 0) {
-      progressCopy =
-        "Your diary starts with your first hum. Hum learns what “usual” sounds like for you; the early-noticing comes once there's enough of your own history to compare against.";
-    } else if (n < 5) {
-      progressCopy = `Your diary is filling · ${n} hum${n === 1 ? "" : "s"} in. Each one adds a page to your usual. Your personal pattern engages around hum 5; the trend, as it grows.`;
-    } else {
-      progressCopy = `Your personal baseline is active · ${n} hums in. The early-noticing trend sharpens as your diary grows (around 20 daily hums), and it's already learning your usual.`;
-    }
+  // EARLY / SPARSE — not enough of the user's own history to compare against yet. Show whatever
+  // real dots exist (so it never feels empty), but make NO within-you judgement and NO band.
+  const baselineReady = !!read && !!lg && !lg.abstained && read.internal.stage !== "population_prior";
+  if (!baselineReady || points.length < 3) {
+    const filling =
+      n === 0
+        ? "Your diary starts with your first hum. Each one adds a page; your usual range appears once there are a few to compare against."
+        : `Your diary is filling. A few more check-ins and your usual range will show here, so a hum can read as typical or different for you.`;
+    const focus = points.length
+      ? focusPanel(
+          points[points.length - 1]!,
+          "usual",
+          context[points[points.length - 1]!.at] ?? { tags: [], note: "" },
+          now,
+        )
+      : "";
     card.innerHTML = `
-      <h3>${icon("book")} Your diary of hums <span class="badge-mini">on · non-diagnostic</span></h3>
-      ${trail}
-      <p class="muted">${esc(progressCopy)}</p>
-      <p class="muted small">Your per-hum read above is unaffected by this.</p>
+      <h3>${icon("book")} Your diary of hums <span class="badge-mini">${esc(countBadge)}</span></h3>
+      ${points.length ? diaryChart(points, null, diary.focusAt ?? null) : diaryGhost()}
+      <p class="diary-lately">${esc(filling)}</p>
+      ${focus}
+      ${diaryExplainer(lg)}
       <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
     `;
     return;
   }
 
-  const parts: string[] = [
-    `<p class="trend diary-trend-${esc(lg.trendDirection)}">${esc(TREND_COPY[lg.trendDirection] ?? TREND_COPY.uncertain)}</p>`,
-  ];
-
-  if (lg.recovery) {
-    parts.push(
-      lg.recovery.trajectoryDirection === "exceeding_prior_stable"
-        ? `<p class="muted">You're tracking a little above your usual steadier baseline, a positive sign.</p>`
-        : `<p class="muted">You're settling back toward your steadier pattern.</p>`,
-    );
-  }
-
-  if (lg.relapseDrift) {
-    parts.push(
-      lg.relapseDrift.driftDirection === "diverging_from_stable"
-        ? `<p class="monitor">This stretch is drifting from your steadier pattern across several recent hums.</p>`
-        : `<p class="monitor">This stretch looks more unsettled than your steadier pattern across several recent hums.</p>`,
-    );
-    parts.push(
-      lg.relapseDrift.userAction === "check_in_prompt"
-        ? `<p class="monitor">A gentle check-in might help right now. This is reflective support, not a medical assessment.</p>`
-        : `<p class="muted">We'll keep gently noticing this; nothing to act on right now.</p>`,
-    );
-  } else if (read.internal.stage !== "relapse_model") {
-    parts.push(
-      `<p class="muted small">Sustained-pattern monitoring engages once there's enough of your history (around 20 daily hums); the trend above already reflects your baseline so far.</p>`,
-    );
-  } else {
-    parts.push(`<p class="muted">Nothing notable stands out in your diary right now.</p>`);
-  }
-
-  // Provenance chips: which of YOUR signals materially informed this view (explainability, not a
-  // verdict). Direct field access, no clinical id, no number.
-  const sources: ReadonlyArray<readonly [boolean, string]> = [
-    [lg.evidenceSources.personalBaseline, "your personal baseline"],
-    [lg.evidenceSources.longitudinalTrend, "your longitudinal trend"],
-    [lg.evidenceSources.relapseModel, "your own longitudinal model"],
-    [lg.evidenceSources.recoverySignature, "your recovery signature"],
-    [lg.evidenceSources.highRiskSignature, "your learned pattern"],
-  ];
-  const chips = sources
-    .filter(([on]) => on)
-    .map(([, label]) => `<span class="chip">${esc(label)}</span>`)
-    .join("");
-  const provenance = chips ? `<div class="chips"><span class="muted small">Based on:</span> ${chips}</div>` : "";
+  // MATURE — a real personal baseline. Resolve ONE pattern reading, draw the band, let the user
+  // inspect individual moments and add their own context.
+  const band = normalBand(points.map((p) => p.valence));
+  const sustained = !!lg!.relapseDrift;
+  const pattern = derivePattern(lg, sustained);
+  const focusAt = diary.focusAt ?? points[points.length - 1]!.at;
+  const focusPoint = points.find((p) => p.at === focusAt) ?? points[points.length - 1]!;
+  const focusCtx = context[focusPoint.at] ?? { tags: [], note: "" };
+  const focusPos = positionOf(focusPoint.valence, band);
 
   card.innerHTML = `
-    <h3>${icon("book")} Your diary of hums <span class="badge-mini">on · non-diagnostic</span></h3>
-    ${trail}
-    ${parts.join("")}
-    ${provenance}
+    <h3>${icon("book")} Your diary of hums <span class="badge-mini">${esc(countBadge)}</span></h3>
+    <div class="diary-lately-block tone-${pattern.tone}">
+      <span class="diary-lately-tag">Lately</span>
+      <p class="diary-lately">${esc(pattern.lately)}</p>
+      <p class="muted small">${esc(pattern.heading)}</p>
+    </div>
+    ${diaryChart(points, band, focusAt)}
+    ${chartScale(points, now)}
+    ${focusPanel(focusPoint, focusPos, focusCtx, now)}
+    ${momentsList(points, band, context, focusAt, now)}
+    <p class="diary-next">${icon("compass")} ${esc(pattern.next)}</p>
+    ${diaryExplainer(lg)}
     <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
   `;
 }
@@ -1107,6 +1311,19 @@ export function setCaptureStatus(text: string, fraction?: number): void {
     const fill = bar.firstElementChild as HTMLElement | null;
     if (fill) fill.style.width = `${Math.round((fraction ?? 0) * 100)}%`;
   }
+}
+
+/**
+ * Advance ONLY the progress hairline, without touching the aria-live prompt — so the listening
+ * ritual's calm spoken cue ("Listening", "I can hear you") isn't re-announced ~10×/sec. The hero
+ * progress is the orb's timer ring; this thin echo is the non-canvas / reduced-motion fallback.
+ */
+export function setCaptureProgress(fraction: number): void {
+  const bar = $("capture-progress");
+  if (!bar) return;
+  bar.hidden = false;
+  const fill = bar.firstElementChild as HTMLElement | null;
+  if (fill) fill.style.width = `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
 }
 
 export function setSyncStatus(text: string): void {

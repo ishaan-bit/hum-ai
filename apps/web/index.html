@@ -40,24 +40,27 @@
 
       <main id="stage" data-step="hum">
         <!-- ─────────────── WINDOW A · HUM ─────────────── -->
+        <!-- The ritual. Tapping Hum sets body[data-hum-phase] (main.ts), which quiets the whole
+             world to listen: the copy, top bar, dots and footer recede in CSS, leaving the orb and
+             one soft prompt. Progress lives in the orb's timer ring, not a recorder bar. -->
         <section class="window window-hum" data-step="hum" aria-label="Hum">
           <div class="hum-copy">
             <p class="eyebrow">A daily ritual</p>
-            <h1 class="hum-title">Hum, and watch<br />the world tune to you.</h1>
+            <h1 class="hum-title">Take a breath,<br />then hum.</h1>
             <p id="idle-copy" class="lede">
-              When you’re ready, hum one steady note. I’ll listen for about twelve seconds.
+              One steady note. I’ll listen for a few moments, here on your device.
             </p>
           </div>
 
           <div class="hum-action">
-            <button id="btn-record" data-capture class="hum-btn" aria-label="Record a 12-second hum">
+            <button id="btn-record" data-capture class="hum-btn" aria-label="Hum, and I’ll listen for about twelve seconds">
               <span class="hum-btn-ring" aria-hidden="true"></span>
               <span class="hum-btn-label">Hum</span>
             </button>
+            <p id="capture-status" class="capture-status" role="status" aria-live="polite" aria-atomic="true">When you’re ready.</p>
             <div id="capture-progress" class="capture-progress" hidden><span></span></div>
-            <p id="capture-status" class="capture-status" role="status" aria-live="polite" aria-atomic="true">No mic? Open the tray to simulate a hum.</p>
           </div>
-          <p class="window-foot muted small">Raw audio never leaves your device · reflective, not a diagnosis.</p>
+          <p class="window-foot muted small">Stays on your device. Reflective, never a diagnosis.</p>
         </section>
 
         <!-- ─────────────── WINDOW B · YOUR INNER STATE ─────────────── -->

@@ -123,8 +123,10 @@ function unit(value: number | null | undefined, low: number, high: number, fallb
  * hum's acoustic qualities (the same posture as `HumAcousticExpert`).
  *
  *  - Arousal rises with energy, voiced activity, spectral brightness, and pitch height.
- *  - Valence rises with clarity, smoothness, and steadiness; falls with roughness /
- *    instability / breathiness.
+ *  - Valence rises with steadiness, smoothness, melodic warmth and an easy vibrato; falls
+ *    with expressive instability. It is intentionally INDEPENDENT of capture fidelity
+ *    (clarity / SNR / flatness / breathiness) — those reflect the mic and room, not the
+ *    mood, and belong to signal strength + confidence, not to the affect read.
  */
 export function acousticAffectAxes(f: AcousticFeatures): {
   valence: number;
@@ -145,28 +147,28 @@ export function acousticAffectAxes(f: AcousticFeatures): {
     0.3 * energyN + 0.22 * activeN + 0.16 * brightN + 0.14 * pitchN + 0.1 * pitchMoveN + 0.08 * fluxN,
   );
 
-  // --- valence: pleasant / settled vs subdued / rough ---
-  // Clarity, smoothness and steadiness lift it; roughness/instability/breathiness lower
-  // it; MUSICALITY, CONTROLLED expression and a REGULAR vibrato add the "ease" of a
-  // pleasant, in-control hum. Weights sum to 1; all on-domain, never a clinical label.
-  const clarityN = clamp01(f.clarityScore);
+  // --- valence: settled / in-control vs agitated / strained ---
+  // Valence reflects the affective CHARACTER of the hum — how settled and in-control it
+  // sounds versus agitated and strained. It deliberately does NOT key off capture FIDELITY
+  // (clarity, SNR, spectral flatness, breathiness): those measure the microphone and the
+  // room, not the mood. Folding them in here made the read swing with recording quality — a
+  // clean mic always read "pleasant", a noisy one always "subdued" — a large recording-
+  // condition OFFSET that swamped the within-user signal, so the SAME person on the SAME
+  // device landed in one zone every hum regardless of how they actually hummed. Fidelity
+  // earns its keep in `signalStrength` + confidence below, where it belongs. Steadiness,
+  // smoothness, melodic warmth and an easy vibrato lift valence; expressive instability
+  // lowers it. Weights sum to 1; all on-domain, never a clinical label.
   const smoothN = f.smoothnessScore === null ? 0.5 : clamp01(f.smoothnessScore);
   const stabilityN = clamp01(0.5 * f.amplitudeStability + 0.5 * (f.pitchStability ?? 0.5));
-  const roughN = clamp01(0.6 * f.residualInstabilityScore + 0.4 * f.breathinessProxy);
   const musicalN = clamp01(f.musicalityScore);
-  const controlN = clamp01(f.controlledExpressionScore);
   const vibratoN = f.vibratoRegularity === null ? 0.5 : clamp01(f.vibratoRegularity);
+  const agitationN = clamp01(f.residualInstabilityScore);
   const valence01 = clamp01(
-    0.24 * clarityN +
-      0.18 * smoothN +
-      0.18 * stabilityN +
-      0.16 * (1 - roughN) +
-      0.12 * musicalN +
-      0.08 * controlN +
-      0.04 * vibratoN,
+    0.34 * stabilityN + 0.26 * smoothN + 0.16 * musicalN + 0.1 * vibratoN + 0.14 * (1 - agitationN),
   );
 
   // --- signal strength: how much clear, voiced, loud-enough audio we actually had ---
+  const clarityN = clamp01(f.clarityScore);
   const loudN = unit(f.rmsEnergy, 0.006, 0.05, 0);
   const voicedN = clamp01(f.pitchCoverage ?? 0);
   const signalStrength = f.isSilent
