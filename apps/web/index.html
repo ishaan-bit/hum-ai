@@ -74,9 +74,7 @@
             <section id="diagnostics-card" class="diagnostics-card" data-no-swipe hidden></section>
             <!-- The within-you assessment (personality signature + trend), first-class -->
             <section id="signature-card" class="signature-card" data-no-swipe hidden></section>
-            <!-- THE DIARY OF HUMS — the longitudinal pattern, moved onto the main screen + made
-                 cinematic + graphical. Consent-gated DATA; the panel itself is always present. -->
-            <section id="longitudinal-card" class="longitudinal-card" data-no-swipe hidden></section>
+            <!-- THE DIARY OF HUMS now lives in its own first-class tab (Window D), not buried here. -->
             <!-- HiTL: confirm/adjust the read → one row of native-hum truth (ADR-0011) -->
             <div id="feedback-card" class="feedback-card" hidden></div>
             <div class="reveal-actions">
@@ -101,6 +99,17 @@
             </div>
           </div>
         </section>
+
+        <!-- ─────────────── WINDOW D · YOUR DIARY OF HUMS ─────────────── -->
+        <!-- The longitudinal "pattern over time" view, promoted from the bottom of the State
+             window to its own first-class tab. Consent-gated DATA; the panel itself is always
+             present and discoverable (renders a clear locked state when early-noticing is off). -->
+        <section class="window window-diary" data-step="diary" aria-label="Your diary of hums">
+          <div class="diary">
+            <button class="btn btn-ghost btn-back" data-nav="back">← Today’s suggestion</button>
+            <section id="longitudinal-card" class="longitudinal-card" data-no-swipe></section>
+          </div>
+        </section>
       </main>
 
       <!-- redundant navigation: dots (swipe + buttons live in the windows + arrow keys too) -->
@@ -108,6 +117,7 @@
         <button data-goto="hum" class="dot on" aria-current="step"><span>Hum</span></button>
         <button data-goto="state" class="dot" aria-current="false"><span>State</span></button>
         <button data-goto="today" class="dot" aria-current="false"><span>Today</span></button>
+        <button data-goto="diary" class="dot" aria-current="false"><span>Diary</span></button>
       </nav>
     </div>
 

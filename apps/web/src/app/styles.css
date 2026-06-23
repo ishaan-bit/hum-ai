@@ -243,7 +243,8 @@ body {
 }
 #stage[data-step="hum"] .window-hum,
 #stage[data-step="state"] .window-state,
-#stage[data-step="today"] .window-today {
+#stage[data-step="today"] .window-today,
+#stage[data-step="diary"] .window-diary {
   opacity: 1;
   transform: none;
   pointer-events: auto;
@@ -353,12 +354,14 @@ body {
    The content is a top-aligned panel that scrolls INTERNALLY (a capped, self-scrolling panel, not
    justify-content on the window, avoids the flex-end+overflow "top unreachable" bug). */
 .window-state,
-.window-today {
+.window-today,
+.window-diary {
   justify-content: flex-start;
   overflow: hidden;
 }
 .reveal,
-.today {
+.today,
+.diary {
   position: relative;
   width: 100%;
   max-width: var(--maxw);
@@ -1019,12 +1022,14 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 @media (orientation: landscape) and (max-height: 600px) {
   /* orb sits left, the content column sits right and uses the full height */
   .window-state,
-  .window-today {
+  .window-today,
+  .window-diary {
     justify-content: flex-start;
     align-items: center;
   }
   .reveal,
-  .today {
+  .today,
+  .diary {
     max-width: 30rem;
     margin: 0 0 0 auto;
     max-height: 100%;
@@ -1287,7 +1292,8 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 /* Orb de-emphasis: on the read screens the orb recedes to a faint ambient wash (the inline
    #read-avatar now carries the "this is you" meaning), so the read can own the full screen. */
 body[data-step="state"] #orb-canvas,
-body[data-step="today"] #orb-canvas {
+body[data-step="today"] #orb-canvas,
+body[data-step="diary"] #orb-canvas {
   opacity: 0.24;
   transition: opacity 0.6s var(--ease);
 }

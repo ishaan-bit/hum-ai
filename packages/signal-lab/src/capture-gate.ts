@@ -105,11 +105,15 @@ function pickRejectReason(f: AcousticFeatures, c: {
   readonly snr: number;
   readonly voicedEvidence: number;
   readonly melodicRange: number;
+  readonly flux: number;
 }): CaptureRejectReason {
   // Almost nothing came through.
   if (f.isSilent || f.peakAmplitude < 0.02 || f.meanRms < 0.006) return "too_quiet";
-  // Melodic pitch movement OR a bright/edgy timbre → speech or a tune, not a held hum.
-  if (c.melodicRange > 0.4 || c.bright > 0.45 || c.zcr > 0.5) return "sounded_like_speech";
+  // Speech/tune signature: melodic pitch movement or a bright/edgy timbre — but ONLY when the
+  // spectrum is also actively changing (high flux). A held voiced tone with a static spectrum is
+  // a hum even if a noisy mic makes its centroid/range look high, so we never accuse it of
+  // "talking" (flux is the cue real humming keeps low and real talking keeps high).
+  if (c.flux > 0.35 && (c.melodicRange > 0.4 || c.bright > 0.55 || c.zcr > 0.5)) return "sounded_like_speech";
   // Audible bursts but mostly gaps → keep the hum going more (checked before SNR, since the
   // muted gaps depress the SNR proxy and would otherwise mislabel a chopped hum as "noisy").
   if (c.silence > 0.7 && f.peakAmplitude >= 0.05) return "too_choppy";
@@ -171,27 +175,52 @@ export function assessCapture(f: AcousticFeatures, opts: CaptureGateOptions = {}
   // burst hum keeps almost none of its silence penalty; an unvoiced/noisy clip keeps all of it.
   const effectiveSilence = silence * (1 - 0.78 * voicedEvidence);
 
+  // ── HELD-TONE (robust hum/speech axis) ────────────────────────────────────────────────
+  // The cues that most reliably separate humming from talking on a REAL microphone are NOT
+  // absolute brightness or apparent pitch range — a genuine hum recorded with noise suppression
+  // OFF (broadband room hiss), through a lossy codec, and tracked by autocorrelation (which
+  // octave-slips) routinely shows a high spectral centroid and a wide *apparent* F0 range, yet
+  // is unmistakably a hum. What a hum does that speech does NOT is hold ONE voiced pitch with a
+  // near-static spectrum: high voiced continuity + low spectral flux. (Speech re-articulates
+  // constantly → flux ~0.5; a held hum → flux ~0.) So we trust flux + voiced continuity, and
+  // DISCOUNT the brightness/melodic penalties in proportion to how strongly this is a held tone.
+  // The `1 - 2.2·flux` factor makes the discount vanish for speech (flux ≥ ~0.45) — so speech is
+  // scored exactly as before and still rejected — while a low-flux voiced hum sheds most of the
+  // brightness/range penalty that was wrongly sinking real captures below the bar.
+  const heldTone = clamp01(voiced) * clamp01(1 - 2.2 * flux);
+  const speechCueDiscount = 1 - 0.8 * heldTone;
+  const effBright = bright * speechCueDiscount;
+  const effMelodic = melodicRange * speechCueDiscount;
+
   // Positive hum evidence is weighted strongly and the bias is gentle, so an ordinary voiced
   // hum clears the bar comfortably; the negative cues stay sharp on the UNAMBIGUOUS non-hum
-  // signatures (high zero-crossing/flatness/brightness = speech/noise/whistle) that a real hum
-  // never shows. Melodic movement + flux are now soft, late penalties (won't sink a real hum).
+  // signatures (speech/noise/whistle). Brightness + melodic range are discounted for a held
+  // voiced tone (see above) so a real, slightly-bright hum is not mislabeled as talking.
   const score =
     1.6 * voiced + 1.6 * clarity + 1.0 * snr + 0.6 * steady + 0.6 * pitchSteady + 0.6 * stableSeg -
-    1.2 * effectiveSilence - 2.4 * zcr - 1.5 * flat - 1.9 * bright - 0.7 * breath - 1.8 * melodicRange -
+    1.2 * effectiveSilence - 2.4 * zcr - 1.5 * flat - 1.9 * effBright - 0.7 * breath - 1.8 * effMelodic -
     0.4 * flux - 0.7;
   const humLikeness = 1 / (1 + Math.exp(-score));
 
-  if (humLikeness >= threshold) {
+  // SUSTAINED-TONE OVERRIDE (Brocal/DALI voiced-content lens): a clip that is substantially
+  // voiced with a static spectrum (low flux) is a held hum — speech cannot do this. Accept it
+  // outright, regardless of brightness/range, so a genuine hum is never told it "sounded like
+  // talking". Speech (flux ~0.5) and noise/music (low voicing) are excluded by construction.
+  const sustainedHum = voiced >= 0.55 && flux <= 0.3 && clarity >= 0.15;
+
+  if (sustainedHum || humLikeness >= threshold) {
     return {
       accepted: true,
       humLikeness,
       threshold,
-      reason: `clear voiced hum (hum-likeness ${humLikeness.toFixed(2)} ≥ ${threshold})`,
+      reason: sustainedHum
+        ? `sustained voiced hum (continuity ${voiced.toFixed(2)}, flux ${flux.toFixed(2)}; hum-likeness ${humLikeness.toFixed(2)})`
+        : `clear voiced hum (hum-likeness ${humLikeness.toFixed(2)} ≥ ${threshold})`,
       reasonCode: "",
       action: "",
     };
   }
-  const reasonCode = pickRejectReason(f, { voiced, clarity, silence, zcr, flat, bright, snr, voicedEvidence, melodicRange });
+  const reasonCode = pickRejectReason(f, { voiced, clarity, silence, zcr, flat, bright, snr, voicedEvidence, melodicRange, flux });
   return {
     accepted: false,
     humLikeness,

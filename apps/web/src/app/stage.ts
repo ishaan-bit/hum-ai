@@ -1,16 +1,17 @@
 /**
- * The windowed stage — the friction-free main path is three windows the user moves through:
+ * The windowed stage — the friction-free main path is four windows the user moves through:
  *
- *   hum   → YOUR INNER STATE → TODAY'S SUGGESTION
+ *   hum   → YOUR INNER STATE → TODAY'S SUGGESTION → YOUR DIARY OF HUMS
  *
  * One continuous world (the orb + atmosphere persist beneath); only the foreground content
  * changes. Navigation has THREE redundant affordances (never swipe-only, for accessibility and
  * large screens): horizontal swipe, tappable dots, and explicit Next/Back buttons — plus arrow
- * keys. The deeper diagnostic surfaces live in a pull-up "instrument tray" (bottom sheet on
- * phones, side panel on large screens) that stays discoverable but off the main path.
+ * keys. The Diary tab makes the longitudinal "pattern over time" a first-class destination
+ * (it used to be buried at the bottom of the State window). The deeper diagnostic surfaces live
+ * in a pull-up "instrument tray" (bottom sheet on phones, side panel on large screens).
  */
-export type Step = "hum" | "state" | "today";
-const ORDER: readonly Step[] = ["hum", "state", "today"];
+export type Step = "hum" | "state" | "today" | "diary";
+const ORDER: readonly Step[] = ["hum", "state", "today", "diary"];
 
 export interface Stage {
   go(step: Step): void;
