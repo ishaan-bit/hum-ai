@@ -1235,6 +1235,11 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
   .meter-fill { transition: none; }
   .tour-card,
   .tour-orb { animation: none; }
+  /* the diary ribbon must end in its FINAL, fully-visible state without animating in */
+  .diary-line { animation: none; stroke-dashoffset: 0; }
+  .diary-area { animation: none; opacity: 1; }
+  .diary-dot { animation: none; opacity: 1; }
+  .diary-node { opacity: 0.55; }
   * { scroll-behavior: auto; }
 }
 @media (hover: hover) and (pointer: fine) {
@@ -1485,14 +1490,24 @@ h3 .ic,
   stroke-width: 1;
 }
 .diary-band-mid { stroke: color-mix(in srgb, var(--state-accent) 30%, transparent); stroke-width: 1; stroke-dasharray: 2 5; }
+/* the soft mood ribbon: a gradient area under a smooth curve fills the canvas deliberately */
+.diary-fill-top { stop-color: var(--state-accent); stop-opacity: 0.3; }
+.diary-fill-bot { stop-color: var(--state-accent); stop-opacity: 0; }
+.diary-area {
+  fill: url(#diary-fill);
+  opacity: 0;
+  animation: diary-area-in 1.1s var(--ease-bloom) 0.15s forwards;
+}
+@keyframes diary-area-in { to { opacity: 1; } }
 .diary-line {
   stroke: var(--state-accent);
-  stroke-width: 2;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
   filter: drop-shadow(0 0 5px var(--state-glow));
-  stroke-dasharray: 1200;
-  stroke-dashoffset: 1200;
+  /* pathLength="100" on the <path> normalises the reveal regardless of the curve's true length */
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
   animation: diary-draw 1.4s var(--ease-bloom) forwards;
 }
 @keyframes diary-draw { to { stroke-dashoffset: 0; } }
@@ -1509,8 +1524,11 @@ h3 .ic,
 .diary-dot.pos-above { fill: var(--state-accent-2); }
 .diary-dot.pos-below { fill: color-mix(in srgb, var(--state-accent-deep) 55%, var(--state-accent)); }
 .diary-dot.pos-farBelow { fill: #e6b07a; }
+/* quiet anchors: the in-between hums sit lightly on the ribbon so the curve + the current/selected
+   moments are the focus (the placement reads as intentional, not a scatter of accidental dots) */
+.diary-node { opacity: 0.55; }
 .diary-today { stroke: #fff; stroke-width: 1.4; }
-.diary-dot.is-focus { stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 7px var(--state-glow)); }
+.diary-dot.is-focus { stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 7px var(--state-glow)); opacity: 1; }
 .diary-ghost { fill: rgba(255, 255, 255, 0.16); cursor: default; animation: none; }
 .diary-svg-ghost { opacity: 0.6; }
 

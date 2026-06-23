@@ -147,24 +147,36 @@ export function acousticAffectAxes(f: AcousticFeatures): {
     0.3 * energyN + 0.22 * activeN + 0.16 * brightN + 0.14 * pitchN + 0.1 * pitchMoveN + 0.08 * fluxN,
   );
 
-  // --- valence: settled / in-control vs agitated / strained ---
-  // Valence reflects the affective CHARACTER of the hum — how settled and in-control it
-  // sounds versus agitated and strained. It deliberately does NOT key off capture FIDELITY
-  // (clarity, SNR, spectral flatness, breathiness): those measure the microphone and the
-  // room, not the mood. Folding them in here made the read swing with recording quality — a
-  // clean mic always read "pleasant", a noisy one always "subdued" — a large recording-
-  // condition OFFSET that swamped the within-user signal, so the SAME person on the SAME
-  // device landed in one zone every hum regardless of how they actually hummed. Fidelity
-  // earns its keep in `signalStrength` + confidence below, where it belongs. Steadiness,
-  // smoothness, melodic warmth and an easy vibrato lift valence; expressive instability
-  // lowers it. Weights sum to 1; all on-domain, never a clinical label.
+  // --- valence: subdued / downbeat ↔ bright / pleasant ---
+  // Valence MUST move with how the person actually hums this time, not with fixed qualities of
+  // their voice or microphone. Two corrections live here:
+  //
+  //   (1) It deliberately does NOT key off capture FIDELITY (clarity, SNR, spectral flatness,
+  //       breathiness): those measure the mic and room, not the mood. Folding them in made a
+  //       clean mic always read "pleasant" and a noisy one "subdued" (a recording-condition
+  //       OFFSET). Fidelity earns its keep in `signalStrength` + confidence below.
+  //
+  //   (2) It can no longer be built ONLY from voice-quality/timbre features (stability,
+  //       smoothness, vibrato regularity, agitation). Those are ~CONSTANT for a given
+  //       person+mic, so a valence made only of them was pinned: the SAME person landed in one
+  //       zone every hum no matter how they hummed (the "tense and wound-up every time" bug).
+  //       So valence now also rides on MOOD-VARIABLE prosody the person controls hum-to-hum —
+  //       pitch HEIGHT and melodic MOVEMENT (a higher, more melodic hum reads brighter; a low,
+  //       flat one reads more subdued) — classic affective-prosody correlates. Voice-quality
+  //       still contributes a "settled/in-control" component, but no longer dominates.
+  //
+  // Weights sum to 1; all on-domain, never a clinical label.
   const smoothN = f.smoothnessScore === null ? 0.5 : clamp01(f.smoothnessScore);
   const stabilityN = clamp01(0.5 * f.amplitudeStability + 0.5 * (f.pitchStability ?? 0.5));
-  const musicalN = clamp01(f.musicalityScore);
   const vibratoN = f.vibratoRegularity === null ? 0.5 : clamp01(f.vibratoRegularity);
   const agitationN = clamp01(f.residualInstabilityScore);
+  const pitchHeightN = unit(f.pitchMeanHz, 95, 260, 0.5); // mood-variable: higher → brighter affect
+  const melodyN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // mood-variable: melodic movement → expressive/positive
   const valence01 = clamp01(
-    0.34 * stabilityN + 0.26 * smoothN + 0.16 * musicalN + 0.1 * vibratoN + 0.14 * (1 - agitationN),
+    // settled / in-control (voice-quality; person-ish, kept moderate so it can't pin the axis)
+    0.22 * stabilityN + 0.16 * smoothN + 0.1 * vibratoN + 0.1 * (1 - agitationN) +
+    // mood-variable prosody (what the person changes hum-to-hum) — 0.42 of the weight
+    0.24 * pitchHeightN + 0.18 * melodyN,
   );
 
   // --- signal strength: how much clear, voiced, loud-enough audio we actually had ---

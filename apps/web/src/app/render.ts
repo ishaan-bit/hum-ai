@@ -1067,7 +1067,31 @@ function whenLabel(at: string, now: number): string {
   return `${relativeDay(at, now)}, ${time}`;
 }
 
-/** The time-aware chart: a shaded personal-normal band, a mood line, one tappable dot per hum. */
+/**
+ * Catmull-Rom → cubic Bézier through the points: a smooth, deliberate mood curve instead of a
+ * jagged polyline. Control-point Y is clamped to the canvas so the curve can't overshoot out of
+ * view between widely-spaced points.
+ */
+function smoothPath(pts: ReadonlyArray<readonly [number, number]>): string {
+  if (pts.length === 0) return "";
+  if (pts.length === 1) return `M ${pts[0]![0].toFixed(1)},${pts[0]![1].toFixed(1)}`;
+  const clampY = (y: number): number => (y < 1 ? 1 : y > CH_H - 1 ? CH_H - 1 : y);
+  let d = `M ${pts[0]![0].toFixed(1)},${pts[0]![1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i]!;
+    const p1 = pts[i]!;
+    const p2 = pts[i + 1]!;
+    const p3 = pts[i + 2] ?? p2;
+    const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const cp1y = clampY(p1[1] + (p2[1] - p0[1]) / 6);
+    const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const cp2y = clampY(p2[1] - (p3[1] - p1[1]) / 6);
+    d += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+
+/** The time-aware chart: a soft "usual range" band, a smooth mood ribbon, one tappable node per hum. */
 function diaryChart(points: readonly DiaryPoint[], band: NormalBand | null, focusAt: string | null): string {
   const pts = points.slice(-30); // a readable window; the headline count stays authoritative
   const n = pts.length;
@@ -1094,21 +1118,35 @@ function diaryChart(points: readonly DiaryPoint[], band: NormalBand | null, focu
       `<rect class="diary-band" x="0" y="${yHi.toFixed(1)}" width="${CH_W}" height="${h}" rx="7"/>` +
       `<line class="diary-band-mid" x1="0" y1="${yMid.toFixed(1)}" x2="${CH_W}" y2="${yMid.toFixed(1)}"/>`;
   }
-  const line =
+  const baselineY = (CH_H - CH_BOT).toFixed(1);
+  const curve = smoothPath(coords);
+  // A soft gradient AREA under the smooth curve gives the series a body and fills the canvas
+  // deliberately, instead of a thin line + scattered dots stranded in empty space.
+  const area =
     n > 1
-      ? `<polyline class="diary-line" fill="none" points="${coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")}"/>`
+      ? `<path class="diary-area" d="${curve} L ${coords[n - 1]![0].toFixed(1)},${baselineY} L ${coords[0]![0].toFixed(1)},${baselineY} Z"/>`
       : "";
+  const line = n > 1 ? `<path class="diary-line" pathLength="100" fill="none" d="${curve}"/>` : "";
+  // Every hum stays a tappable node (interaction + per-hum colour preserved), but only the most
+  // recent and the selected moment are emphasised — the rest are quiet anchors on the ribbon, so
+  // the placement reads as intentional rather than accidental.
   const dots = pts
     .map((p, i) => {
       const [x, y] = coords[i]!;
       const last = i === n - 1;
       const focused = focusAt ? p.at === focusAt : last;
       const pos = positionOf(p.valence, band);
-      const cls = `diary-dot pos-${pos}${last ? " diary-today" : ""}${focused ? " is-focus" : ""}`;
-      return `<circle class="${cls}" data-at="${esc(p.at)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${focused ? "5" : last ? "4.2" : "3"}" style="--i:${i}"/>`;
+      const emph = focused || last;
+      const cls = `diary-dot pos-${pos}${last ? " diary-today" : ""}${focused ? " is-focus" : ""}${emph ? "" : " diary-node"}`;
+      const r = focused ? "5.5" : last ? "4" : "2.4";
+      return `<circle class="${cls}" data-at="${esc(p.at)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" style="--i:${i}"/>`;
     })
     .join("");
-  return `<svg class="diary-svg" viewBox="0 0 ${CH_W} ${CH_H}" role="img" aria-label="Your recent hums over time, with your usual mood range shaded.">${bandLayer}${line}${dots}</svg>`;
+  const defs =
+    `<defs><linearGradient id="diary-fill" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop class="diary-fill-top" offset="0%"/><stop class="diary-fill-bot" offset="100%"/>` +
+    `</linearGradient></defs>`;
+  return `<svg class="diary-svg" viewBox="0 0 ${CH_W} ${CH_H}" role="img" aria-label="Your recent hums over time, drawn as a mood line with your usual range shaded.">${defs}${bandLayer}${area}${line}${dots}</svg>`;
 }
 
 /** A faint, static placeholder chart so the diary reads as graphical before there's data. */
