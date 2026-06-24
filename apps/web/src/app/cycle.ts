@@ -52,6 +52,12 @@ export interface HumCycleInput {
   readonly acousticAxisHistory?: readonly AcousticAxisSample[];
   /** Tentative hum-personality lean (adjective + steadiness) → one exploratory, personalised line. */
   readonly personalityLean?: { readonly adjective: string | null; readonly steadiness: number };
+  /**
+   * Override the capture timestamp. Real captures use now (the default); the demo SEEDER passes a
+   * BACKDATED instant per hum so a seeded history spreads across real days instead of all landing
+   * on the same minute (which made every diary entry read "Mon 7:13 pm" and collapsed the chart).
+   */
+  readonly capturedAt?: IsoTimestamp;
 }
 
 export type HumCycleResult =
@@ -80,7 +86,7 @@ export type HumCycleResult =
     };
 
 export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult> {
-  const now = asIsoTimestamp(new Date().toISOString());
+  const now = input.capturedAt ?? asIsoTimestamp(new Date().toISOString());
 
   // 1. Derive features on-device; the raw audio buffer is not retained past this call.
   const features = computeFeatures(input.audio);

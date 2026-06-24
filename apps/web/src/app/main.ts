@@ -20,7 +20,6 @@ import {
 import type { AudioInput } from "@hum-ai/audio-features";
 import type { HumSelfReport } from "@hum-ai/affect-model-contracts";
 import {
-  buildFeedbackRequest,
   applyFeedback,
   humHistoryFromState,
   type OrchestratedRead,
@@ -52,7 +51,7 @@ import {
 import type { MetaLearner } from "@hum-ai/orchestrator";
 import { loadConsent, setScope, isGranted, type ToggleableScope } from "./consent";
 import { loadBrowserPrior, loadPopulationArtifact, type LoadedPrior } from "./prior";
-import { recordHum, synthesize, primeMicrophone, type SynthKind } from "./capture";
+import { recordHum, synthesize, synthesizeMood, primeMicrophone, type SynthKind } from "./capture";
 import { runHumCycle } from "./cycle";
 import {
   localUserId,
@@ -98,7 +97,7 @@ import {
   renderPersonalization,
   renderHistory,
   renderCaptureRejected,
-  renderFeedbackPrompt,
+  renderMoodAdjust,
   clearFeedbackPrompt,
   renderModelLab,
   setCaptureStatus,
@@ -578,7 +577,7 @@ function updateSyncStatus(): void {
 // ── run a hum ───────────────────────────────────────────────────────────────────
 async function runOne(
   getAudio: () => AudioInput | Promise<AudioInput>,
-  opts: { advance?: boolean } = {},
+  opts: { advance?: boolean; capturedAt?: IsoTimestamp } = {},
 ): Promise<CaptureGateDecision> {
   const advance = opts.advance ?? false;
   const audio = await getAudio();
@@ -590,6 +589,8 @@ async function runOne(
     state: session.state,
     consent: session.consent,
     modelVersion: MODEL_VERSION,
+    // The demo seeder backdates each hum so a seeded history spreads across real days.
+    capturedAt: opts.capturedAt,
     prior: session.prior?.prior ?? null,
     // A promoted hum-native axis model takes precedence over the far-domain prior.
     axisPriors: effectiveAxisPriors(),
@@ -655,14 +656,14 @@ async function runOne(
   }
   session.signature = currentSignature();
 
-  renderRead(result.read);
+  renderRead(result.read, session.consent);
   renderInterventionOfDay(result.read);
   renderPersonalization(result.read);
   renderLadder(result.read.internal.stage, result.read.internal.eligibleHumCount);
   // A fresh usable hum becomes the newly-inspected moment (its context panel is ready immediately).
   if (!result.read.userFacing.abstained) session.diaryFocus = null;
   renderDiary(result.read);
-  renderSignature(session.signature ?? currentSignature(), result.read, session.consent, result.read.internal.eligibleHumCount);
+  renderSignature(session.signature ?? currentSignature(), result.read, session.consent, result.read.internal.eligibleHumCount, session.localId);
   renderProvenance(result.read, session.prior, syncEnabled());
 
   // THE TUNING — tune the whole world to this read; on a single capture, reveal + advance.
@@ -678,13 +679,13 @@ async function runOne(
   }
   session.previousIntervention = result.read.userFacing.interventionOfDay?.category ?? null;
 
-  // HiTL: stash this hum and ask whether the read matched, so a confirm/adjust mints a
-  // native-hum training row + a personal calibration correction (ADR-0011).
+  // HiTL: stash this hum, then wire the mood field's drag/sliders/Save so a confirm/adjust mints a
+  // native-hum training row + a personal calibration correction (ADR-0011). The correction is the
+  // SAME read the user sees — no separate slider — so adjusting "where you are" IS the feedback.
   session.pending = { id: safeUuid(), capturedAt: result.now, read: result.read };
+  clearFeedbackPrompt(); // the old standalone slider card is retired; mood adjust lives in the read
   if (!result.read.userFacing.abstained) {
-    renderFeedbackPrompt(result.read, buildFeedbackRequest(result.read), (report) => void onFeedback(report));
-  } else {
-    clearFeedbackPrompt();
+    renderMoodAdjust(result.read, (report) => void onFeedback(report));
   }
 
   session.log.push({
@@ -857,6 +858,28 @@ async function runMic(): Promise<void> {
     setCaptureStatus(text);
   };
 
+  // A LIVE, responsive read of the hum as it happens — so it feels like the app is genuinely
+  // listening, not just flashing "I can hear you" once. We smooth the level + pitch, then surface a
+  // short reactive line that reflects what's actually coming through (swelling, steady, bright,
+  // low, fading) on a calm ~1.7s cadence so it breathes rather than flickers. The orb's own
+  // amplitude/pitch/mote visuals (orb.pushLevel) animate continuously alongside it.
+  let emaLevel = 0;
+  let emaPitch = 0;
+  let lastCueFrac = 0;
+  let cueIx = 0;
+  const STEADY_CUES = ["That's it — hold it there.", "Lovely. Stay with it.", "I'm right here with you.", "Holding it with you…"];
+  const liveLine = (lvl: number, dLvl: number, pitch: number | null, frac: number): string => {
+    if (dLvl > 0.06) return "Beautiful — let it open up.";
+    if (dLvl < -0.07) return "Stay with it… keep the note carrying.";
+    if (pitch && pitch >= 230) return "Bright and clear up there.";
+    if (pitch && pitch > 0 && pitch <= 130) return "Nice and low — I feel that.";
+    if (lvl > 0.5) return "Strong and steady. Good.";
+    const line = STEADY_CUES[cueIx % STEADY_CUES.length]!;
+    cueIx += 1;
+    void frac;
+    return line;
+  };
+
   try {
     const gate = await runOne(
       () =>
@@ -865,11 +888,16 @@ async function runMic(): Promise<void> {
           onProgress: (f) => setCaptureProgress(f), // hairline echo; the orb ring is the hero progress
           onLevel: (level) => {
             orb?.pushLevel(level);
+            const prevEma = emaLevel;
+            emaLevel = emaLevel * 0.7 + level.level * 0.3;
+            if (level.pitchHz) emaPitch = emaPitch === 0 ? level.pitchHz : emaPitch * 0.8 + level.pitchHz * 0.2;
+            const dLevel = emaLevel - prevEma;
             if (level.voiced || level.level > 0.07) {
               voicedRun += 1;
               if (voicedRun >= 3 && !heard) {
                 heard = true;
-                cue("listening", "I can hear you.");
+                lastCueFrac = level.fraction;
+                cue("listening", "There you are — I’ve got it.");
               }
             } else {
               voicedRun = 0;
@@ -877,9 +905,14 @@ async function runMic(): Promise<void> {
                 cue("faint", "A little closer. Let the note carry.");
               }
             }
-            if (heard && !saidAlmost && level.fraction > 0.85) {
+            // Continuous reactive feedback once we're hearing the hum, on a gentle cadence.
+            if (heard && !saidAlmost && level.fraction < 0.82 && level.fraction - lastCueFrac > 0.14) {
+              lastCueFrac = level.fraction;
+              setCaptureStatus(liveLine(emaLevel, dLevel, level.pitchHz ?? (emaPitch || null), level.fraction));
+            }
+            if (heard && !saidAlmost && level.fraction >= 0.85) {
               saidAlmost = true;
-              setCaptureStatus("Almost there.");
+              setCaptureStatus("Almost there — bring it home.");
             }
           },
         }),
@@ -939,13 +972,21 @@ async function runDemoSeed(): Promise<void> {
     reflectConsentInputs();
   }
   try {
-    const total = 22;
+    const total = 24;
+    // ONE hum per day, walking back from today, each drawn from the realistic mood palette so the
+    // seeded diary spans real days (correct IST timestamps) AND real moods — not 22 identical
+    // "restless" hums all stamped the same minute (the "Mon 7:13 pm" + flat-line + pinned-read bug).
+    const dayMs = 24 * 60 * 60 * 1000;
+    const startMs = Date.now();
     for (let i = 0; i < total; i += 1) {
-      setCaptureStatus(`Seeding longitudinal demo… ${i + 1} / ${total} daily hums`);
-      await runOne(() => synthesize("clean"), { advance: false });
-      await new Promise((r) => setTimeout(r, 50));
+      setCaptureStatus(`Seeding your diary… ${i + 1} / ${total} daily hums`);
+      const daysAgo = total - 1 - i; // oldest first → newest last
+      // A gentle hour jitter so same-day stamps aren't identical either.
+      const at = asIsoTimestamp(new Date(startMs - daysAgo * dayMs + (i % 5) * 1700_000).toISOString());
+      await runOne(() => synthesizeMood(i), { advance: false, capturedAt: at });
+      await new Promise((r) => setTimeout(r, 30));
     }
-    setCaptureStatus("Seeded ~22 demo hums. Your diary of hums is now active on your read screen.");
+    setCaptureStatus("Seeded a few weeks of demo hums. Your diary of hums is now active on your read screen.");
     revealLongitudinal();
   } catch (err) {
     setCaptureStatus(`Error: ${(err as Error).message}`);

@@ -45,6 +45,42 @@ function nowMillis(): number {
   return Date.now();
 }
 
+// ── latest-screening LOCAL cache (so the consumer Diary/Today can surface a screening band
+//    synchronously, with no network/auth). The authoritative PHQ/GAD history stays in Firestore;
+//    this is just the most-recent band + when, mirrored locally for the on-device surface. Device-
+//    scoped (one key) — the consumer experience is one person per install. Holds NO item-level
+//    answers and no free text — only the coarse band + total + timestamp. ──
+const LATEST_SCREENING_KEY = "hum.latestScreening.v1";
+
+/** A coarse, surfaceable snapshot of the most recent screening (no item-level detail). */
+export interface LatestScreening {
+  readonly phq: { readonly total: number; readonly severityBand: Phq9Response["severityBand"]; readonly administeredAt: IsoTimestamp } | null;
+  readonly gad: { readonly total: number; readonly severityBand: Gad7Response["severityBand"]; readonly administeredAt: IsoTimestamp } | null;
+}
+
+/** Mirror the just-completed screening into the local cache (call after administration). */
+export function cacheLatestScreening(phq: Phq9Response | null, gad: Gad7Response | null): void {
+  try {
+    const snap: LatestScreening = {
+      phq: phq ? { total: phq.total, severityBand: phq.severityBand, administeredAt: phq.administeredAt } : null,
+      gad: gad ? { total: gad.total, severityBand: gad.severityBand, administeredAt: gad.administeredAt } : null,
+    };
+    localStorage.setItem(LATEST_SCREENING_KEY, JSON.stringify(snap));
+  } catch {
+    /* storage unavailable — the surface just shows no screening band */
+  }
+}
+
+/** Read the locally-cached latest screening, or null if none taken on this device. */
+export function loadLatestScreening(): LatestScreening | null {
+  try {
+    const raw = localStorage.getItem(LATEST_SCREENING_KEY);
+    return raw ? (JSON.parse(raw) as LatestScreening) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── participant doc (enrollment + schedule) ───────────────────────────────────
 export interface ParticipantDoc {
   readonly studyId: string;

@@ -1370,8 +1370,7 @@ h3 .ic,
 .read-head-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 0.22rem; min-width: 0; }
 
 /* ── the legible mood + energy read: bold state name + two reading spectra ─── */
-.mood-read { margin: 0.5rem 0 0.2rem; }
-.state-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.7rem; margin-bottom: 0.8rem; }
+.mood-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.7rem; margin: 0.7rem 0 0.2rem; }
 .state-name-zone {
   font: 800 clamp(1.5rem, 6vw, 2rem)/1 "Iowan Old Style", Georgia, serif;
   letter-spacing: -0.01em;
@@ -1402,21 +1401,62 @@ h3 .ic,
 .signal-moderate { color: #e6cf6a; border-color: rgba(230, 207, 106, 0.4); }
 .signal-developing { color: #c0a7e6; border-color: rgba(192, 167, 230, 0.4); }
 
-.spectra { display: flex; flex-direction: column; gap: 0.9rem; }
-.spectrum-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.32rem; }
-.spectrum-label { font-weight: 700; font-size: 0.9rem; }
-.spectrum-now {
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+/* ── the mood field: a draggable 2-D circumplex + fixed-pole sliders (one control = read + HiTL) ── */
+.mood-field { margin: 0.4rem 0 0.2rem; }
+.mood-map-wrap { display: flex; justify-content: center; margin: 0.2rem 0 0.4rem; }
+.mood-map {
+  position: relative;
+  width: min(15.5rem, 78vw);
+  aspect-ratio: 1 / 1;
+  cursor: crosshair;
+  border-radius: 18px;
+  outline: none;
+}
+.mood-map:focus-visible { box-shadow: 0 0 0 2px var(--state-accent-2); }
+.mood-map-grid { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mf-bg { fill: rgba(255, 255, 255, 0.018); stroke: var(--glass-line); stroke-width: 0.6; }
+.mf-ring { fill: none; stroke: rgba(255, 255, 255, 0.09); stroke-width: 0.5; }
+.mf-ring-in { stroke: rgba(255, 255, 255, 0.055); }
+.mf-axis { stroke: rgba(255, 255, 255, 0.07); stroke-width: 0.5; stroke-dasharray: 1.4 2.2; }
+.mf-centre { fill: rgba(255, 255, 255, 0.32); }
+.mf-q {
+  position: absolute; font-size: 0.62rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--ink-mute); opacity: 0.72; pointer-events: none;
+}
+.mf-q-tr { top: 8%; right: 9%; color: #e7c98c; }
+.mf-q-tl { top: 8%; left: 9%; color: #e0a3a0; }
+.mf-q-bl { bottom: 8%; left: 9%; color: #9fb0c9; }
+.mf-q-br { bottom: 8%; right: 9%; color: #9bd2ab; }
+.mf-edge-top, .mf-edge-bottom, .mf-edge-left, .mf-edge-right {
+  position: absolute; font-size: 0.56rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--ink-mute); opacity: 0.6; pointer-events: none;
+}
+.mf-edge-top { top: 1.5%; left: 50%; transform: translateX(-50%); }
+.mf-edge-bottom { bottom: 1.5%; left: 50%; transform: translateX(-50%); }
+.mf-edge-left { left: 2%; top: 50%; transform: translateY(-50%) rotate(-90deg); transform-origin: left center; }
+.mf-edge-right { right: 2%; top: 50%; transform: translateY(-50%) rotate(90deg); transform-origin: right center; }
+.mood-dot {
+  position: absolute; width: 26px; height: 26px; padding: 0; border: none; cursor: grab;
+  border-radius: 50%; transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 38% 34%, #fff, var(--state-accent-2) 70%);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--state-accent) 30%, transparent), 0 0 22px 4px var(--state-glow);
+  transition: left 0.85s var(--ease-bloom), top 0.85s var(--ease-bloom);
+  touch-action: none;
+}
+.mood-dot:active { cursor: grabbing; transition: none; }
+.mood-field.mood-edited .mood-dot { box-shadow: 0 0 0 5px color-mix(in srgb, var(--state-accent-2) 42%, transparent), 0 0 26px 6px var(--state-glow); }
+.mood-developing .mood-dot { filter: blur(0.8px); opacity: 0.9; }
+
+.mood-sliders { display: flex; flex-direction: column; gap: 0.85rem; margin-top: 0.5rem; }
+.mood-slider-head { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.3rem; }
+.mood-slider-label { font-weight: 700; font-size: 0.9rem; }
+.mood-now {
+  font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--state-accent-2);
 }
-.spectrum-track {
-  position: relative;
-  height: 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+.mood-range {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 12px; border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.07); cursor: pointer;
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--state-accent-deep) 82%, #0b0c10),
@@ -1424,28 +1464,22 @@ h3 .ic,
     var(--state-accent-2)
   );
 }
-.spectrum-fill {
-  position: absolute;
-  top: 50%;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
+.mood-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%; border: none;
   background: radial-gradient(circle at 38% 34%, #fff, var(--state-accent-2) 72%);
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-accent) 34%, transparent), 0 0 20px 3px var(--state-glow);
-  transition: left 0.95s var(--ease-bloom);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-accent) 34%, transparent), 0 0 16px 2px var(--state-glow);
 }
-.spectrum-poles {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 0.3rem;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ink-mute);
+.mood-range::-moz-range-thumb {
+  width: 20px; height: 20px; border-radius: 50%; border: none;
+  background: radial-gradient(circle at 38% 34%, #fff, var(--state-accent-2) 72%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-accent) 34%, transparent);
 }
-.mood-developing .spectrum-fill { filter: blur(1.1px); opacity: 0.82; }
-.mood-moderate .spectrum-fill { opacity: 0.94; }
+.mood-poles {
+  display: flex; justify-content: space-between; margin-top: 0.3rem; font-size: 0.68rem;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-mute);
+}
+.mood-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; transition: opacity 0.4s ease; }
+.mood-hint { margin-top: 0.5rem; }
 
 /* ── richer diagnostics: a duotone tile grid (everything Hum noticed) ───────── */
 .diagnostics-card {
@@ -1489,9 +1523,63 @@ h3 .ic,
 .diag-v::first-letter { text-transform: uppercase; }
 .diag-clear { color: #7bd391; }
 .diag-moderate { color: #e6cf6a; }
+.diag-watch { color: #e6b07a; }
 .diag-developing { color: #c0a7e6; }
 .diag-info { color: var(--state-accent-2); }
 .diag-note { margin: 0.55rem 0 0; }
+
+/* ── early-detection + screening surface (Today + Diary): the longitudinal/clinical categorisation ── */
+.diary-now { margin: 0.7rem 0 0.4rem; }
+.diary-now-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; }
+.diary-now-tag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 800; color: var(--ink-mute); }
+.diary-now-pos { font-size: 0.82rem; font-weight: 800; }
+.diary-now-pos.tag-usual { color: var(--ink-soft); }
+.diary-now-pos.tag-above { color: #8fd6a4; }
+.diary-now-pos.tag-below { color: #e6c79a; }
+.diary-now-pos.tag-farBelow { color: #e6a07a; }
+.now-bar {
+  position: relative; height: 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, #6f7da0 60%, #0b0c10), color-mix(in srgb, var(--state-accent) 30%, #14161d) 50%, var(--state-accent-2));
+}
+.now-usual { position: absolute; top: -3px; bottom: -3px; border-radius: 999px; background: rgba(255, 255, 255, 0.13); border: 1px solid rgba(255, 255, 255, 0.22); }
+.now-mark {
+  position: absolute; top: 50%; width: 18px; height: 18px; border-radius: 50%; transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 38% 34%, #fff, var(--state-accent-2) 72%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-accent) 34%, transparent), 0 0 16px 2px var(--state-glow);
+}
+.now-poles { display: flex; justify-content: space-between; margin-top: 0.3rem; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-mute); }
+.now-usual-label { text-transform: none; letter-spacing: 0; }
+
+.diary-early { margin: 0.8rem 0; padding: 0.7rem 0.85rem; border-radius: 14px; background: var(--glass); border: 1px solid var(--glass-line); border-left: 3px solid var(--state-accent-2); }
+.diary-early.tone-watch { border-left-color: #e6b07a; }
+.diary-early.tone-clear { border-left-color: #8fd6a4; }
+.diary-early.tone-developing { border-left-color: #c0a7e6; }
+.diary-early-head { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
+.early-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--state-accent-2); box-shadow: 0 0 8px 1px var(--state-glow); }
+.early-dot.tone-watch { background: #e6b07a; }
+.early-dot.tone-clear { background: #8fd6a4; }
+.early-dot.tone-moderate { background: #e6cf6a; }
+.early-dot.tone-developing { background: #c0a7e6; }
+.diary-early-tag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 800; color: var(--ink-mute); }
+.diary-early-label { font-size: 0.86rem; font-weight: 800; color: var(--ink); }
+.early-trend { margin-left: auto; font-size: 0.72rem; color: var(--ink-soft); }
+
+.diary-overtime { margin: 0.5rem 0 0.2rem; }
+.diary-overtime > summary { cursor: pointer; font-size: 0.78rem; color: var(--ink-soft); padding: 0.3rem 0; list-style: revert; }
+.diary-overtime[open] > summary { margin-bottom: 0.3rem; }
+
+.diary-screening { margin: 0.8rem 0; padding: 0.75rem 0.9rem; border-radius: 14px; background: var(--glass); border: 1px solid var(--glass-line); }
+.diary-screening h4 { margin: 0 0 0.5rem; font-size: 0.92rem; }
+.screen-rows { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.4rem; }
+.screen-row { display: flex; align-items: center; gap: 0.5rem; }
+.screen-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--state-accent-2); flex: 0 0 auto; }
+.screen-dot.tone-clear { background: #7bd391; }
+.screen-dot.tone-moderate { background: #e6cf6a; }
+.screen-dot.tone-watch { background: #e6a07a; }
+.screen-label { font-size: 0.84rem; }
+.screen-band { margin-left: auto; font-size: 0.8rem; font-weight: 800; text-transform: capitalize; color: var(--ink); }
+.screen-when { flex: 0 0 auto; }
 
 /* ── THE DIARY OF HUMS: a graphic, cinematic longitudinal panel ────────────── */
 .longitudinal-card {
@@ -1766,64 +1854,33 @@ h3 .ic,
   margin-left: 0.4rem;
 }
 /* OCEAN lede: the two foregrounded traits (Openness, Conscientiousness). */
-.sig-ocean {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 0.2rem 0 0.6rem;
-}
-.sig-ocean-trait {
-  flex: 1 1 0;
-  min-width: 8.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-  padding: 0.5rem 0.7rem;
-  border-radius: 14px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--state-accent) 22%, var(--glass)), color-mix(in srgb, var(--state-accent) 11%, var(--glass)));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 8px 22px -14px color-mix(in srgb, var(--state-accent) 70%, transparent);
-}
-.sig-ocean-name {
-  font-size: 0.66rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  font-weight: 800;
-  color: var(--ink-mute);
-}
-.sig-ocean-lean {
-  font: 700 1.15rem/1.1 "Iowan Old Style", Georgia, serif;
-  color: var(--ink);
-}
-.sig-ocean-lean.balanced { color: var(--ink-soft); }
-.sig-headline { color: var(--ink-soft); margin: 0.2rem 0 0.7rem; }
-.sig-traits { display: flex; flex-direction: column; gap: 0.55rem; margin: 0.3rem 0 0.6rem; }
-.trait.primary .trait-name { color: var(--state-accent); }
-.trait.primary .trait-track { box-shadow: 0 0 0 1px color-mix(in srgb, var(--state-accent) 22%, transparent); }
-.trait-head { margin-bottom: 0.1rem; }
-.trait-name { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 800; color: var(--ink-mute); }
-.trait-poles { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--ink-mute); margin-bottom: 0.18rem; }
-.trait-poles .on { color: var(--ink); font-weight: 700; }
-.trait-track {
-  position: relative;
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--state-accent) 8%, rgba(255,255,255,0.06)),
-    color-mix(in srgb, var(--state-accent) 24%, rgba(255,255,255,0.04)));
+.sig-headline { color: var(--ink-soft); margin: 0.2rem 0 0.4rem; }
+/* ── Big Five: all five traits, equal weight, each an adjustable visual slider (OCEAN HiTL) ── */
+.sig-traits { display: flex; flex-direction: column; gap: 0.95rem; margin: 0.55rem 0 0.4rem; }
+.trait-adj-head { display: flex; align-items: baseline; gap: 0.45rem; margin-bottom: 0.32rem; }
+.trait-ico { font-size: 1.1rem; line-height: 1; }
+.trait-name { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 800; color: var(--ink); }
+.trait-now { margin-left: auto; font-size: 0.8rem; font-weight: 800; color: var(--state-accent-2); }
+.trait-edited .trait-now { color: var(--state-accent); }
+.trait-range {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 9px; border-radius: 999px; cursor: pointer;
   border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--state-accent) 9%, rgba(255, 255, 255, 0.06)),
+    color-mix(in srgb, var(--state-accent) 27%, rgba(255, 255, 255, 0.04)));
 }
-.trait-fill {
-  position: absolute;
-  top: 50%;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #fff;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-accent) 42%, transparent),
-    0 0 12px 1px color-mix(in srgb, var(--state-accent) 65%, transparent);
-  transition: left 0.8s var(--ease-bloom);
+.trait-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 17px; height: 17px; border-radius: 50%; border: none; background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-accent) 42%, transparent), 0 0 12px 1px color-mix(in srgb, var(--state-accent) 60%, transparent);
 }
+.trait-range::-moz-range-thumb {
+  width: 17px; height: 17px; border-radius: 50%; border: none; background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-accent) 42%, transparent);
+}
+.trait-poles { display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--ink-mute); margin-top: 0.22rem; }
+.trait-blurb { margin: 0.2rem 0 0; }
+.sig-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.6rem 0 0.2rem; }
+.sig-saved { margin: 0.35rem 0 0; color: #7bd391; }
 .sig-trend { margin: 0.5rem 0 0.3rem; }
 
 /* History-aware + personality lines on the daily step (ASK 8 / ASK 7). */

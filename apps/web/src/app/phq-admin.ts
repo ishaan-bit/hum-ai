@@ -24,6 +24,7 @@ import {
   appendAuditEvent,
   upsertParticipantDoc,
   nextDueAfter,
+  cacheLatestScreening,
 } from "./clinical-store";
 import { showCrisisSurface } from "./crisis";
 
@@ -248,6 +249,9 @@ export function showInstrumentAdministration(opts: PhqAdminOptions): void {
     await upsertParticipantDoc(opts.studyId, opts.participantPseudonym, {
       nextInstrumentDueAt: nextDueAfter(administeredAt),
     });
+
+    // Mirror the band locally so the consumer Diary/Today can surface it with no network call.
+    cacheLatestScreening(phq, gad);
 
     teardown();
     opts.onComplete?.({ phq, gad });

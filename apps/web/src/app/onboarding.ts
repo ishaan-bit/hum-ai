@@ -20,12 +20,12 @@ const SLIDES: readonly Slide[] = [
   {
     tag: "The ritual",
     title: "Meet your hum",
-    body: "Once a day, hum one steady note for about twelve seconds. Hum AI reads your inner state from the sound, entirely on your device.",
+    body: "Once a day, hum whatever note feels easy and let it carry for about twelve seconds — any pitch you like. Hum AI reads your inner state from the sound, entirely on your device.",
   },
   {
     tag: "How it works",
     title: "Hum, and the world tunes to you",
-    body: "Hold the glowing orb and let a soft, even note out while the ring fills. The whole screen shifts to match how you sound. No mic handy? You can simulate a hum from the ☰ menu.",
+    body: "Hold the glowing orb and let a comfortable note out while the ring fills — high or low, whatever suits your mood. The whole screen shifts to match how you sound. No mic handy? You can simulate a hum from the ☰ menu.",
   },
   {
     tag: "Why daily",

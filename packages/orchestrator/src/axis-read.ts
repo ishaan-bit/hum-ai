@@ -137,8 +137,17 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   // Energy, voiced activity, brightness and pitch height set the level; pitch MOVEMENT
   // (melodic range) and spectral FLUX (how much the timbre changes) add the "animation"
   // an activated hum carries beyond raw loudness. Weights sum to 1; all on-domain.
-  const energyN = unit(f.meanRms, 0.006, 0.06, 0); // near-silence → strong
-  const activeN = clamp01(f.activeFrameRatio);
+  // Energy window WIDENED to a realistic sustained-hum RMS span (0.01–0.14). The old 0.006–0.06
+  // window saturated at any audible hum — a normal "mmm" pinned energyN at 1.0, which is what made
+  // every typical hum read "restless and activated" (high arousal, mid valence). Now a soft hum
+  // sits low, a comfortable hum (~0.08) mid, only a genuinely loud/intense one saturates.
+  // Validated by sim-lab `fifty-hums` (the distribution un-pins). The synth generator is also
+  // brought down to a realistic level so the demo path no longer feeds an RMS-0.28 outlier.
+  const energyN = unit(f.meanRms, 0.01, 0.14, 0); // near-silence → strong
+  // A sustained hum is ALWAYS mostly-active (activeFrameRatio ~0.9), so raw activeN was a large
+  // near-constant push on arousal (the same fixed-offset failure mode as the pitch pin). Gently
+  // centre it on a typical hum so only an UNUSUALLY continuous/sparse hum moves arousal here.
+  const activeN = clamp01((f.activeFrameRatio - 0.3) / 0.6);
   const brightN = unit(f.spectralCentroidHz, 250, 2600, 0.3);
   const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5);
   const pitchMoveN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // more melodic movement → more activated

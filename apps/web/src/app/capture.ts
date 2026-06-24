@@ -24,11 +24,60 @@ function seed(): number {
   return Math.floor(Math.random() * 1e9);
 }
 
-/** Synthesize a test hum. Clean hums vary slightly in pitch/seed so the baseline isn't degenerate. */
+/**
+ * A realistic MOOD PALETTE for synthetic "clean" hums. The old synth used `targetPeak 0.5`
+ * (RMS ≈ 0.28) with a single mid pitch — far hotter than any real hum, which saturated the
+ * arousal read so EVERY simulated hum came back "restless and activated". These specs sit in a
+ * realistic loudness band (RMS ≈ 0.05–0.11) and vary the cues a sustained tone can actually carry
+ * — loudness, pitch height, harmonic brightness, vibrato and a little noise — so the demo path
+ * spans calm / warm / steady / bright / low instead of one pinned zone. (Verified in sim-lab's
+ * synth-probe.)
+ */
+interface MoodSpec {
+  readonly mood: string;
+  readonly f0: number;
+  readonly harmonics: readonly number[];
+  readonly targetPeak: number;
+  readonly vibratoDepth: number;
+  readonly noiseRms: number;
+}
+const CLEAN_PALETTE: readonly MoodSpec[] = [
+  { mood: "calm", f0: 196, harmonics: [1, 0.32, 0.1], targetPeak: 0.1, vibratoDepth: 0.012, noiseRms: 0.0015 },
+  { mood: "warm", f0: 210, harmonics: [1, 0.45, 0.18], targetPeak: 0.12, vibratoDepth: 0.016, noiseRms: 0.0015 },
+  { mood: "steady", f0: 168, harmonics: [1, 0.5, 0.25, 0.12], targetPeak: 0.13, vibratoDepth: 0.011, noiseRms: 0.0016 },
+  { mood: "bright", f0: 232, harmonics: [1, 0.6, 0.34, 0.16], targetPeak: 0.2, vibratoDepth: 0.02, noiseRms: 0.0015 },
+  { mood: "low", f0: 122, harmonics: [1, 0.28, 0.08], targetPeak: 0.07, vibratoDepth: 0.004, noiseRms: 0.0022 },
+  { mood: "tense", f0: 150, harmonics: [1, 0.7, 0.45, 0.25], targetPeak: 0.18, vibratoDepth: 0.005, noiseRms: 0.004 },
+];
+
+/** Build one hum from a palette spec, jittered by `salt` so repeats aren't byte-identical. */
+function synthMoodHum(spec: MoodSpec, salt: number): AudioInput {
+  const jit = ((salt % 7) - 3) * 0.01;
+  return synthHum({
+    seed: seed(),
+    f0: spec.f0 * (1 + jit * 0.4),
+    harmonics: spec.harmonics,
+    targetPeak: spec.targetPeak * (1 + jit),
+    vibratoDepth: spec.vibratoDepth,
+    noiseRms: spec.noiseRms,
+  });
+}
+
+/** The number of distinct moods the demo seed walks through. */
+export const CLEAN_PALETTE_SIZE = CLEAN_PALETTE.length;
+
+/** A deterministic palette-walk hum for the demo seeder, so a seeded week spans real moods. */
+export function synthesizeMood(index: number): AudioInput {
+  const spec = CLEAN_PALETTE[index % CLEAN_PALETTE.length]!;
+  return synthMoodHum(spec, index);
+}
+
+/** Synthesize a test hum. Clean hums draw from a realistic mood palette so they aren't degenerate. */
 export function synthesize(kind: SynthKind): AudioInput {
   if (kind === "silence") return synthSilence({ seed: seed() });
   if (kind === "noisy") return synthNoisyHum({ seed: seed(), f0: 150 + Math.random() * 30 });
-  return synthHum({ seed: seed(), f0: 150 + Math.random() * 30, vibratoDepth: 0.008 + Math.random() * 0.006 });
+  const spec = CLEAN_PALETTE[Math.floor(Math.random() * CLEAN_PALETTE.length)]!;
+  return synthMoodHum(spec, Math.floor(Math.random() * 7));
 }
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

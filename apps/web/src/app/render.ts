@@ -11,7 +11,7 @@
  * a non-diagnostic disclaimer. The raw risk hypothesis, relapse-drift details, and any
  * numeric per-read confidence in `read.internal` are NEVER rendered.
  */
-import type { OrchestratedRead, AxisResolution, FeedbackRequest } from "@hum-ai/orchestrator";
+import type { OrchestratedRead, AxisResolution } from "@hum-ai/orchestrator";
 import type { HumSelfReport } from "@hum-ai/affect-model-contracts";
 import type { MusicRecommendation } from "@hum-ai/intervention-engine";
 import { EVIDENCE_BANDS } from "@hum-ai/safety-language";
@@ -33,8 +33,10 @@ import {
 import type { LoadedPrior } from "./prior";
 import { isGranted } from "./consent";
 import { createBreathPacer, type BreathPacer } from "./breath";
-import type { PersonalitySignature } from "@hum-ai/personality-signature";
+import type { PersonalitySignature, BigFiveKey } from "@hum-ai/personality-signature";
 import { LIFE_CONTEXT, type DiaryContextMap } from "./diary-store";
+import { loadOceanOverride, saveOceanOverride, clearOceanOverride } from "./signature-store";
+import { loadLatestScreening, type LatestScreening } from "./clinical-store";
 import { relativeDayIST, whenLabelIST, formatTimeIST } from "./time";
 
 // esc() also de-dashes (house style: NO em dashes anywhere a user can see). Folding deDash() in
@@ -106,12 +108,12 @@ const STAGE_LABEL: Record<string, string> = {
 
 // ── friendly quality-gate reason text ─────────────────────────────────────────
 const REASON_TEXT: ReadonlyArray<readonly [string, string]> = [
-  ["too_short", "the hum was too short — hold a steady tone for the full 12 seconds"],
+  ["too_short", "the hum was too short — let your note carry for the full 12 seconds"],
   ["near_silent", "almost no sound came through — hum a bit louder, closer to the mic"],
   ["clipped", "the input was distorting — ease off or move back from the mic"],
   ["too_interrupted", "too many gaps — keep the hum continuous, without stopping"],
   ["mostly_quiet", "mostly too quiet — hum a little louder"],
-  ["too_little_active_audio", "not enough steady humming — sustain one clear note"],
+  ["too_little_active_audio", "not enough humming — keep your note going"],
   ["poor_voicing", "couldn't find a steady pitch — hum a clear, even note"],
   ["poor_snr", "too much background noise relative to the hum — find a quieter spot"],
 ];
@@ -125,7 +127,7 @@ function reasonText(reasons: readonly string[]): string {
 }
 
 // ── the read card (LEADS with valence + arousal axes) ─────────────────────────
-export function renderRead(read: OrchestratedRead): void {
+export function renderRead(read: OrchestratedRead, consent: ConsentState): void {
   const uf = read.userFacing;
   const card = $("read-card");
   if (!card) return;
@@ -187,8 +189,8 @@ export function renderRead(read: OrchestratedRead): void {
       ? `<p class="read-region">This hum read as <strong>${copy(region)}</strong>.</p>`
       : "";
     axes.innerHTML = `
-      <h3>${icon("compass")} Where you are <span class="muted small">(mood + energy · reflective)</span></h3>
-      ${moodSpectra(a.valence, a.arousal)}
+      <h3>${icon("compass")} Where you are <span class="muted small">(your read — drag the dot if it's off)</span></h3>
+      ${moodField(a.valence, a.arousal)}
       ${regionLine}
       <p class="axis-prov muted small">${copy(axisProvenance(a.valence))}</p>
       ${hint}
@@ -199,7 +201,7 @@ export function renderRead(read: OrchestratedRead): void {
     if (uf.abstained) diag.hidden = true;
     else {
       diag.hidden = false;
-      diag.innerHTML = diagnosticsBody(read);
+      diag.innerHTML = diagnosticsBody(read, consent);
     }
   }
 }
@@ -227,47 +229,152 @@ function zoneDescriptor(v: number, a: number): string {
   return `${moodWord(v)} mood · ${energyWord(a)} energy`;
 }
 
-/**
- * One READING SPECTRUM (ASK: the 2×2 was illegible): a labelled duotone gradient bar with a
- * glowing marker at the read's position, the current pole word lit, and both poles named. Two of
- * these (Mood, Energy) replace the old quadrant grid — an end user reads them at a glance.
- * Magnitude lives in the marker POSITION + glow (style attr, stripped by the safety screen), never
- * a number (ADR-0008). The markers GLIDE in on reveal (CSS transition on `left`).
- */
-function spectrumRow(label: string, leftPole: string, rightPole: string, value: number, nowWord: string, tone: string): string {
-  const pct = ((clampUnit(value) + 1) / 2) * 100;
-  return `
-    <div class="spectrum spectrum-${tone}">
-      <div class="spectrum-top">
-        <span class="spectrum-label">${esc(label)}</span>
-        <span class="spectrum-now">${esc(nowWord)}</span>
-      </div>
-      <div class="spectrum-track">
-        <span class="spectrum-fill" style="left:${pct.toFixed(1)}%"></span>
-      </div>
-      <div class="spectrum-poles"><span>${esc(leftPole)}</span><span>${esc(rightPole)}</span></div>
-    </div>`;
-}
 
-/** The legible mood + energy read: a bold named state, then two reading spectra. */
-function moodSpectra(vRes: AxisResolution, aRes: AxisResolution): string {
+/** % position of a signed [-1,1] value along a horizontal axis (left = −1). */
+const pctX = (v: number): number => ((clampUnit(v) + 1) / 2) * 100;
+/** % position on the mood MAP's vertical axis — high arousal sits at the TOP (0%). */
+const pctYUp = (a: number): number => ((1 - clampUnit(a)) / 2) * 100;
+
+/**
+ * THE MOOD FIELD — one interactive control that IS the read, the visual, AND the correction.
+ *
+ * Replaces the old read-only twin spectra (whose floating "now" word stacked over the right pole,
+ * reading as "low over bright" / "charged over charged"). Now there's a single 2-D circumplex map —
+ * a glowing dot you can drag, on a calm-↔-charged × low-↔-bright field — plus two precise sliders
+ * with their poles fixed UNDER the track (never overlapping a value word). The user reads where they
+ * are at a glance, and slides the SAME control to correct it; "Save how I feel" teaches the model
+ * (HiTL) — there is no second, separate slider. Wired by {@link renderMoodAdjust}.
+ */
+function moodField(vRes: AxisResolution, aRes: AxisResolution): string {
   const v = clampUnit(vRes.value);
   const a = clampUnit(aRes.value);
   const band = confBand(Math.max(vRes.confidence, aRes.confidence));
   const zone = zoneFor(v, a);
-  const aria = `You read as ${zone}: ${zoneDescriptor(v, a)}, ${band} signal.`;
-  return `
-    <div class="mood-read mood-${band}" role="img" aria-label="${esc(aria)}">
-      <div class="state-name">
-        <span class="state-name-zone">${esc(zone)}</span>
-        <span class="state-name-desc">${esc(zoneDescriptor(v, a))}</span>
-        <span class="signal-chip signal-${band}" aria-hidden="true">${esc(band)} signal</span>
-      </div>
-      <div class="spectra" aria-hidden="true">
-        ${spectrumRow("Mood", "low", "bright", v, moodWord(v), "mood")}
-        ${spectrumRow("Energy", "calm", "charged", a, energyWord(a), "energy")}
-      </div>
+  const aria = `You read as ${zone}: ${zoneDescriptor(v, a)}, ${band} signal. Drag the dot or use the sliders to adjust.`;
+  const sliderRow = (axis: "v" | "a", label: string, leftPole: string, rightPole: string, value: number, now: string): string => `
+    <div class="mood-slider">
+      <div class="mood-slider-head"><span class="mood-slider-label">${esc(label)}</span><span class="mood-now" id="mood-now-${axis}">${esc(now)}</span></div>
+      <input class="mood-range mood-range-${axis}" id="mood-${axis}" type="range" min="-100" max="100" step="2" value="${Math.round(value * 100)}" aria-label="${esc(label)} from ${esc(leftPole)} to ${esc(rightPole)}" />
+      <div class="mood-poles"><span>${esc(leftPole)}</span><span>${esc(rightPole)}</span></div>
     </div>`;
+  return `
+    <div class="mood-field mood-${band}" data-pv="${v.toFixed(3)}" data-pa="${a.toFixed(3)}" data-v="${v.toFixed(3)}" data-a="${a.toFixed(3)}">
+      <div class="mood-map-wrap">
+        <div class="mood-map" id="mood-map" role="application" aria-label="${esc(aria)}" tabindex="0" style="touch-action:none">
+          <svg class="mood-map-grid" viewBox="0 0 100 100" aria-hidden="true" preserveAspectRatio="none">
+            <defs><radialGradient id="mf-glow" cx="50%" cy="50%" r="60%"><stop offset="0%" class="mf-core"/><stop offset="100%" class="mf-edge"/></radialGradient></defs>
+            <rect x="1" y="1" width="98" height="98" rx="16" class="mf-bg"/>
+            <circle cx="50" cy="50" r="46" class="mf-ring"/><circle cx="50" cy="50" r="24" class="mf-ring mf-ring-in"/>
+            <line x1="50" y1="6" x2="50" y2="94" class="mf-axis"/><line x1="6" y1="50" x2="94" y2="50" class="mf-axis"/>
+            <circle cx="50" cy="50" r="2.2" class="mf-centre"/>
+          </svg>
+          <span class="mf-q mf-q-tr">${esc("Bright")}</span>
+          <span class="mf-q mf-q-tl">${esc("Tense")}</span>
+          <span class="mf-q mf-q-bl">${esc("Low")}</span>
+          <span class="mf-q mf-q-br">${esc("Calm")}</span>
+          <span class="mf-edge-top">charged</span><span class="mf-edge-bottom">calm</span>
+          <span class="mf-edge-left">low</span><span class="mf-edge-right">bright</span>
+          <button type="button" class="mood-dot" id="mood-dot" aria-label="Your mood. Drag to adjust." style="left:${pctX(v).toFixed(1)}%;top:${pctYUp(a).toFixed(1)}%"></button>
+        </div>
+      </div>
+      <div class="mood-state" id="mood-state">
+        <span class="state-name-zone" id="mood-zone">${esc(zone)}</span>
+        <span class="state-name-desc" id="mood-desc">${esc(zoneDescriptor(v, a))}</span>
+        <span class="signal-chip signal-${band}">${esc(band)} signal</span>
+      </div>
+      <div class="mood-sliders">
+        ${sliderRow("v", "Mood", "low", "bright", v, moodWord(v))}
+        ${sliderRow("a", "Energy", "calm", "charged", a, energyWord(a))}
+      </div>
+      <div class="mood-actions">
+        <button id="mood-save" class="btn btn-primary btn-sm" type="button">Save how I feel</button>
+        <button id="mood-confirm" class="btn btn-sm btn-ghost" type="button">Spot on, leave it</button>
+      </div>
+      <p class="mood-hint muted small" id="mood-hint">Slide the dot or the sliders if the read is off — saving teaches your hum model. Stored as derived features + your self-report only, never raw audio.</p>
+    </div>`;
+}
+
+/**
+ * Wire the interactive mood field rendered by {@link moodField}: live two-way sync between the
+ * draggable dot and the two sliders, a live state name, and Save/confirm that mints one HiTL row
+ * (the SAME correction the old separate slider made — now folded into the read itself). Called by
+ * the app right after `renderRead`. Re-querying the live DOM each call keeps it stateless.
+ */
+export function renderMoodAdjust(read: OrchestratedRead, onSubmit: (report: HumSelfReport) => void): void {
+  // Mood adjustment only exists for a usable read; an abstain shows no field.
+  if (read.userFacing.abstained) return;
+  const field = document.querySelector<HTMLElement>(".mood-field");
+  const map = $("mood-map");
+  const dot = $("mood-dot");
+  const sv = document.getElementById("mood-v") as HTMLInputElement | null;
+  const sa = document.getElementById("mood-a") as HTMLInputElement | null;
+  if (!field || !map || !dot || !sv || !sa) return;
+  const predicted = read.internal.axis.dimensional;
+
+  const apply = (v: number, a: number, from: "slider" | "drag" | "init"): void => {
+    const vc = clampUnit(v);
+    const ac = clampUnit(a);
+    field.dataset.v = vc.toFixed(3);
+    field.dataset.a = ac.toFixed(3);
+    dot.style.left = `${pctX(vc).toFixed(1)}%`;
+    dot.style.top = `${pctYUp(ac).toFixed(1)}%`;
+    if (from !== "slider") {
+      sv.value = String(Math.round(vc * 100));
+      sa.value = String(Math.round(ac * 100));
+    }
+    const zoneEl = $("mood-zone");
+    const descEl = $("mood-desc");
+    const nv = $("mood-now-v");
+    const na = $("mood-now-a");
+    if (zoneEl) zoneEl.textContent = zoneFor(vc, ac);
+    if (descEl) descEl.textContent = zoneDescriptor(vc, ac);
+    if (nv) nv.textContent = moodWord(vc);
+    if (na) na.textContent = energyWord(ac);
+    field.classList.toggle("mood-edited", Math.abs(vc - predicted.valence) > 0.05 || Math.abs(ac - predicted.arousal) > 0.05);
+  };
+
+  sv.addEventListener("input", () => apply(Number(sv.value) / 100, Number(sa.value) / 100, "slider"));
+  sa.addEventListener("input", () => apply(Number(sv.value) / 100, Number(sa.value) / 100, "slider"));
+
+  // Pointer drag / tap on the map → set the dot (high arousal at the top).
+  let dragging = false;
+  const fromPointer = (e: PointerEvent): void => {
+    const r = map.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top) / r.height;
+    apply(x * 2 - 1, 1 - y * 2, "drag");
+  };
+  const onMove = (e: PointerEvent): void => { if (dragging) { e.preventDefault(); fromPointer(e); } };
+  map.addEventListener("pointerdown", (e) => { dragging = true; map.setPointerCapture(e.pointerId); fromPointer(e); });
+  map.addEventListener("pointermove", onMove);
+  map.addEventListener("pointerup", (e) => { dragging = false; try { map.releasePointerCapture(e.pointerId); } catch { /* ignore */ } });
+  // Keyboard nudge for the focused map (accessible alternative to drag).
+  map.addEventListener("keydown", (e) => {
+    const v = Number(field.dataset.v ?? 0), a = Number(field.dataset.a ?? 0);
+    const step = 0.06;
+    if (e.key === "ArrowRight") { apply(v + step, a, "drag"); e.preventDefault(); }
+    else if (e.key === "ArrowLeft") { apply(v - step, a, "drag"); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { apply(v, a + step, "drag"); e.preventDefault(); }
+    else if (e.key === "ArrowDown") { apply(v, a - step, "drag"); e.preventDefault(); }
+  });
+
+  const done = (msg: string): void => {
+    const hint = $("mood-hint");
+    if (hint) hint.textContent = msg;
+    const actions = field.querySelector(".mood-actions");
+    if (actions) (actions as HTMLElement).style.opacity = "0.45";
+  };
+  $("mood-save")?.addEventListener("click", () => {
+    const v = Number(field.dataset.v ?? predicted.valence);
+    const a = Number(field.dataset.a ?? predicted.arousal);
+    const agreed = Math.abs(v - predicted.valence) < 0.12 && Math.abs(a - predicted.arousal) < 0.12;
+    onSubmit({ label: { valence: v, arousal: a }, source: agreed ? "self_report_confirm" : "self_report_adjust", agreedWithRead: agreed });
+    done(agreed ? "Saved — your read stands. Your hum model just learned from it. ✓" : "Saved how you feel — your hum model just learned from it. ✓");
+  });
+  $("mood-confirm")?.addEventListener("click", () => {
+    onSubmit({ label: predicted, source: "self_report_confirm", agreedWithRead: true });
+    done("Thanks — your hum model just learned from this. ✓");
+  });
 }
 
 /** Provenance line for the read — user-facing, no model-status detail. */
@@ -280,16 +387,115 @@ function diagTile(k: string, v: string, tone: string): string {
   return `<div class="diag-tile"><span class="diag-k">${esc(k)}</span><span class="diag-v diag-${tone}">${esc(v)}</span></div>`;
 }
 
+// ── early-detection + result categorisation (the longitudinal/clinical layer, surfaced) ──
+// The engine computes several CATEGORISATIONS the old surface under-showed: an early-detection
+// TREND, a non-diagnostic risk hypothesis (nominal / marker-present / insufficient), a sustained
+// relapse-DRIFT early-warning, a RECOVERY trajectory, and — if a screening was taken on this device
+// — the most recent PHQ-9 / GAD-7 band. These are surfaced here (Today) and in the Diary. Always
+// qualitative + non-diagnostic, consent-gated for the clinical layer (ADR-0006/0008).
+
+type EarlyTone = "clear" | "moderate" | "watch" | "developing";
+interface EarlySignal { readonly label: string; readonly tone: EarlyTone; readonly line: string; }
+
+/** Resolve the early-detection status from the longitudinal layer (non-diagnostic, screened copy). */
+function earlyDetection(lg: LongitudinalView | null): EarlySignal {
+  if (!lg || lg.abstained || lg.riskHypothesis.status === "insufficient_data") {
+    return {
+      label: "still learning",
+      tone: "developing",
+      line: "Hum is still learning your usual — early signals appear once it knows your baseline.",
+    };
+  }
+  if (lg.relapseDrift) {
+    const d = lg.relapseDrift.driftWindowHums;
+    return {
+      label: "worth a gentle check-in",
+      tone: "watch",
+      line: `An early signal: your recent hums have drifted from your steadier pattern across ${d} check-in${d === 1 ? "" : "s"}. Not a diagnosis — a nudge that talking to someone you trust could help.`,
+    };
+  }
+  if (lg.recovery) {
+    return {
+      label: "easing back",
+      tone: "clear",
+      line: "A positive early signal: your recent hums are moving back toward your steadier pattern.",
+    };
+  }
+  if (lg.riskHypothesis.status === "risk_marker_present") {
+    return {
+      label: "keeping an eye",
+      tone: "moderate",
+      line: "One recent signal sits a little apart from your usual. Nothing standing out as a pattern yet — Hum keeps watching, gently.",
+    };
+  }
+  return {
+    label: "nothing standing out",
+    tone: "clear",
+    line: "Nothing in your recent pattern is standing out from your usual right now.",
+  };
+}
+
+/** Friendly early-detection trend word (the longitudinal trend categorisation). */
+function trendWord(dir: "improving" | "worsening" | "stable" | "uncertain"): string {
+  return dir === "improving" ? "easing" : dir === "worsening" ? "unsettled" : dir === "stable" ? "steady" : "forming";
+}
+
+/** A gentle, readable label for a screening severity band (non-alarming, non-diagnostic). */
+function screeningBandLabel(band: string): string {
+  switch (band) {
+    case "minimal": return "minimal";
+    case "mild": return "mild";
+    case "moderate": return "moderate";
+    case "moderately_severe": return "moderately high";
+    case "severe": return "high";
+    default: return band;
+  }
+}
+const SCREENING_TONE: Record<string, string> = {
+  minimal: "clear", mild: "clear", moderate: "moderate", moderately_severe: "watch", severe: "watch",
+};
+
+/**
+ * The most-recent on-device screening (PHQ-9 mood + GAD-7 worry), surfaced gently. Returns "" when
+ * no screening was ever taken on this device (the common consumer case) — it never invents one.
+ * Non-diagnostic framing, with a support line when a band runs high.
+ */
+function screeningBlock(s: LatestScreening | null, now: number): string {
+  if (!s || (!s.phq && !s.gad)) return "";
+  const row = (label: string, band: string, at: string): string =>
+    `<div class="screen-row"><span class="screen-dot tone-${SCREENING_TONE[band] ?? "moderate"}"></span>` +
+    `<span class="screen-label">${esc(label)}</span>` +
+    `<span class="screen-band band-${esc(band)}">${esc(screeningBandLabel(band))}</span>` +
+    `<span class="screen-when muted small">${esc(relativeDayIST(at, now))}</span></div>`;
+  const rows = [
+    s.phq ? row("Mood check-in (PHQ-9)", s.phq.severityBand, s.phq.administeredAt) : "",
+    s.gad ? row("Worry check-in (GAD-7)", s.gad.severityBand, s.gad.administeredAt) : "",
+  ].join("");
+  const high =
+    (s.phq && (s.phq.severityBand === "severe" || s.phq.severityBand === "moderately_severe")) ||
+    (s.gad && s.gad.severityBand === "severe");
+  const support = high
+    ? `<p class="muted small">A higher band is worth taking seriously — please consider reaching out to someone you trust or a support line. This is a screening reflection, never a diagnosis.</p>`
+    : `<p class="muted small">A reflection from your own check-in answers — a screening signal, never a diagnosis.</p>`;
+  return `
+    <div class="diary-screening">
+      <h4>${icon("pulse")} Your recent check-in <span class="muted small">(self-report screening)</span></h4>
+      <div class="screen-rows">${rows}</div>
+      ${support}
+    </div>`;
+}
+
 /**
  * "What Hum noticed" — surfaces the read's internal detail the dashboard view used to hide:
  * per-axis clarity, how much clear signal the hum carried, whether the trained model contributed,
  * and how this hum sits against the user's own baseline. All qualitative (ADR-0008): the words are
  * coarse bands, never numbers, and carry no clinical id.
  */
-function diagnosticsBody(read: OrchestratedRead): string {
+function diagnosticsBody(read: OrchestratedRead, consent: ConsentState): string {
   const a = read.internal.axis;
   const p = read.internal.personalization;
   const n = read.internal.eligibleHumCount;
+  const clinicalOn = isGranted(consent, "clinical_risk_surfacing");
 
   const sig = a.signalStrength;
   const sigWord = sig >= 0.66 ? "strong" : sig >= 0.33 ? "steady" : "faint";
@@ -308,12 +514,30 @@ function diagnosticsBody(read: OrchestratedRead): string {
       : "population read";
   const persTone = p.applied ? (p.selfNormality >= 0.6 ? "clear" : "moderate") : "developing";
 
+  // The early-detection categorisation (consent-gated): the trend + risk hypothesis, surfaced as one
+  // qualitative tile here in Today, with the full read in the Diary. Screening band tile if taken.
+  const lg = read.internal.longitudinal;
+  const early = earlyDetection(lg);
+  const screening = clinicalOn ? loadLatestScreening() : null;
+  const earlyTile = clinicalOn && !lg.abstained
+    ? diagTile("Early signal", early.label, early.tone)
+    : "";
+  const trendTile = clinicalOn && !lg.abstained && lg.riskHypothesis.status !== "insufficient_data"
+    ? diagTile("Recent trend", trendWord(lg.trendDirection), "info")
+    : "";
+  const screenTile = screening?.phq
+    ? diagTile("Mood check-in", screeningBandLabel(screening.phq.severityBand), SCREENING_TONE[screening.phq.severityBand] ?? "moderate")
+    : "";
+
   const tiles = [
     diagTile("Mood clarity", confBand(a.valence.confidence), confBand(a.valence.confidence)),
     diagTile("Energy clarity", confBand(a.arousal.confidence), confBand(a.arousal.confidence)),
     diagTile("Signal", sigWord, sigTone),
     diagTile("Read basis", basis, "info"),
     diagTile("Your baseline", persWord, persTone),
+    earlyTile,
+    trendTile,
+    screenTile,
   ].join("");
 
   const shift =
@@ -323,10 +547,13 @@ function diagnosticsBody(read: OrchestratedRead): string {
         ? "Your usual looks like it's been drifting a little lower lately; the read is re-centering on it."
         : "";
   const shiftLine = shift ? `<p class="diag-note muted small">${esc(shift)}</p>` : "";
+  // Surface the early-detection sentence here in Today too (the user asked for it in both places).
+  const earlyLine = clinicalOn && !lg.abstained ? `<p class="diag-note muted small">${esc(early.line)}</p>` : "";
 
   return `
-    <h3>${icon("pulse")} What Hum noticed <span class="muted small">(this hum, non-diagnostic)</span></h3>
+    <h3>${icon("pulse")} What Hum is noticing <span class="muted small">(this hum + your pattern, non-diagnostic)</span></h3>
     <div class="diag-grid">${tiles}</div>
+    ${earlyLine}
     ${shiftLine}
   `;
 }
@@ -343,7 +570,7 @@ function diagnosticsBody(read: OrchestratedRead): string {
 const HUM_AGAIN_REASON: Record<string, { title: string; note: string }> = {
   too_short: {
     title: "That was a little too short",
-    note: "I only caught a moment of it. Hold one steady note for the full twelve seconds and I'll read it.",
+    note: "I only caught a moment of it. Pick any note that feels easy and let it carry for the full twelve seconds, and I'll read it.",
   },
   too_quiet: {
     title: "That came through very quietly",
@@ -355,11 +582,11 @@ const HUM_AGAIN_REASON: Record<string, { title: string; note: string }> = {
   },
   sounded_like_speech: {
     title: "That sounded more like talking than humming",
-    note: "I heard pitch moving around like speech or a tune. Hum one steady, even note — lips closed — and hold it. Nothing was read or saved.",
+    note: "The pitch moved around like speech. A hum settles on a note and lets it ring — lips closed — rather than wandering like a tune. Pick any pitch you like and hold it. Nothing was read or saved.",
   },
   not_voiced: {
-    title: "I couldn't find a steady tone",
-    note: "That read more like a breath or a sigh than a hum. Hum a clear, even note you can feel buzzing. Nothing was read or saved from this take.",
+    title: "I couldn't quite catch the note",
+    note: "That read more like a breath or a sigh than a hum. Pick any note you like and let it ring so you can feel it buzzing. Nothing was read or saved from this take.",
   },
   too_choppy: {
     title: "That was mostly pauses",
@@ -367,7 +594,7 @@ const HUM_AGAIN_REASON: Record<string, { title: string; note: string }> = {
   },
   unclear: {
     title: "I didn't catch a clear hum",
-    note: "That take didn't sound like a sustained hum. Find a quiet spot and hum one steady note for the full twelve seconds. Nothing was read or saved.",
+    note: "That take didn't quite land as a hum. Find a quiet spot, pick any note you like and let it carry for the full twelve seconds. Nothing was read or saved.",
   },
 };
 
@@ -423,74 +650,11 @@ export function clearFeedbackPrompt(): void {
   }
 }
 
-/** Render the feedback prompt for a usable read; `onSubmit` is called with the self-report. */
-export function renderFeedbackPrompt(
-  read: OrchestratedRead,
-  request: FeedbackRequest,
-  onSubmit: (report: HumSelfReport) => void,
-): void {
-  const card = $("feedback-card");
-  if (!card) return;
-  if (read.userFacing.abstained) {
-    clearFeedbackPrompt();
-    return;
-  }
-  // Cancel any pending "thanks" auto-clear from a previous hum before rendering this one.
-  if (thanksTimer !== undefined) {
-    clearTimeout(thanksTimer);
-    thanksTimer = undefined;
-  }
-  const predicted = read.internal.axis.dimensional;
-  const v0 = Math.round(predicted.valence * 100);
-  const a0 = Math.round(predicted.arousal * 100);
-  card.hidden = false;
-  // ASK 5: no separate "Adjust" toggle — the sliders are right here, pre-set to the read. Nudge
-  // them if it's off and hit Save; or tap "Spot on" if the read already fits. One obvious path.
-  card.innerHTML = `
-    <h4>Does this match how you feel? <span class="muted small">nudge the sliders if not, it teaches your hum model</span></h4>
-    <p class="muted small">${esc(request.note)}</p>
-    <div class="feedback-adjust">
-      <label class="fb-slider">
-        <span>Mood <span class="muted small">low ↔ bright</span></span>
-        <input type="range" id="fb-valence" min="-100" max="100" step="5" value="${v0}" />
-      </label>
-      <label class="fb-slider">
-        <span>Energy <span class="muted small">calm ↔ charged</span></span>
-        <input type="range" id="fb-arousal" min="-100" max="100" step="5" value="${a0}" />
-      </label>
-    </div>
-    <div class="feedback-actions">
-      <button id="fb-save" class="btn btn-primary btn-sm">Save how I feel</button>
-      <button id="fb-confirm" class="btn btn-sm btn-ghost">Spot on, leave it</button>
-    </div>
-    <p class="muted small disclaimer">Stored as derived features + your self-report only, never raw audio. Non-clinical.</p>
-  `;
-
-  const thank = (): void => {
-    card.innerHTML = `<p class="fb-thanks">Thanks, your hum model just learned from this. ✓</p>`;
-    if (thanksTimer !== undefined) clearTimeout(thanksTimer);
-    thanksTimer = setTimeout(() => clearFeedbackPrompt(), 2600);
-  };
-
-  $("fb-confirm")?.addEventListener("click", () => {
-    onSubmit({ label: predicted, source: "self_report_confirm", agreedWithRead: true });
-    thank();
-  });
-  $("fb-save")?.addEventListener("click", () => {
-    const vEl = document.getElementById("fb-valence") as HTMLInputElement | null;
-    const aEl = document.getElementById("fb-arousal") as HTMLInputElement | null;
-    const valence = vEl ? Number(vEl.value) / 100 : predicted.valence;
-    const arousal = aEl ? Number(aEl.value) / 100 : predicted.arousal;
-    // Unmoved sliders ⇒ this IS a confirmation of the read (agreedWithRead true).
-    const agreed = Math.abs(valence - predicted.valence) < 0.2 && Math.abs(arousal - predicted.arousal) < 0.2;
-    onSubmit({
-      label: { valence, arousal },
-      source: agreed ? "self_report_confirm" : "self_report_adjust",
-      agreedWithRead: agreed,
-    });
-    thank();
-  });
-}
+// HiTL feedback is now collected inline in the read's interactive mood field
+// (`moodField` + `renderMoodAdjust`), so the old standalone two-slider prompt was removed —
+// it duplicated the read and its floating value word stacked over the pole labels
+// ("low" over "bright", "charged" over "charged"). `clearFeedbackPrompt` is kept to retire
+// the legacy `#feedback-card` container on each render.
 
 // ── "Your hum model" lab — watch your own native model + calibration improve ──
 const NATIVE_TREND_COPY: Record<string, string> = {
@@ -815,29 +979,39 @@ export function renderLadder(stage: string, n: number): void {
 // state over time" the read leads toward — non-clinical, a mirror not a verdict. All strings are
 // screen-safe (see the @hum-ai/personality-signature package test); we esc() them anyway.
 
-/** A single trait bar: low pole ←•→ high pole, with the lean lit. Foregrounded OCEAN traits get `.primary`. */
-function traitBar(t: PersonalitySignature["traits"][number]): string {
-  const left = Math.max(0, Math.min(100, ((t.value + 1) / 2) * 100));
-  return `
-    <div class="trait${t.primary ? " primary" : ""}" title="${esc(t.label)}: ${esc(t.blurb)}">
-      <div class="trait-head"><span class="trait-name">${esc(t.label)}</span></div>
-      <div class="trait-poles"><span class="${t.lean === "low" ? "on" : ""}">${esc(t.lowPole)}</span><span class="${t.lean === "high" ? "on" : ""}">${esc(t.highPole)}</span></div>
-      <div class="trait-track"><span class="trait-fill" style="left:${left.toFixed(1)}%"></span></div>
-    </div>`;
+/** A plain-language icon per OCEAN trait so the end user isn't reading bare jargon. */
+const TRAIT_ICON: Record<BigFiveKey, string> = {
+  openness: "🎨",
+  conscientiousness: "🎯",
+  extraversion: "☀️",
+  agreeableness: "🤝",
+  emotional_stability: "🌊",
+};
+
+/** The lean word for a value: high pole / low pole / balanced (no numbers — ADR-0008). */
+function leanWord(t: PersonalitySignature["traits"][number], value: number): string {
+  return value >= 0.12 ? t.highPole : value <= -0.12 ? t.lowPole : "balanced";
 }
 
-/** The OCEAN lede: the two foregrounded traits (Openness, Conscientiousness) as a prominent pair. */
-function oceanLede(primaryTraits: PersonalitySignature["primaryTraits"]): string {
-  if (primaryTraits.length === 0) return "";
-  const cell = (t: PersonalitySignature["traits"][number]): string => {
-    const word = t.lean === "high" ? t.highPole : t.lean === "low" ? t.lowPole : "balanced";
-    return `
-      <div class="sig-ocean-trait">
-        <span class="sig-ocean-name">${esc(t.label)}</span>
-        <span class="sig-ocean-lean ${t.lean}">${esc(word)}</span>
-      </div>`;
-  };
-  return `<div class="sig-ocean" role="group" aria-label="Your foregrounded Big Five traits">${primaryTraits.map(cell).join("")}</div>`;
+/**
+ * One ADJUSTABLE trait row: an icon, the trait name, the live lean word, a slider from the low pole
+ * to the high pole (poles fixed UNDER the track), and a plain blurb. ALL FIVE traits render this
+ * way with EQUAL prominence — the old display foregrounded only Openness + Conscientiousness and
+ * dimmed the other three, which read as hiding them. `value` is the user's saved calibration if any,
+ * else the acoustic read.
+ */
+function traitSlider(t: PersonalitySignature["traits"][number], value: number, edited: boolean): string {
+  return `
+    <div class="trait-adj${edited ? " trait-edited" : ""}" data-key="${esc(t.key)}">
+      <div class="trait-adj-head">
+        <span class="trait-ico" aria-hidden="true">${TRAIT_ICON[t.key]}</span>
+        <span class="trait-name">${esc(t.label)}</span>
+        <span class="trait-now" id="trait-now-${esc(t.key)}">${esc(leanWord(t, value))}</span>
+      </div>
+      <input class="trait-range" id="trait-${esc(t.key)}" data-key="${esc(t.key)}" type="range" min="-100" max="100" step="2" value="${Math.round(value * 100)}" aria-label="${esc(t.label)} from ${esc(t.lowPole)} to ${esc(t.highPole)}" />
+      <div class="trait-poles"><span>${esc(t.lowPole)}</span><span>${esc(t.highPole)}</span></div>
+      <p class="trait-blurb muted small">${esc(t.blurb)}</p>
+    </div>`;
 }
 
 const SIG_TREND_COPY: Record<"improving" | "worsening" | "stable" | "uncertain", string> = {
@@ -852,6 +1026,7 @@ export function renderSignature(
   read: OrchestratedRead | null,
   consent: ConsentState,
   eligibleHumCount: number,
+  localId: string,
 ): void {
   const card = $("signature-card");
   if (!card) return;
@@ -877,16 +1052,60 @@ export function renderSignature(
     return;
   }
 
-  const lede = oceanLede(sig.primaryTraits);
-  const bars = sig.traits.map(traitBar).join("");
+  // Merge the user's saved self-calibration over the acoustic read (per trait). All FIVE traits are
+  // shown equally and are adjustable; saving teaches a personal calibration (the OCEAN HiTL).
+  const override = loadOceanOverride(localId);
+  const rows = sig.traits
+    .map((t) => {
+      const saved = override[t.key];
+      const value = saved ?? t.value;
+      return traitSlider(t, value, saved !== undefined);
+    })
+    .join("");
+  const anyEdited = sig.traits.some((t) => override[t.key] !== undefined);
+
   card.innerHTML = `
     <h3>${icon("spark")} Your hum signature <span class="badge-mini">Big Five (OCEAN) · ${sig.status === "tentative" ? "tentative" : "early"} · exploratory, not a test</span></h3>
-    ${lede}
     <p class="sig-headline">${esc(sig.headline)}</p>
-    <div class="sig-traits">${bars}</div>
+    <p class="muted small">All five shown — drag any to where it actually feels true for you, then save. Some traits show up more clearly in a voice than others, but none are hidden.</p>
+    <div class="sig-traits">${rows}</div>
+    <div class="sig-actions">
+      <button id="sig-save" class="btn btn-primary btn-sm" type="button">Save my traits</button>
+      <button id="sig-reset" class="btn btn-sm btn-ghost"${anyEdited ? "" : " hidden"} type="button">Reset to my hum read</button>
+    </div>
     ${trendLine}
-    <p class="disclaimer">An exploratory mirror of how your hums tend to sound over time, leaning on the two traits most legible in a voice (openness and conscientiousness); not a personality test, not a clinical read.</p>
+    <p class="disclaimer">An exploratory mirror of how your hums tend to sound over time — not a personality test, not a clinical read. Your saved adjustments are kept on this device as your own calibration.</p>
   `;
+
+  // Live lean word as each slider moves.
+  for (const t of sig.traits) {
+    const slider = document.getElementById(`trait-${t.key}`) as HTMLInputElement | null;
+    const now = document.getElementById(`trait-now-${t.key}`);
+    const rowEl = card.querySelector<HTMLElement>(`.trait-adj[data-key="${t.key}"]`);
+    slider?.addEventListener("input", () => {
+      const val = Number(slider.value) / 100;
+      if (now) now.textContent = leanWord(t, val);
+      rowEl?.classList.add("trait-edited");
+    });
+  }
+
+  $("sig-save")?.addEventListener("click", () => {
+    const next: Record<string, number> = {};
+    for (const t of sig.traits) {
+      const slider = document.getElementById(`trait-${t.key}`) as HTMLInputElement | null;
+      if (slider) next[t.key] = Number(slider.value) / 100;
+    }
+    saveOceanOverride(localId, next);
+    const reset = $("sig-reset");
+    if (reset) reset.hidden = false;
+    const hint = card.querySelector(".sig-actions");
+    if (hint) hint.insertAdjacentHTML("afterend", `<p class="sig-saved muted small">Saved your calibration. ✓</p>`);
+    setTimeout(() => card.querySelector(".sig-saved")?.remove(), 2600);
+  });
+  $("sig-reset")?.addEventListener("click", () => {
+    clearOceanOverride(localId);
+    renderSignature(sig, read, consent, eligibleHumCount, localId);
+  });
 }
 
 // ── the diary of hums (the private field-notebook view) ──────────────────────
@@ -1236,6 +1455,53 @@ function diaryExplainer(lg: LongitudinalView | null): string {
     </details>`;
 }
 
+/**
+ * THE CLEAR "WHERE YOU ARE NOW" VISUAL — a single legible bar: the user's usual mood range glows as
+ * a band, today's hum sits as a bright marker, and a plain line says how today compares. This is the
+ * at-a-glance answer the old constellation buried; it leads the diary so the time chart is secondary.
+ */
+function nowPositionBar(latest: DiaryPoint, band: NormalBand | null): string {
+  const v = clampUnit(latest.valence);
+  const pos = positionOf(latest.valence, band);
+  const markPct = ((v + 1) / 2) * 100;
+  let usual = "";
+  if (band) {
+    const lo = ((clampUnit(band.lo) + 1) / 2) * 100;
+    const hi = ((clampUnit(band.hi) + 1) / 2) * 100;
+    usual = `<span class="now-usual" style="left:${lo.toFixed(1)}%;width:${Math.max(2, hi - lo).toFixed(1)}%"></span>`;
+  }
+  return `
+    <div class="diary-now">
+      <div class="diary-now-head">
+        <span class="diary-now-tag">Where you are now</span>
+        <span class="diary-now-pos tag-${pos}">${esc(POS_LONG[pos])}</span>
+      </div>
+      <div class="now-bar" role="img" aria-label="Today's hum reads ${esc(POS_LONG[pos])}.">
+        ${usual}
+        <span class="now-mark" style="left:${markPct.toFixed(1)}%"></span>
+      </div>
+      <div class="now-poles"><span>lower</span><span class="now-usual-label">your usual range</span><span>brighter</span></div>
+    </div>`;
+}
+
+/** The early-detection categorisation, as a clear status block for the diary (non-diagnostic). */
+function earlySignalsBlock(lg: LongitudinalView | null): string {
+  const e = earlyDetection(lg);
+  const trend = lg && !lg.abstained && lg.riskHypothesis.status !== "insufficient_data"
+    ? `<span class="early-trend">recent trend: <strong>${esc(trendWord(lg.trendDirection))}</strong></span>`
+    : "";
+  return `
+    <div class="diary-early tone-${e.tone}">
+      <div class="diary-early-head">
+        <span class="early-dot tone-${e.tone}"></span>
+        <span class="diary-early-tag">Early detection</span>
+        <span class="diary-early-label">${esc(e.label)}</span>
+        ${trend}
+      </div>
+      <p class="muted small">${esc(e.line)}</p>
+    </div>`;
+}
+
 export function renderLongitudinal(
   read: OrchestratedRead | null,
   consent: ConsentState,
@@ -1286,6 +1552,7 @@ export function renderLongitudinal(
       <h3>${icon("book")} Your diary of hums <span class="badge-mini">${esc(countBadge)}</span></h3>
       ${points.length ? diaryChart(points, null, diary.focusAt ?? null) : diaryGhost()}
       <p class="diary-lately">${esc(filling)}</p>
+      ${screeningBlock(loadLatestScreening(), now)}
       ${focus}
       ${diaryExplainer(lg)}
       <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
@@ -1303,6 +1570,7 @@ export function renderLongitudinal(
   const focusCtx = context[focusPoint.at] ?? { tags: [], note: "" };
   const focusPos = positionOf(focusPoint.valence, band);
 
+  const latest = points[points.length - 1]!;
   card.innerHTML = `
     <h3>${icon("book")} Your diary of hums <span class="badge-mini">${esc(countBadge)}</span></h3>
     <div class="diary-lately-block tone-${pattern.tone}">
@@ -1310,8 +1578,14 @@ export function renderLongitudinal(
       <p class="diary-lately">${esc(pattern.lately)}</p>
       <p class="muted small">${esc(pattern.heading)}</p>
     </div>
-    ${diaryChart(points, band, focusAt)}
-    ${chartScale(points, now)}
+    ${nowPositionBar(latest, band)}
+    ${earlySignalsBlock(lg)}
+    ${screeningBlock(loadLatestScreening(), now)}
+    <details class="diary-overtime">
+      <summary>Your hums over time <span class="muted small">— each star is one day</span></summary>
+      ${diaryChart(points, band, focusAt)}
+      ${chartScale(points, now)}
+    </details>
     ${focusPanel(focusPoint, focusPos, focusCtx, now)}
     ${momentsList(points, band, context, focusAt, now)}
     <p class="diary-next">${icon("compass")} ${esc(pattern.next)}</p>

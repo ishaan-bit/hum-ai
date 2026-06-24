@@ -176,7 +176,7 @@ class FakeHeldPriorExpert implements AffectExpert {
 }
 
 function renderAll(read: OrchestratedRead, consent: ConsentState): void {
-  renderRead(read);
+  renderRead(read, consent);
   renderInterventionOfDay(read);
   renderPersonalization(read);
   renderLongitudinal(read, consent, read.internal.eligibleHumCount);
@@ -206,7 +206,7 @@ test("an abstained (silent) read renders the 'hum again' surface safely with no 
     modelVersion,
     now,
   });
-  renderRead(read);
+  renderRead(read, defaultConsent(now));
   renderCaptureRejected({} as never); // decision is ignored by the renderer (it clears every surface)
   assertAllCapturedSafe("abstained");
 });
@@ -293,7 +293,7 @@ test("the OCEAN hum-signature card renders only safe copy, incl. the render-only
       now,
       history: matureHistory,
     });
-    renderSignature(sig, read, withConsent("local_processing", "clinical_risk_surfacing"), read.internal.eligibleHumCount);
+    renderSignature(sig, read, withConsent("local_processing", "clinical_risk_surfacing"), read.internal.eligibleHumCount, "local-test");
     const card = els.get("signature-card");
     assert.ok(card && card.innerHTML.length > 0, "signature card must render");
     assertHtmlSafe(card.innerHTML, "signature-card"); // raw% / clinical id / raw-audio

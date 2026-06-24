@@ -113,7 +113,14 @@ test("v3: missing gate metadata is conservative — a passedGate=false prior (lo
 });
 
 test("an in-domain prior that strongly DISAGREES with the backbone LOWERS confidence (conflicting evidence)", () => {
-  const features = cleanHumFeatures();
+  // Use a hum with a CLEAR arousal lean (loud, bright, lively) so an opposite-pole prior is a
+  // genuine strong disagreement. A plain "clean hum" now reads ~neutral arousal by design (the
+  // recalibration that stopped every typical hum reading "restless"), which would make a ±0.95
+  // prior only a borderline split — not the conflicting-evidence case this test asserts on.
+  const features = cleanHumFeatures({
+    meanRms: 0.13, medianRms: 0.13, rmsEnergy: 0.13, activeFrameRatio: 0.95,
+    spectralCentroidHz: 1800, spectralFlux: 0.25, pitchMeanHz: 230,
+  });
   const acoustic = resolveAxisRead(features).arousal;
 
   // A confident, gate-passed, in-domain prior pointing to the OPPOSITE pole of the
