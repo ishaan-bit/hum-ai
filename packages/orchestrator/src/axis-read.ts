@@ -144,16 +144,23 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   // Validated by sim-lab `fifty-hums` (the distribution un-pins). The synth generator is also
   // brought down to a realistic level so the demo path no longer feeds an RMS-0.28 outlier.
   const energyN = unit(f.meanRms, 0.01, 0.14, 0); // near-silence → strong
-  // A sustained hum is ALWAYS mostly-active (activeFrameRatio ~0.9), so raw activeN was a large
-  // near-constant push on arousal (the same fixed-offset failure mode as the pitch pin). Gently
-  // centre it on a typical hum so only an UNUSUALLY continuous/sparse hum moves arousal here.
-  const activeN = clamp01((f.activeFrameRatio - 0.3) / 0.6);
+  // A sustained hum is ALWAYS mostly-active (activeFrameRatio ~0.85). The old formula
+  // (ratio - 0.3) / 0.6 gave activeN ≈ 0.92 for any decent hum — a near-constant +0.20
+  // push on arousal that pinned every calm hum as "restless". Centre at 0.85 so a typical
+  // clean hum contributes 0.5 (neutral), only genuinely sparse/full-continuous hums deviate.
+  const activeN = clamp01(0.5 + (f.activeFrameRatio - 0.85) / 0.5);
   const brightN = unit(f.spectralCentroidHz, 250, 2600, 0.3);
   const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5);
   const pitchMoveN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // more melodic movement → more activated
   const fluxN = unit(f.spectralFlux, 0.01, 0.3, 0.2); // more spectral change → more activated
+  // Re-balanced when `activeN` was re-centred (above): dropping the near-constant activeFrameRatio
+  // push left a tense/agitated-but-LOW-pitch hum (high energy + flux, low pitch) reading flat. So
+  // spectral FLUX now carries more of the activation signal (0.08 → 0.20). Flux is the right lever:
+  // HIGH for an agitated/keyed-up hum, LOW for a calm or low-flat one, so it lifts genuine tension
+  // toward high arousal WITHOUT re-pinning a calm hum (the un-pin intent holds). Validated across
+  // the four V-A mood archetypes by sim-lab `calibration` + `fifty-hums`. Weights sum to 1.
   const arousal01 = clamp01(
-    0.3 * energyN + 0.22 * activeN + 0.16 * brightN + 0.14 * pitchN + 0.1 * pitchMoveN + 0.08 * fluxN,
+    0.32 * energyN + 0.12 * activeN + 0.16 * brightN + 0.12 * pitchN + 0.08 * pitchMoveN + 0.2 * fluxN,
   );
 
   // --- valence: subdued / downbeat ↔ bright / pleasant ---

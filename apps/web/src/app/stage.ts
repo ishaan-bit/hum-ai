@@ -54,7 +54,11 @@ export function createStage(opts: StageOptions = {}): Stage {
     }
   };
 
-  const reachable = (s: Step): boolean => s === "hum" || unlocked;
+  // The Hum and Diary windows are ALWAYS reachable — the diary is a private record that exists
+  // before today's hum (it persists across sessions), and the medical early-signal layer lives
+  // there, so a user must be able to open it any time, not only after a fresh read. The State +
+  // Today result windows still wait for the first usable read of THIS session.
+  const reachable = (s: Step): boolean => s === "hum" || s === "diary" || unlocked;
 
   function reflect(): void {
     if (stage) stage.dataset.step = step;

@@ -140,7 +140,10 @@ test("an ineligible (rejected) hum does not corrupt the consecutive-drift streak
     consecutiveDriftHums: 0,
   });
   assert.equal(after.consecutiveDriftHums, 2);
-  assert.equal(after, state, "ineligible hums return the same state");
+  // An ineligible hum with no read payload leaves the state materially unchanged (the model, ladder,
+  // streak, and diary history are all untouched). It is no longer the SAME object reference — a
+  // read-bearing ineligible hum now records to the diary's relapse history — so assert deep equality.
+  assert.deepEqual(after, state, "ineligible hums leave the state materially unchanged");
 });
 
 test("the personalization loop carries the longitudinal state and drift streak across hums", async () => {

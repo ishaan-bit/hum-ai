@@ -34,7 +34,18 @@ test("a near-silent hum has ~zero signal strength (the read will abstain)", () =
 });
 
 test("an in-domain trained prior REFINES the axis read and lifts confidence; an OOD prior abstains", () => {
-  const features = cleanHumFeatures();
+  // A genuinely energetic hum (loud, bright, melodic, high-flux) so its acoustic arousal is clearly
+  // positive — i.e. a high-arousal in-domain prior actually AGREES with it (the precondition for the
+  // confidence lift). A neutral/gappy hum reads mildly-calm and would (correctly) disagree with a 0.9
+  // prior, which is a property of the read, not a regression.
+  const features = cleanHumFeatures({
+    meanRms: 0.11,
+    activeFrameRatio: 0.92,
+    spectralCentroidHz: 1900,
+    spectralFlux: 0.26,
+    pitchMeanHz: 240,
+    pitchRangeSemitones: 5,
+  });
   const acoustic = resolveAxisRead(features);
 
   const inDomain = resolveAxisRead(features, {

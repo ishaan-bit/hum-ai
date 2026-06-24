@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Rendering — surfaces ONLY safe representations:
  *   - `read.userFacing`         (already safety-screened by the spine)
  *   - `read.recommendationView` (sanitized bands; rendered as bands, never raw numbers)
@@ -38,6 +38,22 @@ import { LIFE_CONTEXT, type DiaryContextMap } from "./diary-store";
 import { loadOceanOverride, saveOceanOverride, clearOceanOverride } from "./signature-store";
 import { loadLatestScreening, type LatestScreening } from "./clinical-store";
 import { relativeDayIST, whenLabelIST, formatTimeIST } from "./time";
+import {
+  deriveRiskMarkers,
+  MIN_SERIES_FOR_MARKERS,
+  type RiskMarker,
+  type RiskMarkerReport,
+  type RiskSeriesPoint,
+} from "@hum-ai/relapse-engine";
+import {
+  RISK_MARKER_COPY,
+  RISK_LEGEND,
+  MOOD_LEGEND,
+  RISK_LAYERS_NOTE,
+  riskTone,
+  riskLevelWord,
+  riskMarkerLine,
+} from "./risk-copy";
 
 // esc() also de-dashes (house style: NO em dashes anywhere a user can see). Folding deDash() in
 // here means EVERY escaped string — our static copy AND the orchestrator's generated read copy —
@@ -88,6 +104,10 @@ const ICONS: Record<string, string> = {
     '<svg viewBox="0 0 16 16" width="15" height="15"><path d="M8 1 9.5 6.5 15 8 9.5 9.5 8 15 6.5 9.5 1 8 6.5 6.5Z" fill="currentColor"/></svg>',
   book:
     '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 3C6.2 1.9 3.3 1.9 1.7 2.7V13c1.6-.8 4.5-.8 6.3.5 1.8-1.3 4.7-1.3 6.3-.5V2.7C12.7 1.9 9.8 1.9 8 3Z"/><path d="M8 3v10.5"/></svg>',
+  moon:
+    '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M13.4 9.6A5.4 5.4 0 0 1 6.4 2.6 5.4 5.4 0 1 0 13.4 9.6Z"/></svg>',
+  wave:
+    '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 6c1.2-2 2.6-2 3.8 0S7.4 8 8.6 6s2.6-2 3.8 0M1 10c1.2-2 2.6-2 3.8 0s2.6 2 3.8 0 2.6-2 3.8 0"/></svg>',
 };
 function icon(name: keyof typeof ICONS): string {
   return `<span class="ic" aria-hidden="true">${ICONS[name] ?? ""}</span>`;
@@ -1036,7 +1056,7 @@ export function renderSignature(
   // The within-you trend line: live + consent-on shows the real trend; otherwise an honest hint.
   let trendLine: string;
   if (!isGranted(consent, "clinical_risk_surfacing")) {
-    trendLine = `<p class="sig-trend muted small">Turn on <strong>“Notice changes early”</strong> (in the menu) to track how this shifts over time.</p>`;
+    trendLine = `<p class="sig-trend muted small">Turn on <strong>"Notice changes early"</strong> (in the menu) to track how this shifts over time.</p>`;
   } else if (read && !read.internal.longitudinal.abstained) {
     trendLine = `<p class="sig-trend muted small">Your recent pattern is <strong>${esc(SIG_TREND_COPY[read.internal.longitudinal.trendDirection])}</strong>.</p>`;
   } else {
@@ -1117,10 +1137,12 @@ export function renderSignature(
 // riskHypothesis.confidence, driftMagnitude, any percent, or any clinical label, and the DATA
 // stays consent-gated. Model/feature terminology lives only in the "How this works" disclosure.
 
-/** One stored hum, as the diary sees it: when it was, its mood, and its (hidden) risk weight. */
+/** One stored hum, as the diary sees it: when it was, its mood + energy, and its (hidden) risk weight. */
 export interface DiaryPoint {
   readonly at: string;
   readonly valence: number;
+  /** Re-referenced display arousal in [-1, 1] — needed to separate low-mood from tension. */
+  readonly arousal: number;
   readonly risk: number;
 }
 
@@ -1416,7 +1438,7 @@ function momentsList(
       const pos = positionOf(p.valence, band);
       const note = context[p.at]?.note?.trim();
       const tags = context[p.at]?.tags ?? [];
-      const ctxBit = note ? `“${esc(note)}”` : tags.length ? esc(tags.join(" · ")) : "";
+      const ctxBit = note ? `"${esc(note)}"` : tags.length ? esc(tags.join(" · ")) : "";
       return `<button type="button" class="diary-moment${p.at === focus ? " on" : ""}" data-moment data-at="${esc(p.at)}">
         <span class="m-when">${esc(relativeDay(p.at, now))}</span>
         <span class="diary-tag tag-${pos}">${esc(POS_SHORT[pos])}</span>
@@ -1484,21 +1506,127 @@ function nowPositionBar(latest: DiaryPoint, band: NormalBand | null): string {
     </div>`;
 }
 
-/** The early-detection categorisation, as a clear status block for the diary (non-diagnostic). */
-function earlySignalsBlock(lg: LongitudinalView | null): string {
-  const e = earlyDetection(lg);
-  const trend = lg && !lg.abstained && lg.riskHypothesis.status !== "insufficient_data"
-    ? `<span class="early-trend">recent trend: <strong>${esc(trendWord(lg.trendDirection))}</strong></span>`
+/**
+ * MOOD RIBBON — replaces the star constellation chart. Each hum is a rounded bead,
+ * coloured by where it sat on the mood scale (bright ↔ low), fading gently with age.
+ * No axes, no numbers, no Cartesian grid — just a flowing visual record of recent hums.
+ * Tappable: clicking a bead opens that moment's detail panel.
+ */
+function moodRibbon(points: readonly DiaryPoint[], focusAt: string | null, now: number): string {
+  const recent = points.slice(-32);
+  if (recent.length === 0) return '';
+  const lastAt = recent[recent.length - 1]!.at;
+  const focusKey = focusAt ?? lastAt;
+
+  const petalZone = (v: number): string => {
+    if (v > 0.18) return 'bright';
+    if (v > 0.04) return 'calm';
+    if (v > -0.1) return 'neutral';
+    if (v > -0.28) return 'tense';
+    return 'low';
+  };
+
+  const petals = recent.map((p, i) => {
+    const zone = petalZone(p.valence);
+    const isLatest = p.at === lastAt;
+    const isFocus = p.at === focusKey;
+    const age = recent.length - 1 - i;
+    const opacity = Math.max(0.28, 1 - (age / recent.length) * 0.68).toFixed(2);
+    return `<button type="button"
+      class="mood-petal petal-${zone}${isFocus ? ' petal-focus' : ''}${isLatest ? ' petal-latest' : ''}"
+      data-moment data-at="${esc(p.at)}"
+      style="--petal-age:${age};opacity:${opacity}"
+      title="${esc(whenLabel(p.at, now))}"></button>`;
+  }).join('');
+
+  return `<div class="mood-ribbon" role="img" aria-label="Your recent check-ins as a mood ribbon — each bead is one hum, coloured by mood">${petals}</div>
+    <div class="ribbon-legend"><span>lower</span><span class="rl-mid">brighter →</span></div>`;
+}
+
+// ── THE MEDICAL LAYER: three within-user early signals (depression / anxiety / relapse risk) ──
+// `deriveRiskMarkers` (@hum-ai/relapse-engine) turns the user's own series of hums (valence +
+// arousal + risk over time) and the longitudinal state into three non-diagnostic, consent-gated
+// markers, each grounded in a quadrant of Russell's affective circumplex and escalated only on a
+// SUSTAINED within-user shift (with a CUSUM early-onset flag). The dot tone carries magnitude;
+// no number ever reaches the user (ADR-0008). All copy is screened in risk-copy.ts.
+
+/** Build the engine's series from the diary points (order is what the estimators need). */
+function markerSeries(points: readonly DiaryPoint[]): RiskSeriesPoint[] {
+  return points.map((p, i) => ({ t: i, valence: p.valence, arousal: p.arousal, risk: p.risk }));
+}
+
+/** A small inline self-report chip (PHQ-9 mood / GAD-7 worry), shown beside the matching marker. */
+function selfReportChip(label: string, band: string, at: string, now: number): string {
+  const tone = SCREENING_TONE[band] ?? "moderate";
+  return (
+    `<span class="risk-selfreport tone-${tone}"><span class="screen-dot tone-${tone}"></span>` +
+    `${esc(label)}: <strong>${esc(screeningBandLabel(band))}</strong> ` +
+    `<span class="muted small">(${esc(relativeDayIST(at, now))})</span></span>`
+  );
+}
+
+/** One marker row: a coloured dot + the warm name + the sanctioned sub-label + a level word + line. */
+function riskLayerRow(marker: RiskMarker, selfReport: string): string {
+  const meta = RISK_MARKER_COPY[marker.id];
+  const tone = riskTone(marker.level);
+  const word = riskLevelWord(marker.level);
+  const line = riskMarkerLine(marker.id, marker.level, marker.earlyOnset);
+  const onset =
+    marker.earlyOnset && (marker.level === "watch" || marker.level === "elevated")
+      ? `<span class="risk-onset">early</span>`
+      : "";
+  return `
+    <div class="risk-layer tone-${tone}" data-layer="${meta.token}">
+      <div class="risk-layer-head">
+        <span class="risk-dot tone-${tone}"></span>
+        ${icon(meta.icon)}
+        <span class="risk-name">${esc(meta.name)}</span>
+        <span class="risk-sub muted small">${esc(meta.sub)}</span>
+        <span class="risk-level tone-${tone}">${esc(word)}${onset}</span>
+      </div>
+      <p class="muted small risk-line">${esc(line)}</p>
+      ${selfReport}
+    </div>`;
+}
+
+/** The clear colour legend — the user's ask: "I don't know what the colours mean." */
+function diaryLegend(): string {
+  const risk = RISK_LEGEND.map(
+    (e) =>
+      `<span class="legend-item"><span class="risk-dot tone-${e.tone}"></span>` +
+      `<span class="legend-label">${esc(e.label)}</span> <span class="muted small">${esc(e.meaning)}</span></span>`,
+  ).join("");
+  const mood = MOOD_LEGEND.map(
+    (e) => `<span class="legend-swatch petal-${e.zone}"><span class="legend-label">${esc(e.label)}</span></span>`,
+  ).join("");
+  return `
+    <details class="diary-legend">
+      <summary>What the colours mean</summary>
+      <div class="legend-body">
+        <p class="muted small legend-title">Mood beads (your ribbon)</p>
+        <div class="legend-row legend-mood">${mood}</div>
+        <p class="muted small legend-title">Early-signal dots</p>
+        <div class="legend-row legend-risk">${risk}</div>
+      </div>
+    </details>`;
+}
+
+/** THE MEDICAL LAYER block — the three named within-user early signals + their colour legend. */
+function riskLayersBlock(report: RiskMarkerReport, screening: LatestScreening | null, now: number): string {
+  const phqChip = screening?.phq
+    ? selfReportChip("Mood check-in (PHQ-9)", screening.phq.severityBand, screening.phq.administeredAt, now)
+    : "";
+  const gadChip = screening?.gad
+    ? selfReportChip("Worry check-in (GAD-7)", screening.gad.severityBand, screening.gad.administeredAt, now)
     : "";
   return `
-    <div class="diary-early tone-${e.tone}">
-      <div class="diary-early-head">
-        <span class="early-dot tone-${e.tone}"></span>
-        <span class="diary-early-tag">Early detection</span>
-        <span class="diary-early-label">${esc(e.label)}</span>
-        ${trend}
-      </div>
-      <p class="muted small">${esc(e.line)}</p>
+    <div class="risk-layers">
+      <h4>${icon("pulse")} Early signals <span class="muted small">(within-user, non-diagnostic)</span></h4>
+      ${riskLayerRow(report.depressive, phqChip)}
+      ${riskLayerRow(report.anxiety, gadChip)}
+      ${riskLayerRow(report.relapse, "")}
+      ${diaryLegend()}
+      <p class="muted small risk-note">${esc(RISK_LAYERS_NOTE)}</p>
     </div>`;
 }
 
@@ -1522,24 +1650,31 @@ export function renderLongitudinal(
       <h3>${icon("book")} Your diary of hums <span class="badge-mini">off until you turn it on</span></h3>
       ${diaryGhost()}
       <p class="muted">This is the part that makes Hum more than a daily check. It keeps a private record of your hums, learns what is <em>usual</em> for you, and gently shows when a recent stretch looks different, <strong>early</strong>. It only does this if you say yes.</p>
-      <p class="muted small">Turn on <strong>“Notice changes early”</strong> under <strong>Privacy &amp; consent</strong> in the menu. Your per-hum read is exactly the same either way.</p>
+      <p class="muted small">Turn on <strong>"Notice changes early"</strong> under <strong>Privacy &amp; consent</strong> in the menu. Your per-hum read is exactly the same either way.</p>
       <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
     `;
     return;
   }
 
-  const lg = read ? read.internal.longitudinal : null;
-  const n = read ? read.internal.eligibleHumCount : eligibleHumCount;
-  const countBadge = `${n} hum${n === 1 ? "" : "s"} · private`;
+  // Count badge shows actual diary entries (all accepted hums), not just quality-gated ones.
+  const n = points.length;
+  const countBadge = `${n || eligibleHumCount} hum${(n || eligibleHumCount) === 1 ? "" : "s"} · private`;
 
-  // EARLY / SPARSE — not enough of the user's own history to compare against yet. Show whatever
-  // real dots exist (so it never feels empty), but make NO within-you judgement and NO band.
-  const baselineReady = !!read && !!lg && !lg.abstained && read.internal.stage !== "population_prior";
-  if (!baselineReady || points.length < 3) {
+  const lg = read ? read.internal.longitudinal : null;
+  const screening = loadLatestScreening();
+  const stageOk = !read || read.internal.stage !== "population_prior";
+
+  // EARLY / SPARSE — not enough of the user's own history to compare against yet. We can show the
+  // mature view EITHER from a live mature read OR from a deep-enough PERSISTED history (so the diary
+  // is fully useful when opened cold, before today's hum — the medical layer needs the series, not a
+  // live read). The within-user marker engine still abstains internally until the baseline is ready.
+  const enoughHistory = points.length >= MIN_SERIES_FOR_MARKERS;
+  const liveBaseline = !!read && !!lg && !lg.abstained && stageOk;
+  if (!enoughHistory && !(liveBaseline && points.length >= 3)) {
     const filling =
       n === 0
-        ? "Your diary starts with your first hum. Each one adds a page; your usual range appears once there are a few to compare against."
-        : `Your diary is filling. A few more check-ins and your usual range will show here, so a hum can read as typical or different for you.`;
+        ? "Your diary starts with your first hum. Each one adds a bead to your ribbon; your usual range appears once there are a few to compare against."
+        : `Your diary is filling. A few more check-ins and your usual range will show here.`;
     const focus = points.length
       ? focusPanel(
           points[points.length - 1]!,
@@ -1550,9 +1685,9 @@ export function renderLongitudinal(
       : "";
     card.innerHTML = `
       <h3>${icon("book")} Your diary of hums <span class="badge-mini">${esc(countBadge)}</span></h3>
-      ${points.length ? diaryChart(points, null, diary.focusAt ?? null) : diaryGhost()}
+      ${points.length ? moodRibbon(points, diary.focusAt ?? null, now) : diaryGhost()}
       <p class="diary-lately">${esc(filling)}</p>
-      ${screeningBlock(loadLatestScreening(), now)}
+      ${screeningBlock(screening, now)}
       ${focus}
       ${diaryExplainer(lg)}
       <p class="disclaimer">${esc(PATTERN_MIRROR_NOTE)}</p>
@@ -1560,10 +1695,14 @@ export function renderLongitudinal(
     return;
   }
 
-  // MATURE — a real personal baseline. Resolve ONE pattern reading, draw the band, let the user
-  // inspect individual moments and add their own context.
+  // MATURE — a real personal baseline (live read) or a deep-enough persisted history.
   const band = normalBand(points.map((p) => p.valence));
-  const sustained = !!lg!.relapseDrift;
+  const report = deriveRiskMarkers({
+    series: markerSeries(points),
+    baselineActive: enoughHistory && stageOk,
+    longitudinal: lg,
+  });
+  const sustained = !!lg?.relapseDrift;
   const pattern = derivePattern(lg, sustained);
   const focusAt = diary.focusAt ?? points[points.length - 1]!.at;
   const focusPoint = points.find((p) => p.at === focusAt) ?? points[points.length - 1]!;
@@ -1578,14 +1717,9 @@ export function renderLongitudinal(
       <p class="diary-lately">${esc(pattern.lately)}</p>
       <p class="muted small">${esc(pattern.heading)}</p>
     </div>
+    ${moodRibbon(points, focusAt, now)}
     ${nowPositionBar(latest, band)}
-    ${earlySignalsBlock(lg)}
-    ${screeningBlock(loadLatestScreening(), now)}
-    <details class="diary-overtime">
-      <summary>Your hums over time <span class="muted small">— each star is one day</span></summary>
-      ${diaryChart(points, band, focusAt)}
-      ${chartScale(points, now)}
-    </details>
+    ${riskLayersBlock(report, screening, now)}
     ${focusPanel(focusPoint, focusPos, focusCtx, now)}
     ${momentsList(points, band, context, focusAt, now)}
     <p class="diary-next">${icon("compass")} ${esc(pattern.next)}</p>

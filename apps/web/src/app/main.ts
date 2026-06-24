@@ -472,6 +472,7 @@ function renderDiary(read: OrchestratedRead | null): void {
   const points = session.state.relapseHistory.map((s) => ({
     at: s.capturedAt as string,
     valence: s.dimensional.valence,
+    arousal: s.dimensional.arousal,
     risk: s.riskScore,
   }));
   renderLongitudinal(

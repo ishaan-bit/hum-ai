@@ -42,8 +42,11 @@ test("personalized predictions beating the backbone returns personalization_help
 });
 
 test("personalized predictions worse than the backbone returns personalization_worsening", () => {
-  // Self-report sits right on the backbone; the personalized read is far off.
-  const c = corpusOf({ valence: -0.6, arousal: -0.6 }, ON_BACKBONE, 10);
+  // Self-report sits right on the backbone; the personalized read is far off. The backbone arousal
+  // for BASE sits in the calibration deadzone (a 180 Hz sine reads near-neutral energy), so the
+  // arousal comparisons are correctly skipped and VALENCE carries the evidence — hence enough
+  // examples that the valence-only comparisons clear BENEFIT_MIN_EXAMPLES (12).
+  const c = corpusOf({ valence: -0.6, arousal: -0.6 }, ON_BACKBONE, 14);
   const r = assessPersonalizationBenefit(c);
   assert.equal(r.status, "personalization_worsening");
   assert.ok(r.improvement !== null && r.improvement < 0);

@@ -23,10 +23,26 @@ const obs = (over: Partial<HumObservation> = {}): HumObservation => ({
   ...over,
 });
 
-test("an ineligible hum is ignored — only quality-gated hums shape the model", () => {
+test("an ineligible hum does not shape the model, but a read-bearing one still enters the diary", () => {
   const s = freshState();
-  const next = ingestHum(s, obs({ eligible: false }));
-  assert.equal(next, s); // same reference, untouched
+  // (a) ineligible with no read payload → nothing changes (model + diary untouched).
+  const bare = ingestHum(s, obs({ eligible: false }));
+  assert.equal(bare.eligibleHumCount, 0);
+  assert.deepEqual(bare.profile, s.profile);
+  assert.deepEqual(bare.featureWindows, s.featureWindows);
+  assert.equal(bare.relapseHistory.length, 0);
+
+  // (b) ineligible WITH a dimensional read + risk → the diary's relapse history records it (so the
+  // diary + count badge always reflect the most-recent check-in), but the model baseline, ladder,
+  // and eligibleHumCount NEVER advance for a non-quality-gated hum.
+  const withRead = ingestHum(
+    s,
+    obs({ eligible: false, dimensional: { valence: -0.2, arousal: 0.1 }, riskScore: 0.3 }),
+  );
+  assert.equal(withRead.relapseHistory.length, 1, "ineligible read-bearing hum records to the diary history");
+  assert.equal(withRead.eligibleHumCount, 0, "but does not advance the eligible-hum ladder");
+  assert.deepEqual(withRead.profile, s.profile, "and does not move the model baseline");
+  assert.deepEqual(withRead.featureWindows, s.featureWindows);
 });
 
 test("each eligible hum advances the count, baseline, stage cap, and timestamp", () => {

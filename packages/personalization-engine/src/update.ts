@@ -102,8 +102,20 @@ function signedSalienceDrift(zDeltas: Record<string, number>, salience: Record<s
 }
 
 export function ingestHum(state: PersonalizationState, obs: HumObservation): PersonalizationState {
+  // Every accepted hum (eligible or not) goes into the diary's relapse history so the
+  // diary and count badge always reflect the most-recent check-in. The model baseline,
+  // ladder, and eligibleHumCount only advance for quality-gated (eligible) hums below.
+  const relapseHistoryWithObs: readonly RelapseSample[] =
+    obs.dimensional && obs.riskScore !== undefined
+      ? pushBounded(
+          state.relapseHistory,
+          { capturedAt: obs.capturedAt, dimensional: obs.dimensional, riskScore: obs.riskScore },
+          RELAPSE_HISTORY_LIMIT,
+        )
+      : state.relapseHistory;
+
   // Only eligible hums shape the model (the ladder counts eligible hums).
-  if (!obs.eligible) return state;
+  if (!obs.eligible) return { ...state, relapseHistory: relapseHistoryWithObs };
 
   // 1. Append derived features to the bounded windows.
   const featureWindows: Record<string, number[]> = {};
@@ -209,16 +221,6 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     obs.features,
   );
 
-  // 8. Bounded relapse history (used to build relapse references next read).
-  const relapseHistory: readonly RelapseSample[] =
-    obs.dimensional && obs.riskScore !== undefined
-      ? pushBounded(
-          state.relapseHistory,
-          { capturedAt: obs.capturedAt, dimensional: obs.dimensional, riskScore: obs.riskScore },
-          RELAPSE_HISTORY_LIMIT,
-        )
-      : state.relapseHistory;
-
   const profile: UserModelProfile = {
     ...state.profile,
     baseline_vector: rolling.vector,
@@ -244,7 +246,7 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
   return {
     profile,
     featureWindows,
-    relapseHistory,
+    relapseHistory: relapseHistoryWithObs,
     eligibleHumCount,
     consecutiveDriftHums: obs.consecutiveDriftHums ?? state.consecutiveDriftHums,
   };
