@@ -21,6 +21,7 @@
       "@hum-ai/safety-language": ["packages/safety-language/src/index.ts"],
       "@hum-ai/orchestrator": ["packages/orchestrator/src/index.ts"],
       "@hum-ai/native-corpus": ["packages/native-corpus/src/index.ts"],
+      "@hum-ai/population-corpus": ["packages/population-corpus/src/index.ts"],
       "@hum-ai/personality-signature": ["packages/personality-signature/src/index.ts"],
       "@hum-ai/signal-lab/model": ["packages/signal-lab/src/model.ts"],
       "@hum-ai/signal-lab/expert": ["packages/signal-lab/src/expert.ts"],

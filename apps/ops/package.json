@@ -2,6 +2,15 @@
   "name": "@hum-ai/app-ops",
   "version": "0.0.0",
   "private": true,
-  "description": "Placeholder for Hum ops/admin tooling (derived-data dashboards, consent audits). Not built in this pass.",
-  "type": "module"
+  "description": "Hum ops/admin tooling (derived-data dashboards, consent audits) + the OFFLINE population retrain job. Derived data only; respects ConsentState; never touches raw audio.",
+  "type": "module",
+  "main": "src/population-train.ts",
+  "scripts": {
+    "population:train": "node --import tsx src/population-train.ts"
+  },
+  "dependencies": {
+    "@hum-ai/shared-types": "*",
+    "@hum-ai/affect-model-contracts": "*",
+    "@hum-ai/population-corpus": "*"
+  }
 }

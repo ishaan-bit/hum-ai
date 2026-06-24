@@ -26,6 +26,7 @@ import {
   type OrchestratedRead,
   type PersonalizationState,
   type AffectAxisPriors,
+  type AcousticAxisSample,
 } from "@hum-ai/orchestrator";
 import { assessPersonalitySignature, type PersonalitySignature } from "@hum-ai/personality-signature";
 import {
@@ -41,9 +42,16 @@ import {
   type NativeCorpus,
   type HumNativeArtifact,
 } from "@hum-ai/native-corpus";
+import {
+  selectAxisPriors,
+  populationAxisPriors,
+  buildPopulationContribution,
+  contributorPseudonym,
+  type PopulationArtifact,
+} from "@hum-ai/population-corpus";
 import type { MetaLearner } from "@hum-ai/orchestrator";
 import { loadConsent, setScope, isGranted, type ToggleableScope } from "./consent";
-import { loadBrowserPrior, type LoadedPrior } from "./prior";
+import { loadBrowserPrior, loadPopulationArtifact, type LoadedPrior } from "./prior";
 import { recordHum, synthesize, primeMicrophone, type SynthKind } from "./capture";
 import { runHumCycle } from "./cycle";
 import {
@@ -60,6 +68,7 @@ import {
   loadArtifactLocal,
   saveArtifactLocal,
   appendLabelCloud,
+  appendPopulationContributionCloud,
   loadCorpusCloud,
   saveArtifactCloud,
   mergeCorpora,
@@ -74,6 +83,8 @@ import {
   patchEntryContext,
   type DiaryContextMap,
 } from "./diary-store";
+import { loadAcousticRing, appendAcousticRing, clearAcousticRing } from "./acoustic-ring-store";
+import { formatDateIST } from "./time";
 import { humAgainMessage, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
 import {
   renderRead,
@@ -104,6 +115,9 @@ import { maybeShowOnboarding, showOnboarding, type OnboardingOptions } from "./o
 import { initStudyUi, offerCaptureToStudy } from "./study-ui";
 
 const MODEL_VERSION: ModelVersion = asModelVersion(import.meta.env.HUM_AI_MODEL_VERSION ?? "hum-web@0.1.0");
+
+/** Consent-document version recorded on each pooled population contribution (ADR-0012 audit). */
+const POPULATION_CONSENT_VERSION = "population-consent-v1";
 
 const nowTs = (): IsoTimestamp => asIsoTimestamp(new Date().toISOString());
 
@@ -136,6 +150,9 @@ interface Session {
   corpus: NativeCorpus;
   /** The retrained hum-native model artifact (manifest + promoted models), or null. */
   artifact: HumNativeArtifact | null;
+  /** The POPULATION baseline artifact (ADR-0012) — the middle prior tier + population OCEAN
+   *  norms a new user starts from; null when none is served (→ far-domain fallback). */
+  populationArtifact: PopulationArtifact | null;
   /** HiTL per-feature importance (which features track this user's reported affect). */
   featureImportance: Record<string, number>;
   /** Promoted hum-native fusion meta-learner (secondary read), or null (stub fallback). */
@@ -159,6 +176,9 @@ interface Session {
   diaryContext: DiaryContextMap;
   /** Which hum the diary currently has open for inspection (null = the most recent). */
   diaryFocus: string | null;
+  /** Recent RAW ACOUSTIC axis reads (most-recent last) — re-references the displayed read on the
+   *  user's own usual so it stops pinning to one zone. Local-only; persisted via acoustic-ring-store. */
+  acousticRing: AcousticAxisSample[];
 }
 
 const session: Session = {
@@ -171,6 +191,7 @@ const session: Session = {
   log: [],
   corpus: emptyCorpus(),
   artifact: null,
+  populationArtifact: null,
   featureImportance: {},
   metaLearner: null,
   pending: null,
@@ -182,6 +203,7 @@ const session: Session = {
   signature: null,
   diaryContext: {},
   diaryFocus: null,
+  acousticRing: [],
 };
 
 /** Recent-reads buffer cap — a "last week or so" window for the history-aware intervention. */
@@ -193,7 +215,13 @@ const RECENT_READS_MAX = 8;
  */
 function currentSignature(): PersonalitySignature {
   const hist = humHistoryFromState(session.state, nowTs());
-  return assessPersonalitySignature(hist.eligibleSamplesByFeature, hist.priorEligibleCount);
+  // Data-grounded OCEAN windows from the population corpus (ADR-0012) when available, so the Big
+  // Five read — like the affect read — keeps improving across users; protocol defaults otherwise.
+  return assessPersonalitySignature(
+    hist.eligibleSamplesByFeature,
+    hist.priorEligibleCount,
+    session.populationArtifact?.oceanNorms,
+  );
 }
 
 /** The persistent AURA orb (one Canvas, shared across windows) + the windowed stage controller. */
@@ -204,15 +232,19 @@ let stage: Stage | null = null;
 const RETRAIN_EVERY = 4;
 
 /**
- * The axis priors actually fed to the read: a PROMOTED hum-native model (in-domain,
- * no far-domain penalty) takes precedence per axis; otherwise the far-domain acted-speech
- * prior (which abstains OOD on hums) is used. As the user's model is promoted, the read
- * stops leaning on the far-domain prior and starts using their own hum-native one.
+ * The axis priors actually fed to the read, picked per axis across THREE tiers
+ * (ADR-0012): the user's OWN promoted hum-native model > the POPULATION baseline the
+ * community improved > the shipped far-domain acted-speech prior (which abstains OOD on
+ * hums). A brand-new user reads through the population baseline; as they confirm their own
+ * hums and promote a personal model, the read shifts onto their own. All three are routed
+ * through the same `AffectAxisPrior` seam — the orchestrator is unchanged.
  */
 function effectiveAxisPriors(): AffectAxisPriors {
-  const far = session.prior?.axisPriors ?? {};
-  const native = axisPriorsFromArtifact(session.artifact);
-  return { valence: native.valence ?? far.valence, arousal: native.arousal ?? far.arousal };
+  return selectAxisPriors({
+    personal: axisPriorsFromArtifact(session.artifact),
+    population: populationAxisPriors(session.populationArtifact),
+    farDomain: session.prior?.axisPriors ?? {},
+  });
 }
 
 function syncEnabled(): boolean {
@@ -366,6 +398,8 @@ async function boot(): Promise<void> {
   }
   // The user's own optional context (chips + notes), local-only.
   session.diaryContext = loadDiaryContext(session.localId);
+  // The user's recent RAW ACOUSTIC reads — re-references the displayed read on their own usual.
+  session.acousticRing = loadAcousticRing(session.localId);
 
   renderLadderForState(session.state);
   renderHistory(session.log);
@@ -388,8 +422,10 @@ async function boot(): Promise<void> {
   session.lastRetrainSize = session.corpus.examples.length;
   renderModelLab(session.corpus, session.artifact);
 
-  // Load the trained prior (non-blocking for the rest of the UI).
-  session.prior = await loadBrowserPrior();
+  // Load the trained far-domain prior + the POPULATION baseline (ADR-0012), if served. The
+  // population artifact is the middle prior tier + OCEAN norms a new user starts from; absent ⇒
+  // far-domain fallback (identical to before). Non-blocking for the rest of the UI.
+  [session.prior, session.populationArtifact] = await Promise.all([loadBrowserPrior(), loadPopulationArtifact()]);
   setModelStatus();
 
   wireControls();
@@ -563,6 +599,9 @@ async function runOne(
     metaLearner: session.metaLearner,
     // History-aware intervention + exploratory personality personalisation.
     recentReads: session.recentReads,
+    // Re-reference the DISPLAYED read against the user's own recent acoustic reads (the current
+    // hum is appended AFTER this read), so it reflects their usual instead of a fixed mic offset.
+    acousticAxisHistory: session.acousticRing,
     personalityLean: { adjective: sigBefore.lean.adjective, steadiness: sigBefore.lean.steadiness },
   });
 
@@ -607,6 +646,12 @@ async function runOne(
   if (!result.read.userFacing.abstained) {
     const d = result.read.internal.axis.dimensional;
     session.recentReads = [...session.recentReads, { valence: d.valence, arousal: d.arousal }].slice(-RECENT_READS_MAX);
+    // Record THIS hum's RAW acoustic read so the NEXT read can re-reference against the user's own
+    // usual (the transparent acousticValue, preserved through calibration + display re-referencing).
+    session.acousticRing = appendAcousticRing(session.localId, session.acousticRing, {
+      valence: result.read.internal.axis.valence.acousticValue,
+      arousal: result.read.internal.axis.arousal.acousticValue,
+    });
   }
   session.signature = currentSignature();
 
@@ -685,6 +730,20 @@ async function onFeedback(report: HumSelfReport): Promise<void> {
   if (syncEnabled() && session.uid) {
     await appendLabelCloud(session.uid, example);
     await saveStateCloud(session.uid, session.state);
+  }
+
+  // 3b. POPULATION CONTRIBUTION (ADR-0012) — the SAME confirmed hum, contributed to the pooled
+  //     corpus that retrains the population baseline, ONLY under the dedicated opt-in scope
+  //     (distinct from the owner-scoped backup above). Gated off by default; the contributing UI
+  //     toggle + IRB sign-off are the governed follow-up, so this is a no-op until granted.
+  if (isGranted(session.consent, "population_corpus_contribution") && session.uid) {
+    const contribution = buildPopulationContribution({
+      example,
+      contributorKey: contributorPseudonym(session.localId),
+      consentVersion: POPULATION_CONSENT_VERSION,
+      contributedAt: pending.capturedAt,
+    });
+    await appendPopulationContributionCloud(contribution);
   }
 
   // 4. Retrain the hum-native model(s) when there's enough fresh data.
@@ -975,6 +1034,9 @@ function wireControls(): void {
     session.lastRead = null;
     session.pending = null;
     session.previousIntervention = null;
+    session.recentReads = [];
+    session.acousticRing = [];
+    clearAcousticRing(session.localId);
     saveStateLocal(session.localId, session.state);
     renderLadderForState(session.state);
     renderHistory(session.log);
@@ -994,7 +1056,7 @@ function wireControls(): void {
 async function onShare(): Promise<void> {
   if (!session.lastVisual || !session.lastCaption) return;
   const btn = document.getElementById("btn-share") as HTMLButtonElement | null;
-  const dateLabel = new Date().toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+  const dateLabel = formatDateIST(Date.now());
   if (btn) btn.disabled = true;
   const outcome = await saveAuraCard({
     visual: session.lastVisual,

@@ -45,6 +45,9 @@ export default defineConfig({
       // native-corpus: the HiTL retraining loop — pure TS (reaches signal-lab ONLY via its
       // pure deep modules below), so no Node builtin enters the bundle.
       { find: "@hum-ai/native-corpus", replacement: pkg("native-corpus") },
+      // population-corpus: the cross-user baseline tier (ADR-0012) — pure TS (reaches signal-lab
+      // only transitively via native-corpus' pure deep modules), so no Node builtin enters the bundle.
+      { find: "@hum-ai/population-corpus", replacement: pkg("population-corpus") },
       // signal-lab: ONLY the pure modules, never the (Node-tainted) barrel.
       { find: "@hum-ai/signal-lab/model", replacement: resolve(repoRoot, "packages/signal-lab/src/model.ts") },
       { find: "@hum-ai/signal-lab/expert", replacement: resolve(repoRoot, "packages/signal-lab/src/expert.ts") },

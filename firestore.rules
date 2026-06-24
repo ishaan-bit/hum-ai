@@ -22,6 +22,7 @@ service cloud.firestore {
     //   studyParticipant — an enrolled research participant (boolean)
     //   studyId          — the single study a claim is scoped to (string)
     //   pseudonym        — the participant's minted pseudonym (string)
+    //   populationAggregator — the offline population-retrain service account (boolean, ADR-0012)
     // Role checks below read these claims; absence of a claim = not granted.
     // =========================================================================
 
@@ -79,6 +80,10 @@ service cloud.firestore {
              && request.auth.token.studyParticipant == true
              && request.auth.token.studyId == studyId
              && request.auth.token.pseudonym == pseudonym;
+    }
+    // The offline population-retrain service account (ADR-0012).
+    function isPopulationAggregator() {
+      return isSignedIn() && request.auth.token.populationAggregator == true;
     }
 
     match /studies/{studyId} {
@@ -164,6 +169,35 @@ service cloud.firestore {
                   && request.auth.token.clinician == true
                   && request.auth.token.studyId == resource.data.studyId;
       allow write: if false; // materialised server-side only
+    }
+
+    // -------------------------------------------------------------------------
+    // POPULATION CORPUS (ADR-0012) — cross-user baseline improvement.
+    // Consented, pseudonymous DERIVED contributions pool here so a population baseline
+    // model can be retrained OFFLINE (apps/ops) and benefit every user. DERIVED FEATURES
+    // + a BENIGN valence/arousal label ONLY — raw audio and clinical labels are
+    // structurally impossible (assertValidPopulationContribution = assertValidNativeHumExample
+    // + pseudonymity guard, run before any write). This is DISTINCT from users/{uid}/labels:
+    // those are owner-scoped backups; these are POOLED, and gated by the dedicated
+    // `population_corpus_contribution` consent scope on the client.
+    // -------------------------------------------------------------------------
+    match /populationContributions/{contributionId} {
+      // A consented user contributes their own pseudonymous rows. Create-only (append-only
+      // corpus); the row must carry a non-identifying contributorKey + the consent version.
+      allow create: if isSignedIn()
+                    && request.resource.data.contributorKey is string
+                    && request.resource.data.consentVersion is string;
+      // The pool is NEVER cross-user readable — only the offline aggregator reads it to train.
+      allow read: if isPopulationAggregator();
+      allow update, delete: if false; // append-only
+    }
+
+    // Distribution of the trained population baseline (PopulationArtifact): derived model
+    // params + OCEAN norms only (no raw audio, no PII). Readable by any signed-in client
+    // (every new user starts from it); written only by the offline aggregator.
+    match /populationModels/{version} {
+      allow read: if isSignedIn();
+      allow write: if isPopulationAggregator();
     }
 
     // Deny all other paths.

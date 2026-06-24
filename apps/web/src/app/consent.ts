@@ -30,6 +30,10 @@ export const TOGGLEABLE_SCOPES = [
   "clinical_risk_surfacing",
   "clinical_label_capture",
   "research_audio_upload",
+  // Opt-in pooling of derived native-hum rows into the population corpus (ADR-0012). Managed
+  // through the same persistence path; the contributing UI toggle + IRB sign-off are a governed
+  // follow-up (the write path is gated on this scope and is a no-op until granted).
+  "population_corpus_contribution",
 ] as const;
 export type ToggleableScope = (typeof TOGGLEABLE_SCOPES)[number];
 

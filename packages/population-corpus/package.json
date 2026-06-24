@@ -1,0 +1,19 @@
+{
+  "name": "@hum-ai/population-corpus",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "description": "Offline-capable cross-user population retraining: pool consented native-hum contributions, train a population baseline (group-by-contributor CV), derive population OCEAN norms, and a 3-tier prior selector so every new user starts from a model the population improved (ADR-0012).",
+  "dependencies": {
+    "@hum-ai/shared-types": "*",
+    "@hum-ai/audio-features": "*",
+    "@hum-ai/affect-model-contracts": "*",
+    "@hum-ai/native-corpus": "*",
+    "@hum-ai/orchestrator": "*",
+    "@hum-ai/personality-signature": "*"
+  }
+}

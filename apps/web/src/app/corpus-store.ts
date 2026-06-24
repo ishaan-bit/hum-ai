@@ -10,7 +10,7 @@
  * path — every row passed `assertValidNativeHumExample` when it was minted.
  */
 import { doc, collection, getDocs, setDoc, serverTimestamp } from "firebase/firestore";
-import type { NativeHumExample } from "@hum-ai/affect-model-contracts";
+import { assertValidPopulationContribution, type NativeHumExample, type PopulationContribution } from "@hum-ai/affect-model-contracts";
 import type { LogisticRegressionParams } from "@hum-ai/fusion-engine";
 import { plain } from "./util";
 import {
@@ -111,6 +111,25 @@ export async function loadCorpusCloud(uid: string): Promise<NativeCorpus> {
   } catch (err) {
     console.warn("[corpus-store] cloud corpus load failed:", err);
     return emptyCorpus();
+  }
+}
+
+/**
+ * Contribute one derived, pseudonymous native-hum row to the POOLED population corpus (ADR-0012)
+ * — the cross-user analogue of `appendLabelCloud`. Re-validates the contribution (no raw audio,
+ * no clinical leak, pseudonymous key) before any write; the collection is server/aggregator-readable
+ * only and append-only (firestore.rules → populationContributions). No-op when Firebase is
+ * unavailable. The CALLER gates this on `population_corpus_contribution` consent.
+ */
+export async function appendPopulationContributionCloud(contribution: PopulationContribution): Promise<void> {
+  const fb = getFirebase();
+  if (!fb) return;
+  try {
+    assertValidPopulationContribution(contribution); // never write an unsafe row to the shared pool
+    const ref = doc(collection(fb.db, "populationContributions"), contribution.contributionId);
+    await setDoc(ref, { ...plain(contribution), syncedAt: serverTimestamp() });
+  } catch (err) {
+    console.warn("[corpus-store] population contribution append failed:", err);
   }
 }
 

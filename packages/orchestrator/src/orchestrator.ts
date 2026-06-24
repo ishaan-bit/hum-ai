@@ -89,6 +89,7 @@ import type { UserFacingConfidence } from "@hum-ai/safety-language";
 import { clinicalRiskScore } from "./risk";
 import { INTERVENTION_COPY, axisHeadline, innerStateLine, readNote } from "./copy";
 import { resolveAxisRead, axisReadConfidence, type AffectAxisPriors, type AxisRead } from "./axis-read";
+import { reReferenceDisplayRead, type AcousticAxisSample } from "./display-read";
 
 /**
  * END-TO-END ORCHESTRATOR (NEXT_PROMPT goal; composes ADR-0006/0007/0008/0009).
@@ -176,6 +177,14 @@ export interface HumHistory {
    * into a RecentAffectSummary for the intervention engine. Omitted ⇒ today's read stands alone.
    */
   readonly recentReads?: readonly { readonly valence: number; readonly arousal: number }[];
+  /**
+   * Recent within-user RAW ACOUSTIC axis reads (most-recent last; the CURRENT hum excluded),
+   * used to re-reference the DISPLAYED valence/arousal against the user's own usual so the read
+   * stops pinning to one zone for a given person+mic (see `reReferenceDisplayRead`). These are
+   * the transparent `axis.<axis>.acousticValue`s of prior hums, NOT the personalized dimensional
+   * point. Omitted / too few ⇒ the absolute acoustic read is shown unchanged (honest cold start).
+   */
+  readonly acousticAxisHistory?: readonly AcousticAxisSample[];
   /**
    * Tentative hum-PERSONALITY lean (from @hum-ai/personality-signature, reduced by the caller
    * to a minimal {adjective, steadiness} shape so the orchestrator/intervention engine stay
@@ -571,6 +580,13 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   // on each axis is preserved; only the surfaced `value`/`dimensional` shift. No-op until
   // the user has corrected a read (engaged === false ⇒ identical read).
   const axisRead = applyAxisCalibrationToRead(acousticAxisRead, history.axisCalibration);
+  // WITHIN-USER RE-REFERENCE OF THE DISPLAYED READ: cancel the fixed person+mic offset and open
+  // up the small within-user variation that actually tracks mood, so the surfaced read stops
+  // pinning to one zone every hum (the "tense and wound-up every time" bug). No-op until the user
+  // has a few prior hums (honest cold start). The transparent acoustic backbone is preserved on
+  // each axis's `acousticValue`; the internal `inference.dimensional` below stays the acoustic /
+  // calibrated point (the personalization + risk + relapse path is unchanged).
+  const displayAxis = reReferenceDisplayRead(axisRead, history.acousticAxisHistory);
   const readAbstained = quality.decision === "rejected" || axisRead.signalStrength < MIN_READ_SIGNAL;
   const axisConfidence = axisReadConfidence(axisRead);
   const axisLedInf: MultiHeadAffectInference = {
@@ -789,10 +805,10 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
     abstained: inference.abstained,
     isEarlyBaseline: confidence.isEarlyBaseline,
     confidence,
-    headline: axisHeadline(inference.dimensional.valence, inference.dimensional.arousal, inference.abstained),
+    headline: axisHeadline(displayAxis.dimensional.valence, displayAxis.dimensional.arousal, inference.abstained),
     innerState: innerStateLine(
-      axisRead.dimensional.valence,
-      axisRead.dimensional.arousal,
+      displayAxis.dimensional.valence,
+      displayAxis.dimensional.arousal,
       affectHint,
       inference.abstained,
     ),
@@ -869,7 +885,9 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       domainMatch: domainAdaptation.domainMatch,
       stage: stage.stage,
       eligibleHumCount,
-      axis: axisRead,
+      // The DISPLAYED axis the UI renders (theme/orb/meters): the acoustic read re-referenced
+      // against the user's own usual. Each axis still carries its transparent `acousticValue`.
+      axis: displayAxis,
       affectHint,
     },
   };

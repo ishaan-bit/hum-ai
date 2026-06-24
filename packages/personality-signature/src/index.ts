@@ -140,6 +140,70 @@ function blend(parts: ReadonlyArray<readonly [number | null, number]>): number {
 
 const toBipolar = (x: number): number => clamp(x * 2 - 1, -1, 1);
 
+/**
+ * POPULATION OCEAN NORMS (ADR-0012) — data-grounded normalization windows keyed by
+ * "<trait>.<feature>". The feature→trait windows below are protocol DEFAULTS, not population
+ * norms (voice-big-five.md §5: "Ranges in the product are protocol defaults, not population
+ * norms"). Once a population corpus exists, `@hum-ai/population-corpus` recomputes each window
+ * from the pooled distribution's robust percentiles and supplies them here — so the Big Five
+ * read, like the affect read, keeps improving across users. Absent ⇒ the protocol defaults
+ * (honest cold start; identical to before this hook existed).
+ */
+export type PopulationOceanNorms = Record<string, { readonly lo: number; readonly hi: number }>;
+
+/** Resolves the [lo,hi] window for a "<trait>.<feature>" key — population norm if present, else default. */
+export type NormResolver = (key: string, defLo: number, defHi: number) => { lo: number; hi: number };
+const DEFAULT_NORM: NormResolver = (_key, lo, hi) => ({ lo, hi });
+
+/** Build a resolver from optional population norms (a no-op resolver when none supplied). */
+export function normResolver(norms?: PopulationOceanNorms): NormResolver {
+  if (!norms) return DEFAULT_NORM;
+  return (key, lo, hi) => norms[key] ?? { lo, hi };
+}
+
+/** Normalize a windowed feature, using the population-or-default window for `key`. */
+function winN(v: number | null, key: string, lo: number, hi: number, nrm: NormResolver): number | null {
+  if (v === null) return null;
+  const w = nrm(key, lo, hi);
+  return normalize(v, w.lo, w.hi);
+}
+/** Inverse-normalize a windowed feature (↓ feature → ↑ trait), using the population-or-default window. */
+function winInv(v: number | null, key: string, lo: number, hi: number, nrm: NormResolver): number | null {
+  if (v === null) return null;
+  const w = nrm(key, lo, hi);
+  return inverseNormalize(v, w.lo, w.hi);
+}
+
+/**
+ * The OCEAN cues that are mapped through a NORMALIZATION WINDOW (vs the raw [0,1] cues
+ * musicality / controlledExpression / smoothness / vibrato, which need no window). This is the
+ * single source of truth the population OCEAN-norm computation recomputes from pooled data;
+ * `compute()` reads the same keys through `winN`/`winInv`. `invert` marks the ↓-feature→↑-trait cues.
+ */
+export const OCEAN_WINDOWED_FEATURES: ReadonlyArray<{
+  readonly key: string;
+  readonly feature: string;
+  readonly lo: number;
+  readonly hi: number;
+  readonly invert: boolean;
+}> = [
+  { key: "openness.pitchRangeSemitones", feature: "pitchRangeSemitones", lo: 0.5, hi: 6, invert: false },
+  { key: "conscientiousness.amplitudeStability", feature: "amplitudeStability", lo: 0.5, hi: 0.99, invert: false },
+  { key: "conscientiousness.pitchStability", feature: "pitchStability", lo: 0.6, hi: 0.99, invert: false },
+  { key: "conscientiousness.residualInstabilityScore", feature: "residualInstabilityScore", lo: 0.1, hi: 0.6, invert: true },
+  { key: "conscientiousness.shimmerProxy", feature: "shimmerProxy", lo: 0.05, hi: 0.5, invert: true },
+  { key: "extraversion.meanRms", feature: "meanRms", lo: 0.04, hi: 0.25, invert: false },
+  { key: "extraversion.peakAmplitude", feature: "peakAmplitude", lo: 0.1, hi: 0.7, invert: false },
+  { key: "extraversion.activeFrameRatio", feature: "activeFrameRatio", lo: 0.4, hi: 0.95, invert: false },
+  { key: "extraversion.spectralCentroidHz", feature: "spectralCentroidHz", lo: 600, hi: 1400, invert: false },
+  { key: "agreeableness.spectralCentroidHz", feature: "spectralCentroidHz", lo: 700, hi: 1600, invert: true },
+  { key: "agreeableness.breathinessProxy", feature: "breathinessProxy", lo: 0.1, hi: 0.7, invert: true },
+  { key: "emotional_stability.jitter", feature: "jitter", lo: 0.005, hi: 0.05, invert: true },
+  { key: "emotional_stability.shimmerProxy", feature: "shimmerProxy", lo: 0.05, hi: 0.5, invert: true },
+  { key: "emotional_stability.residualPitchInstability", feature: "residualPitchInstability", lo: 0.05, hi: 0.6, invert: true },
+  { key: "emotional_stability.amplitudeStability", feature: "amplitudeStability", lo: 0.5, hi: 0.99, invert: false },
+];
+
 interface TraitDef {
   readonly key: BigFiveKey;
   /** Human-readable OCEAN trait name shown on the card. */
@@ -152,7 +216,7 @@ interface TraitDef {
   /** The dominant-lean adjective surfaced to other layers, per direction. */
   readonly lowAdj: string;
   readonly highAdj: string;
-  readonly compute: (w: Record<string, readonly number[]>) => number; // → [0,1]
+  readonly compute: (w: Record<string, readonly number[]>, nrm: NormResolver) => number; // → [0,1]
 }
 
 /**
@@ -182,9 +246,16 @@ const TRAITS: readonly TraitDef[] = [
     lowBlurb: "Your hums hold close to one note — you settle into a simple, grounded line.",
     highBlurb: "Your hums wander and vary in pitch — a curious, exploratory streak.",
     midBlurb: "Your hums mix steadiness with a little wander — grounded, but open to variation.",
-    compute: (w) =>
+    // CALIBRATION (2026-06-24, sim-lab sensitivity sweep): the pitch-range window was widened
+    // from 0.3–4 → 0.5–6 st. Pitch range is THE defining (and weakest-but-only-transferable)
+    // openness cue (voice-big-five.md §2: wider F0 range → higher perceived openness; Kim 2025
+    // [6]; Song 2023 [7]), yet the old 0.3–4 window SATURATED at ~4 st — half the realistic hum
+    // range — so a melodically wide hummer read no more open than a moderate one (signal lost in
+    // exactly the cue that matters most). The new lower bound (0.5) also matches the melody window
+    // the arousal layer uses (`axis-read.ts`), removing a cross-layer window disagreement.
+    compute: (w, nrm) =>
       blend([
-        [safe(w, "pitchRangeSemitones") === null ? null : normalize(safe(w, "pitchRangeSemitones")!, 0.3, 4), 1.0],
+        [winN(safe(w, "pitchRangeSemitones"), "openness.pitchRangeSemitones", 0.5, 6, nrm), 1.0],
         [safe(w, "musicalityScore"), 0.7],
         [safe(w, "vibratoRegularity"), 0.4],
       ]),
@@ -205,13 +276,13 @@ const TRAITS: readonly TraitDef[] = [
     lowBlurb: "Your hums are loose and spontaneous — you let the note do what it does.",
     highBlurb: "Your hums are controlled and even — a deliberate, well-held tone.",
     midBlurb: "Your hums balance control and ease — held, but not rigid.",
-    compute: (w) =>
+    compute: (w, nrm) =>
       blend([
         [safe(w, "controlledExpressionScore"), 1.0],
-        [safe(w, "amplitudeStability") === null ? null : normalize(safe(w, "amplitudeStability")!, 0.5, 0.99), 0.8],
-        [safe(w, "pitchStability") === null ? null : normalize(safe(w, "pitchStability")!, 0.6, 0.99), 0.8],
-        [safe(w, "residualInstabilityScore") === null ? null : inverseNormalize(safe(w, "residualInstabilityScore")!, 0.1, 0.6), 0.6],
-        [safe(w, "shimmerProxy") === null ? null : inverseNormalize(safe(w, "shimmerProxy")!, 0.05, 0.5), 0.35],
+        [winN(safe(w, "amplitudeStability"), "conscientiousness.amplitudeStability", 0.5, 0.99, nrm), 0.8],
+        [winN(safe(w, "pitchStability"), "conscientiousness.pitchStability", 0.6, 0.99, nrm), 0.8],
+        [winInv(safe(w, "residualInstabilityScore"), "conscientiousness.residualInstabilityScore", 0.1, 0.6, nrm), 0.6],
+        [winInv(safe(w, "shimmerProxy"), "conscientiousness.shimmerProxy", 0.05, 0.5, nrm), 0.35],
       ]),
   },
   {
@@ -224,12 +295,12 @@ const TRAITS: readonly TraitDef[] = [
     lowBlurb: "Your hums tend to run quieter and more inward — an even, unhurried voice.",
     highBlurb: "Your hums tend to come out full and energetic — an outgoing, present voice.",
     midBlurb: "Your hums sit between quiet and outgoing — neither held back nor pushed forward.",
-    compute: (w) =>
+    compute: (w, nrm) =>
       blend([
-        [safe(w, "meanRms") === null ? null : normalize(safe(w, "meanRms")!, 0.04, 0.25), 1.0],
-        [safe(w, "peakAmplitude") === null ? null : normalize(safe(w, "peakAmplitude")!, 0.1, 0.7), 0.7],
-        [safe(w, "activeFrameRatio") === null ? null : normalize(safe(w, "activeFrameRatio")!, 0.4, 0.95), 0.6],
-        [safe(w, "spectralCentroidHz") === null ? null : normalize(safe(w, "spectralCentroidHz")!, 600, 1400), 0.4],
+        [winN(safe(w, "meanRms"), "extraversion.meanRms", 0.04, 0.25, nrm), 1.0],
+        [winN(safe(w, "peakAmplitude"), "extraversion.peakAmplitude", 0.1, 0.7, nrm), 0.7],
+        [winN(safe(w, "activeFrameRatio"), "extraversion.activeFrameRatio", 0.4, 0.95, nrm), 0.6],
+        [winN(safe(w, "spectralCentroidHz"), "extraversion.spectralCentroidHz", 600, 1400, nrm), 0.4],
       ]),
   },
   {
@@ -242,11 +313,11 @@ const TRAITS: readonly TraitDef[] = [
     lowBlurb: "Your hums have a plain, direct edge — clear and to the point.",
     highBlurb: "Your hums carry a soft, warm tone — rounded and easy on the ear.",
     midBlurb: "Your hums land between plain and warm — clear, with a gentle edge.",
-    compute: (w) =>
+    compute: (w, nrm) =>
       blend([
         [safe(w, "smoothnessScore"), 1.0],
-        [safe(w, "spectralCentroidHz") === null ? null : inverseNormalize(safe(w, "spectralCentroidHz")!, 700, 1600), 0.7],
-        [safe(w, "breathinessProxy") === null ? null : inverseNormalize(safe(w, "breathinessProxy")!, 0.1, 0.7), 0.4],
+        [winInv(safe(w, "spectralCentroidHz"), "agreeableness.spectralCentroidHz", 700, 1600, nrm), 0.7],
+        [winInv(safe(w, "breathinessProxy"), "agreeableness.breathinessProxy", 0.1, 0.7, nrm), 0.4],
       ]),
   },
   {
@@ -259,12 +330,12 @@ const TRAITS: readonly TraitDef[] = [
     lowBlurb: "Your hums shift and waver a little more — a sensitive, responsive voice.",
     highBlurb: "Your hums hold remarkably even — a steady, settled voice.",
     midBlurb: "Your hums are mostly even, with a little natural movement.",
-    compute: (w) =>
+    compute: (w, nrm) =>
       blend([
-        [safe(w, "jitter") === null ? null : inverseNormalize(safe(w, "jitter")!, 0.005, 0.05), 0.9],
-        [safe(w, "shimmerProxy") === null ? null : inverseNormalize(safe(w, "shimmerProxy")!, 0.05, 0.5), 0.7],
-        [safe(w, "residualPitchInstability") === null ? null : inverseNormalize(safe(w, "residualPitchInstability")!, 0.05, 0.6), 0.7],
-        [safe(w, "amplitudeStability") === null ? null : normalize(safe(w, "amplitudeStability")!, 0.5, 0.99), 0.6],
+        [winInv(safe(w, "jitter"), "emotional_stability.jitter", 0.005, 0.05, nrm), 0.9],
+        [winInv(safe(w, "shimmerProxy"), "emotional_stability.shimmerProxy", 0.05, 0.5, nrm), 0.7],
+        [winInv(safe(w, "residualPitchInstability"), "emotional_stability.residualPitchInstability", 0.05, 0.6, nrm), 0.7],
+        [winN(safe(w, "amplitudeStability"), "emotional_stability.amplitudeStability", 0.5, 0.99, nrm), 0.6],
       ]),
   },
 ];
@@ -289,9 +360,11 @@ function leanClause(label: string, t: TraitTendency, d: TraitDef): string {
 export function assessPersonalitySignature(
   featureWindows: Record<string, readonly number[]>,
   humCount: number,
+  norms?: PopulationOceanNorms,
 ): PersonalitySignature {
   const status: SignatureStatus =
     humCount < EMERGING_HUMS ? "forming" : humCount < TENTATIVE_HUMS ? "emerging" : "tentative";
+  const nrm = normResolver(norms);
 
   const values: Record<BigFiveKey, number> = {
     openness: 0,
@@ -302,7 +375,7 @@ export function assessPersonalitySignature(
   };
   const primary = new Set<BigFiveKey>(PRIMARY_KEYS);
   const traits: TraitTendency[] = TRAITS.map((d) => {
-    const value = toBipolar(d.compute(featureWindows));
+    const value = toBipolar(d.compute(featureWindows, nrm));
     values[d.key] = value;
     const lean = leanOf(value);
     return {

@@ -20,10 +20,16 @@ import type { IsoTimestamp } from "./ids";
  */
 export const CONSENT_SCOPES = [
   "local_processing", // on-device feature extraction & baseline (implied by use)
-  "derived_feature_sync", // upload derived feature summaries only (no raw audio)
+  "derived_feature_sync", // upload derived feature summaries only (no raw audio) — to the user's OWN private space
   "research_audio_upload", // upload raw audio for research — explicit opt-in
   "clinical_label_capture", // capture PHQ/GAD/CES-DC etc. — explicit research consent
   "clinical_risk_surfacing", // surface anxiety/depressive/relapse risk markers to the user — explicit opt-in (ADR-0006)
+  // Contribute this device's DERIVED native-hum examples + self-report labels (never raw audio,
+  // never clinical labels) to a POOLED, pseudonymous corpus so a population baseline model can be
+  // retrained and benefit every user — distinct from `derived_feature_sync`, which only backs up
+  // to the user's OWN space. Explicit opt-in; the pooled corpus is server/aggregator-readable
+  // only (never cross-user), and contributions are append-only (ADR-0012). See @hum-ai/population-corpus.
+  "population_corpus_contribution",
 ] as const;
 export type ConsentScope = (typeof CONSENT_SCOPES)[number];
 

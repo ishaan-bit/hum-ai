@@ -27,6 +27,7 @@ import {
   type HumSyncPayload,
   type LearnedAffectPrior,
   type AffectAxisPriors,
+  type AcousticAxisSample,
   type MetaLearner,
 } from "@hum-ai/orchestrator";
 import { assessCapture, type CaptureGateDecision } from "@hum-ai/signal-lab/capture-gate";
@@ -46,6 +47,9 @@ export interface HumCycleInput {
   readonly metaLearner?: MetaLearner | null;
   /** Recent reads (most-recent last) so today's intervention reflects recent history, not one hum. */
   readonly recentReads?: readonly { readonly valence: number; readonly arousal: number }[];
+  /** Recent RAW ACOUSTIC axis reads (most-recent last) → re-reference the displayed read on the
+   *  user's own usual so it stops pinning to one zone. The current hum is appended by the caller. */
+  readonly acousticAxisHistory?: readonly AcousticAxisSample[];
   /** Tentative hum-personality lean (adjective + steadiness) → one exploratory, personalised line. */
   readonly personalityLean?: { readonly adjective: string | null; readonly steadiness: number };
 }
@@ -96,6 +100,7 @@ export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult>
     ...humHistoryFromState(input.state, now),
     featureImportance: input.featureImportance,
     recentReads: input.recentReads,
+    acousticAxisHistory: input.acousticAxisHistory,
     personalityLean: input.personalityLean,
   };
   const read = await orchestrateHumRead({

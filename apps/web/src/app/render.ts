@@ -35,6 +35,7 @@ import { isGranted } from "./consent";
 import { createBreathPacer, type BreathPacer } from "./breath";
 import type { PersonalitySignature } from "@hum-ai/personality-signature";
 import { LIFE_CONTEXT, type DiaryContextMap } from "./diary-store";
+import { relativeDayIST, whenLabelIST, formatTimeIST } from "./time";
 
 // esc() also de-dashes (house style: NO em dashes anywhere a user can see). Folding deDash() in
 // here means EVERY escaped string — our static copy AND the orchestrator's generated read copy —
@@ -969,17 +970,15 @@ function derivePattern(lg: LongitudinalView | null, sustained: boolean): Pattern
   };
 }
 
-// ── chart geometry: time-aware sparkline with the user's personal-normal band shaded ──────────
+// ── constellation geometry: each hum is a star, the user's usual range is a glowing horizon ───
 const CH_W = 320;
-const CH_H = 132;
-const CH_PADX = 16;
-const CH_TOP = 16;
-const CH_BOT = 18;
+const CH_H = 150;
+const CH_PADX = 20;
+const CH_TOP = 20;
+const CH_BOT = 24;
 const CH_PLOT = CH_H - CH_TOP - CH_BOT; // usable pixel height
 const chX = (i: number, n: number): number =>
   n <= 1 ? CH_W / 2 : CH_PADX + (i / (n - 1)) * (CH_W - 2 * CH_PADX);
-// Fixed-domain mapper used only for the ghost placeholder (stable decorative look).
-const chY = (v: number): number => CH_TOP + (1 - (clampUnit(v) + 1) / 2) * CH_PLOT;
 
 interface NormalBand {
   readonly mid: number;
@@ -1042,30 +1041,11 @@ const POS_SHORT: Record<Pos, string> = {
   farBelow: "well below",
 };
 
-// ── when-labels (relative, human; no confidence numbers, so render-safe) ──────────────────────
-const DAY_MS = 24 * 60 * 60 * 1000;
-const startOfDay = (ms: number): number => {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-};
-function relativeDay(at: string, now: number): string {
-  const t = Date.parse(at);
-  if (!Number.isFinite(t)) return "A recent hum";
-  const days = Math.round((startOfDay(now) - startOfDay(t)) / DAY_MS);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  const d = new Date(t);
-  return days < 7
-    ? d.toLocaleDateString([], { weekday: "long" })
-    : d.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-function whenLabel(at: string, now: number): string {
-  const t = Date.parse(at);
-  if (!Number.isFinite(t)) return "A recent hum";
-  const time = new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return `${relativeDay(at, now)}, ${time}`;
-}
+// ── when-labels (relative, human; pinned to IST — see ./time) ─────────────────────────────────
+// All user-facing day/time labels render in IST regardless of the runtime timezone, so a hum's
+// timestamp is correct on any host. (Storage stays UTC ISO.)
+const relativeDay = relativeDayIST;
+const whenLabel = whenLabelIST;
 
 /**
  * Catmull-Rom → cubic Bézier through the points: a smooth, deliberate mood curve instead of a
@@ -1091,76 +1071,84 @@ function smoothPath(pts: ReadonlyArray<readonly [number, number]>): string {
   return d;
 }
 
-/** The time-aware chart: a soft "usual range" band, a smooth mood ribbon, one tappable node per hum. */
+/**
+ * THE CONSTELLATION OF HUMS — each hum is a living mood-star.
+ *
+ * x = time (oldest → newest, left → right), y = mood (your usual range glows as a horizon band),
+ * colour = where this hum sat against YOUR usual (usual / brighter / below / well below), and the
+ * newest hum is the bright "today" star with its own halo. A faint thread links them in order, like
+ * a constellation line. Stars twinkle + drift gently (CSS, staggered per star; static under
+ * reduced motion). Every star is tappable (data-at) to open that moment. No numbers reach the user;
+ * magnitude lives only in position + glow (ADR-0008).
+ */
 function diaryChart(points: readonly DiaryPoint[], band: NormalBand | null, focusAt: string | null): string {
   const pts = points.slice(-30); // a readable window; the headline count stays authoritative
   const n = pts.length;
   if (n === 0) return diaryGhost();
 
-  // Adaptive y-domain: fit to the actual data range so the series fills the canvas even when all
-  // hums cluster in a narrow valence band (e.g. consistently high arousal). The band bounds are
-  // always included so the "usual range" rect is never clipped.
+  // Adaptive y-domain so the stars spread across the sky even when all hums cluster in a narrow
+  // valence band; the usual-range band bounds are always inside the domain so the horizon shows.
   const [domLo, domHi] = chartDomain(pts, band);
   const domSpan = domHi - domLo;
   const chYD = (v: number): number => {
     const clamped = v < domLo ? domLo : v > domHi ? domHi : v;
     return CH_TOP + (1 - (clamped - domLo) / domSpan) * CH_PLOT;
   };
-
   const coords = pts.map((p, i) => [chX(i, n), chYD(p.valence)] as const);
 
-  let bandLayer = "";
+  // The user's usual mood range, as a luminous horizon band (the "compared to me" anchor).
+  let horizon = "";
   if (band) {
     const yHi = chYD(band.hi);
     const yMid = chYD(band.mid);
     const h = (chYD(band.lo) - yHi).toFixed(1);
-    bandLayer =
-      `<rect class="diary-band" x="0" y="${yHi.toFixed(1)}" width="${CH_W}" height="${h}" rx="7"/>` +
-      `<line class="diary-band-mid" x1="0" y1="${yMid.toFixed(1)}" x2="${CH_W}" y2="${yMid.toFixed(1)}"/>`;
+    horizon =
+      `<rect class="sky-band" x="0" y="${yHi.toFixed(1)}" width="${CH_W}" height="${h}" rx="10" fill="url(#sky-band-grad)"/>` +
+      `<line class="sky-horizon" x1="0" y1="${yMid.toFixed(1)}" x2="${CH_W}" y2="${yMid.toFixed(1)}"/>`;
   }
-  const baselineY = (CH_H - CH_BOT).toFixed(1);
-  const curve = smoothPath(coords);
-  // A soft gradient AREA under the smooth curve gives the series a body and fills the canvas
-  // deliberately, instead of a thin line + scattered dots stranded in empty space.
-  const area =
-    n > 1
-      ? `<path class="diary-area" d="${curve} L ${coords[n - 1]![0].toFixed(1)},${baselineY} L ${coords[0]![0].toFixed(1)},${baselineY} Z"/>`
-      : "";
-  const line = n > 1 ? `<path class="diary-line" pathLength="100" fill="none" d="${curve}"/>` : "";
-  // Every hum stays a tappable node (interaction + per-hum colour preserved), but only the most
-  // recent and the selected moment are emphasised — the rest are quiet anchors on the ribbon, so
-  // the placement reads as intentional rather than accidental.
-  const dots = pts
+  // A faint thread linking the hums in time order — the constellation line.
+  const thread = n > 1 ? `<path class="sky-thread" pathLength="100" fill="none" d="${smoothPath(coords)}"/>` : "";
+
+  const stars = pts
     .map((p, i) => {
       const [x, y] = coords[i]!;
-      const last = i === n - 1;
-      const focused = focusAt ? p.at === focusAt : last;
+      const today = i === n - 1;
+      const focused = focusAt ? p.at === focusAt : today;
       const pos = positionOf(p.valence, band);
-      const emph = focused || last;
-      const cls = `diary-dot pos-${pos}${last ? " diary-today" : ""}${focused ? " is-focus" : ""}${emph ? "" : " diary-node"}`;
-      const r = focused ? "5.5" : last ? "4" : "2.4";
-      return `<circle class="${cls}" data-at="${esc(p.at)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" style="--i:${i}"/>`;
+      const rCore = focused ? 4.4 : today ? 3.6 : 2.5;
+      const rGlow = rCore * (focused || today ? 3.6 : 2.7);
+      const cls = `diary-star pos-${pos}${today ? " is-today" : ""}${focused ? " is-focus" : ""}`;
+      const ring = today ? `<circle class="star-ring" r="${(rCore + 3).toFixed(1)}" fill="none"/>` : "";
+      // The <g> carries the fixed position (SVG transform attr); the child circles carry the CSS
+      // twinkle/drift so animating them never disturbs the placement. --i/--tw stagger per star.
+      return (
+        `<g class="${cls}" data-at="${esc(p.at)}" style="--i:${i};--tw:${((i % 7) * 0.41).toFixed(2)}s" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">` +
+        `<circle class="star-glow" r="${rGlow.toFixed(1)}"/>${ring}<circle class="star-core" r="${rCore.toFixed(1)}"/>` +
+        `</g>`
+      );
     })
     .join("");
+
   const defs =
-    `<defs><linearGradient id="diary-fill" x1="0" y1="0" x2="0" y2="1">` +
-    `<stop class="diary-fill-top" offset="0%"/><stop class="diary-fill-bot" offset="100%"/>` +
-    `</linearGradient></defs>`;
-  return `<svg class="diary-svg" viewBox="0 0 ${CH_W} ${CH_H}" role="img" aria-label="Your recent hums over time, drawn as a mood line with your usual range shaded.">${defs}${bandLayer}${area}${line}${dots}</svg>`;
+    `<defs><radialGradient id="sky-band-grad" cx="50%" cy="50%" r="75%">` +
+    `<stop class="sky-band-in" offset="0%"/><stop class="sky-band-out" offset="100%"/>` +
+    `</radialGradient></defs>`;
+  return `<svg class="diary-sky" viewBox="0 0 ${CH_W} ${CH_H}" role="img" aria-label="Your recent hums as a constellation: each star is one hum, placed by time and coloured by how it sat against your usual range, which glows as a band.">${defs}<rect class="sky-bg" x="0" y="0" width="${CH_W}" height="${CH_H}" rx="14"/>${horizon}${thread}${stars}</svg>`;
 }
 
-/** A faint, static placeholder chart so the diary reads as graphical before there's data. */
+/** A faint, drifting placeholder sky so the diary reads as graphical before there's data. */
 function diaryGhost(): string {
-  const heights = [0.6, 0.42, 0.55, 0.34, 0.5, 0.3, 0.46, 0.4];
-  const n = heights.length;
-  const dots = heights
-    .map((t, i) => {
-      const cx = chX(i, n).toFixed(1);
-      const cy = (CH_TOP + (1 - t) * (CH_H - CH_TOP - CH_BOT)).toFixed(1);
-      return `<circle class="diary-dot diary-ghost" cx="${cx}" cy="${cy}" r="2.7"/>`;
+  const seeds: ReadonlyArray<readonly [number, number]> = [
+    [0.12, 0.62], [0.24, 0.4], [0.37, 0.72], [0.49, 0.32], [0.6, 0.56], [0.71, 0.38], [0.83, 0.64], [0.92, 0.46],
+  ];
+  const stars = seeds
+    .map(([fx, fy], i) => {
+      const x = (CH_PADX + fx * (CH_W - 2 * CH_PADX)).toFixed(1);
+      const y = (CH_TOP + (1 - fy) * CH_PLOT).toFixed(1);
+      return `<g class="diary-star diary-star-ghost" style="--i:${i};--tw:${((i % 7) * 0.41).toFixed(2)}s" transform="translate(${x} ${y})"><circle class="star-glow" r="6.5"/><circle class="star-core" r="2.4"/></g>`;
     })
     .join("");
-  return `<svg class="diary-svg diary-svg-ghost" viewBox="0 0 ${CH_W} ${CH_H}" aria-hidden="true">${dots}</svg>`;
+  return `<svg class="diary-sky diary-sky-ghost" viewBox="0 0 ${CH_W} ${CH_H}" aria-hidden="true"><rect class="sky-bg" x="0" y="0" width="${CH_W}" height="${CH_H}" rx="14"/>${stars}</svg>`;
 }
 
 /** Date scale under the chart (plain dates — no confidence numbers). */
@@ -1169,7 +1157,7 @@ function chartScale(points: readonly DiaryPoint[], now: number): string {
   if (pts.length < 2) return "";
   const first = relativeDay(pts[0]!.at, now);
   const last = relativeDay(pts[pts.length - 1]!.at, now);
-  return `<div class="diary-scale"><span>${esc(first)}</span><span class="diary-scale-legend">shaded = your usual range</span><span>${esc(last)}</span></div>`;
+  return `<div class="diary-scale"><span>${esc(first)}</span><span class="diary-scale-legend">glowing band = your usual range</span><span>${esc(last)}</span></div>`;
 }
 
 /** The life-context chips + optional note for ONE hum (the inspected / most-recent moment). */
@@ -1240,7 +1228,7 @@ function diaryExplainer(lg: LongitudinalView | null): string {
     <details class="diary-how">
       <summary>How this works</summary>
       <div class="diary-how-body">
-        <p class="muted small">The chart plots each hum's mood over time. The shaded band is your own usual range, worked out only from your past hums, so "different" always means different <em>for you</em>, not different from anyone else.</p>
+        <p class="muted small">Each hum is a star, placed left to right by time and coloured by where its mood sat against your own usual range, which glows as a band. That range is worked out only from your past hums, so "different" always means different <em>for you</em>, not different from anyone else.</p>
         <p class="muted small">It reads patterns in your voice, not your situation. It can't see why anything changed, and a single unusual hum is never treated as a trend.</p>
         ${basedOn}
         <p class="muted small">Research-stage and non-clinical. It does not diagnose, and it is not a medical evaluation. If you are struggling, please reach out to someone you trust or a support line.</p>
@@ -1372,7 +1360,7 @@ export function renderHistory(log: readonly HistoryEntry[]): void {
     .slice()
     .reverse()
     .map((e) => {
-      const time = new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const time = formatTimeIST(e.at, true);
       const tag = e.abstained ? "abstained" : e.eligible ? "counted" : "not counted";
       return `<li>
         <span class="hist-time">${esc(time)}</span>

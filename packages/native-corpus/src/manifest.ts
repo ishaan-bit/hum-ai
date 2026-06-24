@@ -4,7 +4,7 @@ import type { LogRegParams } from "@hum-ai/signal-lab/model";
 import { deserializeModel } from "@hum-ai/signal-lab/model";
 import type { NativeCorpus } from "./corpus";
 import { buildHumNativeAxisPrior } from "./prior";
-import { retrainNativeAxes, type AxisPromotion, type RetrainResult } from "./train";
+import { retrainNativeAxes, type AxisPromotion, type RetrainResult, type RetrainOptions } from "./train";
 import type { Axis } from "./calibration";
 
 /**
@@ -82,8 +82,8 @@ function statusFrom(p: AxisPromotion): HumNativeAxisStatus {
  * schema version is taken from the most recent example so a later schema change is
  * recorded with the models trained under it.
  */
-export function buildHumNativeArtifact(corpus: NativeCorpus, now: IsoTimestamp): HumNativeArtifact {
-  const retrain: RetrainResult = retrainNativeAxes(corpus);
+export function buildHumNativeArtifact(corpus: NativeCorpus, now: IsoTimestamp, opts: RetrainOptions = {}): HumNativeArtifact {
+  const retrain: RetrainResult = retrainNativeAxes(corpus, opts);
   const last = corpus.examples[corpus.examples.length - 1];
   const manifest: HumNativeManifest = {
     version: HUM_NATIVE_MANIFEST_VERSION,

@@ -66,16 +66,16 @@ export function evidenceStrength(level: string): EvidenceStrength {
   }
 }
 
-/** The idle / pre-first-hum world: near-grey, barely breathing, honestly empty (not pretending). */
+/** The idle / pre-first-hum world: cool and quiet, barely breathing, honestly empty (not pretending). */
 export const NEUTRAL_VISUAL: StateVisual = {
   valence: 0,
   arousal: -0.35,
   evidence: 0.55,
   hue: 210,
-  sat: 12,
-  light: 15,
-  reach: 0.4,
-  energy: 0.3,
+  sat: 15,
+  light: 16,
+  reach: 0.46,
+  energy: 0.34,
   abstained: false,
 };
 
@@ -98,9 +98,13 @@ export function computeStateVisual(valence: number, arousal: number, evidence: E
     arousal: a,
     evidence,
     hue: valenceHue(v),
-    sat: lerp(26, 58, aN) * evidence,
-    light: lerp(14, 24, aN),
-    reach: lerp(0.34, 0.72, aN),
+    // CINEMATIC ranges: bolder saturation + a brighter core + a longer glow reach so the state is
+    // unmistakable at a glance. The evidence ceiling is applied as a FLOOR-ed multiplier (0.62..1)
+    // instead of the raw band, so even a "developing" read still shows real colour — it used to be
+    // halved to near-grey, which is what made the adaptive world look static/"masked".
+    sat: lerp(34, 74, aN) * (0.62 + 0.38 * evidence),
+    light: lerp(15, 28, aN),
+    reach: lerp(0.42, 0.9, aN),
     energy: aN,
     abstained: false,
   };
@@ -139,10 +143,10 @@ export function applyStateVisual(v: StateVisual, el: HTMLElement | null = safeRo
   // All three are derived from the SAME live read, so the duotone stays fully state-adaptive.
   const hue2 = (v.hue + 34) % 360;
   s.setProperty("--state-hue-2", hue2.toFixed(1));
-  s.setProperty("--state-accent", `hsl(${v.hue.toFixed(1)} ${(v.sat + 22).toFixed(0)}% ${Math.min(78, v.light + 48).toFixed(0)}%)`);
-  s.setProperty("--state-accent-2", `hsl(${hue2.toFixed(1)} ${(v.sat + 30).toFixed(0)}% ${Math.min(82, v.light + 54).toFixed(0)}%)`);
-  s.setProperty("--state-accent-deep", `hsl(${v.hue.toFixed(1)} ${(v.sat + 18).toFixed(0)}% ${Math.max(16, v.light + 6).toFixed(0)}%)`);
-  s.setProperty("--state-glow", `hsla(${v.hue.toFixed(1)}, ${(v.sat + 34).toFixed(0)}%, ${Math.min(70, v.light + 42).toFixed(0)}%, 0.55)`);
+  s.setProperty("--state-accent", `hsl(${v.hue.toFixed(1)} ${(v.sat + 26).toFixed(0)}% ${Math.min(82, v.light + 50).toFixed(0)}%)`);
+  s.setProperty("--state-accent-2", `hsl(${hue2.toFixed(1)} ${(v.sat + 34).toFixed(0)}% ${Math.min(86, v.light + 56).toFixed(0)}%)`);
+  s.setProperty("--state-accent-deep", `hsl(${v.hue.toFixed(1)} ${(v.sat + 22).toFixed(0)}% ${Math.max(18, v.light + 7).toFixed(0)}%)`);
+  s.setProperty("--state-glow", `hsla(${v.hue.toFixed(1)}, ${(v.sat + 40).toFixed(0)}%, ${Math.min(74, v.light + 44).toFixed(0)}%, 0.6)`);
   el.dataset.read = v.abstained ? "abstain" : "live";
 }
 

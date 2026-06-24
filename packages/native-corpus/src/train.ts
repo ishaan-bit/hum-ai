@@ -69,6 +69,21 @@ interface AxisRow {
   readonly high: boolean;
 }
 
+/**
+ * The CV-fold grouping key for a row. The within-user retrain folds by example id
+ * (`defaultFoldKey`); the POPULATION retrain passes a contributor pseudonym so all of one
+ * person's hums share a fold — GROUP-BY-CONTRIBUTOR cross-validation, which is mandatory at
+ * population scale to avoid within-person leakage inflating the held-out accuracy.
+ */
+export type FoldKey = (example: NativeHumExample) => string;
+export const defaultFoldKey: FoldKey = (ex) => ex.id;
+
+/** Options for the (re)training entry points. Omitted ⇒ the within-user behavior, unchanged. */
+export interface RetrainOptions {
+  /** CV-fold grouping key (defaults to per-example — the within-user behavior). */
+  readonly foldKey?: FoldKey;
+}
+
 /** Build training rows for one axis: eligible, non-ambiguous examples → (vector, pole label). */
 export function buildAxisRows(corpus: NativeCorpus, axis: Axis): AxisRow[] {
   const poles = AXIS_POLE_LABELS[axis];
@@ -153,12 +168,18 @@ interface CvPred {
 }
 
 /** k-fold cross-validation collecting per-row held-out predictions (truth + pred + P(high)). */
-function crossValPredictions(rows: readonly AxisRow[], axis: Axis, k: number, iterations: number): CvPred[] {
+function crossValPredictions(
+  rows: readonly AxisRow[],
+  axis: Axis,
+  k: number,
+  iterations: number,
+  foldKey: FoldKey = defaultFoldKey,
+): CvPred[] {
   const poles = AXIS_POLE_LABELS[axis];
   const preds: CvPred[] = [];
   for (let f = 0; f < k; f++) {
-    const train = rows.filter((r) => foldOf(r.example.id, k) !== f);
-    const test = rows.filter((r) => foldOf(r.example.id, k) === f);
+    const train = rows.filter((r) => foldOf(foldKey(r.example), k) !== f);
+    const test = rows.filter((r) => foldOf(foldKey(r.example), k) === f);
     if (test.length === 0) continue;
     const tc = classCounts(train);
     if (tc.low === 0 || tc.high === 0) continue; // need both poles to fit a meaningful model
@@ -173,8 +194,14 @@ function crossValPredictions(rows: readonly AxisRow[], axis: Axis, k: number, it
 }
 
 /** k-fold balanced accuracy of the trained challenger over held-out rows. */
-function crossValChallenger(rows: readonly AxisRow[], axis: Axis, k: number, iterations: number): number {
-  return balancedAccuracy(crossValPredictions(rows, axis, k, iterations));
+function crossValChallenger(
+  rows: readonly AxisRow[],
+  axis: Axis,
+  k: number,
+  iterations: number,
+  foldKey: FoldKey = defaultFoldKey,
+): number {
+  return balancedAccuracy(crossValPredictions(rows, axis, k, iterations, foldKey));
 }
 
 /** Balanced accuracy of the fixed acoustic backbone over the same rows (no training). */
@@ -232,9 +259,15 @@ function bootstrapAccuracyCI(preds: readonly CvPred[], B: number, seed: number):
  * link) and ask how often the null CV reaches the observed accuracy.
  * p = (#null ≥ observed + 1) / (perms + 1). Deterministic.
  */
-function permutationPValue(rows: readonly AxisRow[], axis: Axis, perms: number, seed: number): number {
+function permutationPValue(
+  rows: readonly AxisRow[],
+  axis: Axis,
+  perms: number,
+  seed: number,
+  foldKey: FoldKey = defaultFoldKey,
+): number {
   const iters = NATIVE_PERMUTATION_ITERATIONS;
-  const observed = crossValChallenger(rows, axis, NATIVE_CV_FOLDS, iters);
+  const observed = crossValChallenger(rows, axis, NATIVE_CV_FOLDS, iters, foldKey);
   const poles = AXIS_POLE_LABELS[axis];
   const rng = makeRng(seed);
   let ge = 0;
@@ -245,7 +278,7 @@ function permutationPValue(rows: readonly AxisRow[], axis: Axis, perms: number, 
       [highs[i], highs[j]] = [highs[j]!, highs[i]!];
     }
     const permuted: AxisRow[] = rows.map((r, i) => ({ ...r, high: highs[i]!, label: highs[i]! ? poles.high : poles.low }));
-    if (crossValChallenger(permuted, axis, NATIVE_CV_FOLDS, iters) >= observed) ge++;
+    if (crossValChallenger(permuted, axis, NATIVE_CV_FOLDS, iters, foldKey) >= observed) ge++;
   }
   return (ge + 1) / (perms + 1);
 }
@@ -284,7 +317,8 @@ export interface AxisPromotion {
  * (enough data + both poles + absolute floor + beats the backbone by a margin). Never
  * promotes on a skewed or thin corpus; never rounds a criterion up.
  */
-export function evaluateAxisPromotion(corpus: NativeCorpus, axis: Axis): AxisPromotion {
+export function evaluateAxisPromotion(corpus: NativeCorpus, axis: Axis, opts: RetrainOptions = {}): AxisPromotion {
+  const foldKey = opts.foldKey ?? defaultFoldKey;
   const allRows = buildAxisRows(corpus, axis);
   // Bound the per-retrain training window to the most recent rows (responsiveness).
   const rows = allRows.length > NATIVE_TRAIN_MAX_ROWS ? allRows.slice(allRows.length - NATIVE_TRAIN_MAX_ROWS) : allRows;
@@ -314,7 +348,7 @@ export function evaluateAxisPromotion(corpus: NativeCorpus, axis: Axis): AxisPro
   }
 
   // 1. Held-out cross-validation (the challenger's honest accuracy + calibration).
-  const preds = crossValPredictions(rows, axis, NATIVE_CV_FOLDS, NATIVE_TRAIN_ITERATIONS);
+  const preds = crossValPredictions(rows, axis, NATIVE_CV_FOLDS, NATIVE_TRAIN_ITERATIONS, foldKey);
   const challenger = balancedAccuracy(preds);
   const ece = eceFromPreds(preds);
   const backbone = backboneBalancedAccuracy(rows, axis);
@@ -339,7 +373,7 @@ export function evaluateAxisPromotion(corpus: NativeCorpus, axis: Axis): AxisPro
   if (clearsFloor && beatsBackbone && eceOk && trendOk) {
     const seed = (rows.length * 2654435761) >>> 0; // deterministic, varies with corpus size
     const permRows = rows.length > NATIVE_PERMUTATION_MAX_ROWS ? rows.slice(rows.length - NATIVE_PERMUTATION_MAX_ROWS) : rows;
-    pValue = permutationPValue(permRows, axis, NATIVE_PERMUTATIONS, seed);
+    pValue = permutationPValue(permRows, axis, NATIVE_PERMUTATIONS, seed, foldKey);
     accuracyCI95 = bootstrapAccuracyCI(preds, NATIVE_BOOTSTRAP, (seed ^ 0x9e3779b9) >>> 0);
     significant = pValue < NATIVE_MAX_P_VALUE;
     if (!significant) reasons.push(`accuracy not beyond chance (permutation p=${pValue.toFixed(3)} ≥ ${NATIVE_MAX_P_VALUE})`);
@@ -375,9 +409,9 @@ export interface RetrainResult {
 }
 
 /** Evaluate promotion for both axes from the current corpus. Pure; no I/O. */
-export function retrainNativeAxes(corpus: NativeCorpus): RetrainResult {
+export function retrainNativeAxes(corpus: NativeCorpus, opts: RetrainOptions = {}): RetrainResult {
   return {
-    valence: evaluateAxisPromotion(corpus, "valence"),
-    arousal: evaluateAxisPromotion(corpus, "arousal"),
+    valence: evaluateAxisPromotion(corpus, "valence", opts),
+    arousal: evaluateAxisPromotion(corpus, "arousal", opts),
   };
 }

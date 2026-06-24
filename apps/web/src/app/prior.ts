@@ -17,6 +17,7 @@ import { deserializeModel } from "@hum-ai/signal-lab/model";
 import { LearnedAffectPriorExpert } from "@hum-ai/signal-lab/expert";
 import { buildAffectAxisPrior, AFFECT_PRIOR_FAR_DOMAIN_CAP, type AxisPriorMeta as SignalAxisPriorMeta } from "@hum-ai/signal-lab/axis-prior";
 import type { LearnedAffectPrior, AffectAxisPriors } from "@hum-ai/orchestrator";
+import { parsePopulationArtifact, type PopulationArtifact } from "@hum-ai/population-corpus";
 
 export interface PromotionStatus {
   readonly evaluated: boolean;
@@ -192,4 +193,28 @@ export function loadBrowserPrior(): Promise<LoadedPrior | null> {
     };
   })();
   return cache;
+}
+
+let popCache: Promise<PopulationArtifact | null> | undefined;
+
+/**
+ * Load the POPULATION baseline artifact (ADR-0012) the build staged under `/models/`, or null
+ * when none is served (→ the read falls back to the far-domain prior, exactly as before). This
+ * is the middle prior tier: a new user with no personal model yet reads through the population
+ * baseline the community improved (see `selectAxisPriors`). Memoized for the session. The
+ * artifact is derived model params + OCEAN norms only — no raw audio, no PII (parsed/validated
+ * by `parsePopulationArtifact`).
+ */
+export function loadPopulationArtifact(): Promise<PopulationArtifact | null> {
+  if (popCache) return popCache;
+  popCache = (async () => {
+    try {
+      const res = await fetch(assetUrl("population-artifact.json"));
+      if (!res.ok) return null;
+      return parsePopulationArtifact(await res.text());
+    } catch {
+      return null;
+    }
+  })();
+  return popCache;
 }
