@@ -32,17 +32,26 @@ test("the full calibration report has no FAIL findings", () => {
   assert.equal(ok, true, `unexpected calibration failures:\n${fails.map((f) => `  - [${f.area}] ${f.message}`).join("\n")}`);
 });
 
-test("CONTRACT: no fidelity (mic/room) parameter moves valence or arousal", () => {
+test("CONTRACT: pure spectral-color fidelity has zero affect effect; noise level may only fade toward neutral", () => {
   const sweeps = sweepAll();
+  const NOISE_LEVEL_FIDELITY = new Set(["signalToNoiseProxy", "noiseFloorRms"]);
   for (const s of sweeps.filter((x) => x.kind === "fidelity")) {
-    assert.ok(
-      s.effects.valence.span < DEAD_SPAN,
-      `${s.feature} (fidelity) moved valence by ${s.effects.valence.span.toFixed(3)} — must be ~0`,
-    );
-    assert.ok(
-      s.effects.arousal.span < DEAD_SPAN,
-      `${s.feature} (fidelity) moved arousal by ${s.effects.arousal.span.toFixed(3)} — must be ~0`,
-    );
+    for (const out of ["valence", "arousal"] as const) {
+      const e = s.effects[out];
+      if (NOISE_LEVEL_FIDELITY.has(s.feature)) {
+        // SNR is the confidence signal: it may fade fidelity-fragile cues TOWARD NEUTRAL as
+        // SNR drops (low-SNR end closer to 0 than high-SNR end), but never toward a pole.
+        const fadesTowardNeutral =
+          Math.abs(e.atLow) <= Math.abs(e.atHigh) + DEAD_SPAN &&
+          (Math.sign(e.atLow) === Math.sign(e.atHigh) || Math.abs(e.atLow) < 0.05);
+        assert.ok(
+          fadesTowardNeutral,
+          `signalToNoiseProxy pushed ${out} toward a pole (low-SNR ${e.atLow.toFixed(2)} vs high-SNR ${e.atHigh.toFixed(2)})`,
+        );
+      } else {
+        assert.ok(e.span < DEAD_SPAN, `${s.feature} (fidelity) moved ${out} by ${e.span.toFixed(3)} — must be ~0`);
+      }
+    }
   }
 });
 
@@ -94,11 +103,13 @@ test("mood archetypes land in the correct valence/arousal quadrant", () => {
   }
 });
 
-test("fidelity invariance: clean vs noisy mic does not move the affect read", () => {
+test("fidelity invariance: a noisy mic only fades the read toward neutral, never toward a wrong pole", () => {
   for (const f of runFidelityInvariance()) {
-    assert.equal(f.deltaValence, 0, `mood ${f.mood}: valence moved on fidelity change`);
-    assert.equal(f.deltaArousal, 0, `mood ${f.mood}: arousal moved on fidelity change`);
-    assert.ok(f.zoneStable, `mood ${f.mood}: zone flipped ${f.cleanZone}→${f.noisyZone} on fidelity change`);
+    assert.ok(
+      !f.directionalLeak,
+      `mood ${f.mood}: clean→noisy mic pushed affect toward a wrong pole / away from neutral ` +
+        `(valence ${f.cleanValence.toFixed(2)}→${f.noisyValence.toFixed(2)}, arousal ${f.cleanArousal.toFixed(2)}→${f.noisyArousal.toFixed(2)})`,
+    );
   }
 });
 

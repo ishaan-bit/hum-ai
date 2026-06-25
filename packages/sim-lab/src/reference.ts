@@ -77,7 +77,10 @@ export const REFERENCE_HUM: AcousticFeatures = {
   clippedFrameRatio: 0,
   silenceRatio: 0.12,
   noiseFloorRms: 0.006,
-  signalToNoiseProxy: 8,
+  // A clean reference hum has a GOOD SNR (well above the read's fidelity-fade window,
+  // SNR_FIDELITY_HI=10) so the neutral baseline is read at full confidence — the fidelity
+  // fade (axis-read.ts) is off here and only engages for genuinely noisy captures.
+  signalToNoiseProxy: 12,
   zeroCrossingRate: 0.05,
 
   // pitch / melodic (nullable when unvoiced; reference is voiced)

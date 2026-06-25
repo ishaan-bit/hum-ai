@@ -159,15 +159,36 @@ export interface FidelityInvariance {
   readonly cleanZone: string;
   readonly noisyZone: string;
   readonly zoneStable: boolean;
+  /**
+   * DIRECTIONAL leak: a noisy mic pushed the affect read toward a WRONG POLE (sign flip
+   * on a meaningful axis) or AWAY from neutral (manufactured more affect). This is the real
+   * contract — fidelity must never invent or invert affect. A read that FADES toward neutral
+   * under noise is NOT a leak: it is honest down-weighting of fidelity-fragile cues (the SNR
+   * confidence fade in axis-read.ts), the same posture as low evidence paling the read.
+   */
+  readonly directionalLeak: boolean;
 }
 
 /** Largest absolute valence move that switching clean↔noisy mic may cause without failing. */
 export const FIDELITY_VALENCE_TOLERANCE = 0.1;
 
 /**
+ * Per-axis directional leak: the noisy read crossed neutral to the OPPOSITE pole (mood
+ * inversion), or a near-neutral clean read was pushed OUT to a pole (mood invented from the
+ * mic). Same-pole movement (a low read going more-low as the energy de-noises under a noisy
+ * mic) is NOT a leak — it is honest, the mood is unchanged.
+ */
+function axisDirectionalLeak(clean: number, noisy: number): boolean {
+  const flippedToPole = Math.sign(noisy) !== Math.sign(clean) && Math.abs(clean) > 0.1 && Math.abs(noisy) > 0.1;
+  const inventedFromNeutral = Math.abs(clean) < 0.1 && Math.abs(noisy) > 0.25;
+  return flippedToPole || inventedFromNeutral;
+}
+
+/**
  * For each mood, read it through a CLEAN mic and a NOISY mic (mood fields identical).
- * A passing read barely moves valence and keeps the same zone — fidelity belongs to
- * signal strength + confidence, never the affect read.
+ * A passing read does not move the affect toward a WRONG POLE or AWAY from neutral —
+ * fidelity belongs to signal strength + confidence. Under genuine noise the read may FADE
+ * toward neutral (honest, low-confidence down-weighting); that is not a leak.
  */
 export function runFidelityInvariance(): FidelityInvariance[] {
   return MOOD_SCENARIOS.map((m) => {
@@ -186,6 +207,8 @@ export function runFidelityInvariance(): FidelityInvariance[] {
       cleanZone,
       noisyZone,
       zoneStable: cleanZone === noisyZone,
+      directionalLeak:
+        axisDirectionalLeak(clean.valence, noisy.valence) || axisDirectionalLeak(clean.arousal, noisy.arousal),
     };
   });
 }

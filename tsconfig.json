@@ -52,6 +52,7 @@
       "@hum-ai/screening-model": ["packages/screening-model/src/index.ts"],
       "@hum-ai/personality-signature": ["packages/personality-signature/src/index.ts"],
       "@hum-ai/sim-lab": ["packages/sim-lab/src/index.ts"],
+      "@hum-ai/hum-sim": ["packages/hum-sim/src/index.ts"],
       "@hum-ai/population-corpus": ["packages/population-corpus/src/index.ts"]
     }
   },

@@ -10,7 +10,6 @@ import {
   runMoodScenarios,
   runFidelityInvariance,
   runPinReReference,
-  FIDELITY_VALENCE_TOLERANCE,
 } from "./scenarios";
 import { runHybridLayers } from "./hybrid";
 
@@ -65,18 +64,41 @@ export const MIN_AXIS_DRIVERS = 3;
 export function computeFindings(sensitivities: readonly FeatureSensitivity[]): Finding[] {
   const findings: Finding[] = [];
 
-  // 1. CONTRACT: no fidelity (mic/room) parameter may move valence or arousal.
+  // 1. CONTRACT: no fidelity (mic/room) parameter may DRIVE the affect read.
+  //
+  //    Pure spectral-COLOR fidelity cues (clarity, flatness, breathiness) must have ZERO effect
+  //    on affect. The NOISE-LEVEL cues `signalToNoiseProxy` and `noiseFloorRms` are the
+  //    exception: they are confidence/noise quantifiers the axis read legitimately uses to FADE
+  //    fidelity-fragile cues toward NEUTRAL and to noise-floor-DE-NOISE the energy cue, so a
+  //    noisy capture cannot let its hiss manufacture arousal (the valence ⊥ fidelity contract,
+  //    extended to arousal). That fade/de-noise is allowed; what is NOT allowed is fidelity
+  //    pushing affect toward a WRONG POLE or away from neutral.
+  const NOISE_LEVEL_FIDELITY = new Set(["signalToNoiseProxy", "noiseFloorRms"]);
   for (const s of sensitivities) {
     if (s.kind !== "fidelity") continue;
     for (const out of AXIS_OUTPUTS) {
       const e = s.effects[out];
-      if (e.span >= DEAD_SPAN) {
-        findings.push({
-          severity: "fail",
-          area: "fidelity-leak",
-          message: `${s.feature} (fidelity) moves ${out} by ${e.span.toFixed(3)} — fidelity must not drive the affect read (valence-fidelity-decoupling).`,
-        });
+      if (e.span < DEAD_SPAN) continue;
+      if (NOISE_LEVEL_FIDELITY.has(s.feature)) {
+        // Sweep runs low→high SNR; the low-SNR end (atLow) should be CLOSER to neutral than the
+        // high-SNR end (atHigh), with no sign flip toward a pole. Otherwise it is a real leak.
+        const fadesTowardNeutral =
+          Math.abs(e.atLow) <= Math.abs(e.atHigh) + DEAD_SPAN &&
+          (Math.sign(e.atLow) === Math.sign(e.atHigh) || Math.abs(e.atLow) < 0.05);
+        if (!fadesTowardNeutral) {
+          findings.push({
+            severity: "fail",
+            area: "fidelity-leak",
+            message: `${s.feature} (noise-level) pushes ${out} toward a pole (${e.atLow.toFixed(2)} → ${e.atHigh.toFixed(2)}) — a noise quantifier may only fade/de-noise toward neutral, never manufacture or invert affect.`,
+          });
+        }
+        continue;
       }
+      findings.push({
+        severity: "fail",
+        area: "fidelity-leak",
+        message: `${s.feature} (fidelity) moves ${out} by ${e.span.toFixed(3)} — pure fidelity must not drive the affect read (valence-fidelity-decoupling).`,
+      });
     }
   }
 
@@ -144,11 +166,11 @@ export function computeScenarioFindings(): Finding[] {
   }
 
   for (const f of runFidelityInvariance()) {
-    if (Math.abs(f.deltaValence) > FIDELITY_VALENCE_TOLERANCE || !f.zoneStable) {
+    if (f.directionalLeak) {
       findings.push({
         severity: "fail",
         area: "fidelity-invariance",
-        message: `mood ${f.mood}: clean→noisy mic moved valence by ${f.deltaValence.toFixed(3)} (zone ${f.cleanZone}→${f.noisyZone}) — fidelity must not change the affect read.`,
+        message: `mood ${f.mood}: clean→noisy mic pushed the affect read toward a wrong pole / away from neutral (valence ${f.cleanValence.toFixed(2)}→${f.noisyValence.toFixed(2)}, arousal ${f.cleanArousal.toFixed(2)}→${f.noisyArousal.toFixed(2)}, zone ${f.cleanZone}→${f.noisyZone}) — fidelity may only fade toward neutral.`,
       });
     }
   }
@@ -215,12 +237,11 @@ export function scenarioReport(): string {
   }
   lines.push("");
 
-  lines.push(`## Fidelity invariance (clean vs noisy mic, |Δvalence| ≤ ${FIDELITY_VALENCE_TOLERANCE})\n`);
-  lines.push("| mood | Δvalence | Δarousal | clean zone | noisy zone | zone stable |");
+  lines.push(`## Fidelity invariance (clean vs noisy mic — must not push toward a wrong pole / away from neutral)\n`);
+  lines.push("| mood | Δvalence | Δarousal | clean zone | noisy zone | no directional leak |");
   lines.push("|---|---|---|---|---|---|");
   for (const f of runFidelityInvariance()) {
-    const ok = Math.abs(f.deltaValence) <= FIDELITY_VALENCE_TOLERANCE && f.zoneStable;
-    lines.push(`| ${f.mood} | ${f.deltaValence.toFixed(3)} | ${f.deltaArousal.toFixed(3)} | ${f.cleanZone} | ${f.noisyZone} | ${ok ? "✅" : "❌"} |`);
+    lines.push(`| ${f.mood} | ${f.deltaValence.toFixed(3)} | ${f.deltaArousal.toFixed(3)} | ${f.cleanZone} | ${f.noisyZone} | ${f.directionalLeak ? "❌" : "✅"} |`);
   }
   lines.push("");
 

@@ -111,6 +111,14 @@ export const NATIVE_AXIS_NUDGE_CAP = 0.75;
 /** Decay rate of the evidence-proportional OOD nudge fade (exp(−λ·ood)); ≈50% fade at ood≈0.46. */
 export const OOD_FADE_LAMBDA = 1.5;
 
+/**
+ * FIDELITY-DECOUPLING SNR window. Below `SNR_FIDELITY_LO` the fidelity-FRAGILE affect
+ * cues are fully faded to neutral; at/above `SNR_FIDELITY_HI` they are fully trusted.
+ * Extends the existing valence ⊥ fidelity contract to AROUSAL (see `acousticAffectAxes`).
+ */
+export const SNR_FIDELITY_LO = 3;
+export const SNR_FIDELITY_HI = 10;
+
 /** Map a possibly-null feature to a unit value, using `fallback` when not computable. */
 function unit(value: number | null | undefined, low: number, high: number, fallback: number): number {
   if (value === null || value === undefined || !Number.isFinite(value)) return fallback;
@@ -133,26 +141,42 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   arousal: number;
   signalStrength: UnitInterval;
 } {
+  // --- FIDELITY DECOUPLING (valence ⊥ fidelity, extended to AROUSAL) ---
+  // Broadband recording NOISE inflates spectralCentroid, spectralFlux, pitch-range and
+  // frame-activity, AND raises meanRms (noise floor energy), AND depresses the voice-quality
+  // steadiness measures — so a NOISY capture manufactures arousal and shifts valence. The
+  // Hum Simulator measured this fidelity→affect leak directly: pure recording noise (mood
+  // fixed) moved the arousal read by up to ~0.8, with `noiseLevel` the single strongest
+  // arousal driver — larger than real loudness. Recording quality belongs to signalStrength
+  // + confidence, NEVER the affect read. So we (a) subtract the noise-floor energy from the
+  // loudness cue, and (b) fade every fidelity-FRAGILE normalized cue toward neutral (0.5) in
+  // proportion to capture fidelity, leaving the noise-ROBUST core (true loudness above the
+  // floor, pitch register) to carry a low-SNR read. A clean hum (high SNR, tiny noise floor)
+  // is UNCHANGED — `fade` is the identity at fidelity 1 and the floor subtraction is ~0.
+  const fidelity = clamp01(normalize(f.signalToNoiseProxy, SNR_FIDELITY_LO, SNR_FIDELITY_HI));
+  const fade = (x: number): number => 0.5 + fidelity * (x - 0.5);
+  // The loudness cue is the strongest arousal signal, but broadband noise inflates meanRms
+  // (the noise floor adds energy), which would let a quiet noisy hum read as loud/activated.
+  // Correct that at the source with NOISE-FLOOR POWER SUBTRACTION: the signal energy above the
+  // floor is sqrt(meanRms² − noiseFloorRms²). This is physically right — it barely touches a
+  // loud hum (signal ≫ floor) yet removes the inflation from a quiet hum buried in noise — and
+  // is monotone (more noise ⇒ less signal energy, never more). A clean hum (floor ≈ 0) is
+  // unchanged.
+  const signalRms = Math.sqrt(Math.max(f.meanRms * f.meanRms - f.noiseFloorRms * f.noiseFloorRms, 0));
+  const energyN = unit(signalRms, 0.01, 0.14, 0);
+
   // --- arousal: activation level ---
   // Energy, voiced activity, brightness and pitch height set the level; pitch MOVEMENT
   // (melodic range) and spectral FLUX (how much the timbre changes) add the "animation"
   // an activated hum carries beyond raw loudness. Weights sum to 1; all on-domain.
-  // Energy window WIDENED to a realistic sustained-hum RMS span (0.01–0.14). The old 0.006–0.06
-  // window saturated at any audible hum — a normal "mmm" pinned energyN at 1.0, which is what made
-  // every typical hum read "restless and activated" (high arousal, mid valence). Now a soft hum
-  // sits low, a comfortable hum (~0.08) mid, only a genuinely loud/intense one saturates.
-  // Validated by sim-lab `fifty-hums` (the distribution un-pins). The synth generator is also
-  // brought down to a realistic level so the demo path no longer feeds an RMS-0.28 outlier.
-  const energyN = unit(f.meanRms, 0.01, 0.14, 0); // near-silence → strong
-  // A sustained hum is ALWAYS mostly-active (activeFrameRatio ~0.85). The old formula
-  // (ratio - 0.3) / 0.6 gave activeN ≈ 0.92 for any decent hum — a near-constant +0.20
-  // push on arousal that pinned every calm hum as "restless". Centre at 0.85 so a typical
-  // clean hum contributes 0.5 (neutral), only genuinely sparse/full-continuous hums deviate.
-  const activeN = clamp01(0.5 + (f.activeFrameRatio - 0.85) / 0.5);
-  const brightN = unit(f.spectralCentroidHz, 250, 2600, 0.3);
-  const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5);
-  const pitchMoveN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // more melodic movement → more activated
-  const fluxN = unit(f.spectralFlux, 0.01, 0.3, 0.2); // more spectral change → more activated
+  // A sustained hum is ALWAYS mostly-active (activeFrameRatio ~0.85), and under noise EVERY
+  // frame clears the activity floor, so activeFrameRatio is fidelity-fragile — faded.
+  const activeN = fade(clamp01(0.5 + (f.activeFrameRatio - 0.85) / 0.5));
+  // brightness, flux and melodic range are all inflated by broadband noise → fidelity-faded.
+  const brightN = fade(unit(f.spectralCentroidHz, 250, 2600, 0.3));
+  const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5); // pitch register: noise-robust, kept
+  const pitchMoveN = fade(unit(f.pitchRangeSemitones, 0.5, 8, 0.3)); // melodic movement → more activated
+  const fluxN = fade(unit(f.spectralFlux, 0.01, 0.3, 0.2)); // more spectral change → more activated
   // Re-balanced when `activeN` was re-centred (above): dropping the near-constant activeFrameRatio
   // push left a tense/agitated-but-LOW-pitch hum (high energy + flux, low pitch) reading flat. So
   // spectral FLUX now carries more of the activation signal (0.08 → 0.20). Flux is the right lever:
@@ -181,16 +205,21 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   //       flat one reads more subdued) — classic affective-prosody correlates. Voice-quality
   //       still contributes a "settled/in-control" component, but no longer dominates.
   //
-  // Weights sum to 1; all on-domain, never a clinical label.
-  const smoothN = f.smoothnessScore === null ? 0.5 : clamp01(f.smoothnessScore);
-  const stabilityN = clamp01(0.5 * f.amplitudeStability + 0.5 * (f.pitchStability ?? 0.5));
-  const vibratoN = f.vibratoRegularity === null ? 0.5 : clamp01(f.vibratoRegularity);
-  const agitationN = clamp01(f.residualInstabilityScore);
+  // Weights sum to 1; all on-domain, never a clinical label. The voice-quality steadiness
+  // measures (smoothness, stability, vibrato evenness, agitation) are fidelity-FRAGILE —
+  // broadband noise depresses smoothness/stability and inflates agitation — so each is faded
+  // toward neutral under low SNR (extending the valence ⊥ fidelity contract). The mood-variable
+  // prosody carriers stay: pitch HEIGHT is noise-robust (kept full); melodic MOVEMENT can be
+  // inflated by noise jitter, so it is faded like the arousal `pitchMoveN`.
+  const smoothN = fade(f.smoothnessScore === null ? 0.5 : clamp01(f.smoothnessScore));
+  const stabilityN = fade(clamp01(0.5 * f.amplitudeStability + 0.5 * (f.pitchStability ?? 0.5)));
+  const vibratoN = fade(f.vibratoRegularity === null ? 0.5 : clamp01(f.vibratoRegularity));
+  const calmN = fade(clamp01(1 - f.residualInstabilityScore)); // settled (inverse of agitation)
   const pitchHeightN = unit(f.pitchMeanHz, 95, 260, 0.5); // mood-variable: higher → brighter affect
-  const melodyN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // mood-variable: melodic movement → expressive/positive
+  const melodyN = fade(unit(f.pitchRangeSemitones, 0.5, 8, 0.3)); // mood-variable: melodic movement → expressive
   const valence01 = clamp01(
     // settled / in-control (voice-quality; person-ish, kept moderate so it can't pin the axis)
-    0.22 * stabilityN + 0.16 * smoothN + 0.1 * vibratoN + 0.1 * (1 - agitationN) +
+    0.22 * stabilityN + 0.16 * smoothN + 0.1 * vibratoN + 0.1 * calmN +
     // mood-variable prosody (what the person changes hum-to-hum) — 0.42 of the weight
     0.24 * pitchHeightN + 0.18 * melodyN,
   );
