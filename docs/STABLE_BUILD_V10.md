@@ -16,7 +16,7 @@ relapse/screening separation, and the `npm run hum-sim` release gate are all **u
 ## 0. Coordinates
 
 - **Starting commit:** `6debf64` (`docs(stable-build-v9): record final commit hash`), branch `main`.
-- **Final commit:** `__FINAL_COMMIT__` (`feat(stable-build-v10): …`), branch `main` (this hash line is finalized in the immediately-following docs commit, per the v8/v9 convention).
+- **Final commit:** `7079424` (`feat(stable-build-v10): phone-native interaction safety, Big Five from hum #1, live-presence orb, recording resilience`), branch `main`. The build's code+docs landed in `7079424`; this hash line is finalized in the immediately-following docs commit, per the v8/v9 convention.
 - **Scope (code):** `apps/web/src/app/{render.ts, styles.css, orb.ts, capture.ts, main.ts}`,
   `packages/personality-signature/src/index.ts`. **Docs:** new `docs/adr/0012-…`, this spec, `README.md`.
   **No** change to `audio-features`, `orchestrator` read math, `fusion-engine`, `personalization-engine`,
@@ -195,7 +195,7 @@ the entire affect/calibration test surface — including the v9 `hum-sim` releas
 
 - **Method:** Vercel CLI, project `hum-ai` (prebuilt). `vercel build --prod` → `vercel deploy --prebuilt --prod`.
 - **Production URL:** `https://hum-ai-beige.vercel.app` (the public alias; see [memory/web-deploy]).
-- **Status:** `__DEPLOY_STATUS__`.
+- **Status:** **Live ✅.** Verified after deploy: `https://hum-ai-beige.vercel.app/` returns **HTTP 200** with the correct title; the served bundle (`assets/index-CShhVMl4.js` + `assets/index-DRRKC8YJ.css`) **byte-matches the local build**; the deployed CSS carries the `touch-action:pan-y` fix (×4) and the deployed JS carries the interruption-recovery ("left the foreground") and first-hum ("your first hum") strings — i.e. the actual V10 fixes are confirmed live. (Deployment-specific `*.vercel.app` URLs are 401 by Vercel deployment protection; the public production alias is open.)
 
 ## 9. Known limitations
 
