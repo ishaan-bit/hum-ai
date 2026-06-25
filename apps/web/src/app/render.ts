@@ -1625,7 +1625,6 @@ function riskLayersBlock(report: RiskMarkerReport, screening: LatestScreening | 
       ${riskLayerRow(report.depressive, phqChip)}
       ${riskLayerRow(report.anxiety, gadChip)}
       ${riskLayerRow(report.relapse, "")}
-      ${diaryLegend()}
       <p class="muted small risk-note">${esc(RISK_LAYERS_NOTE)}</p>
     </div>`;
 }
@@ -1719,6 +1718,7 @@ export function renderLongitudinal(
     </div>
     ${moodRibbon(points, focusAt, now)}
     ${nowPositionBar(latest, band)}
+    ${diaryLegend()}
     ${riskLayersBlock(report, screening, now)}
     ${focusPanel(focusPoint, focusPos, focusCtx, now)}
     ${momentsList(points, band, context, focusAt, now)}

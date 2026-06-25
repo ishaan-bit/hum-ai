@@ -125,5 +125,5 @@ export function readNote(opts: {
   // Bridge per-hum vs trend so they don't contradict each other.
   if (opts.trendDirection === "worsening")
     return "Today's hum is within your usual range, though your recent pattern has been running a little heavier.";
-  return "This sits close to the pattern Hum has come to know as yours.";
+  return "";
 }
