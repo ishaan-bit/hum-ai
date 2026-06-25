@@ -19,7 +19,7 @@ Architecture: [`HUM_SIMULATOR.md`](HUM_SIMULATOR.md).
 ## 0. Coordinates
 
 - **Starting commit:** `bb57733` (`docs(stable-build-v8): add STABLE_BUILD_V8.md release spec`), branch `main`.
-- **Final commit:** see §10.
+- **Final commit:** `c825c14` (`fix(hum): calibrate responsive reads and harden simulator validation`), branch `main` (this doc's hash line is finalized in the immediately-following commit).
 - **Scope:** `packages/orchestrator/src/axis-read.ts` (the recalibration), `packages/hum-sim/src/{analysis,report,cli}.ts`
   (the release gate), regression + gate tests, one test-fixture fix in `packages/native-corpus`, and docs. **No**
   change to extraction (`audio-features`), fusion, personalization, the screening head, the web bundle, or the
@@ -170,7 +170,8 @@ pole-reachability / fidelity-fade tests + 3 gate tests (incl. two "the gate has 
 
 ## 10. Final commit
 
-`fix(hum): calibrate responsive reads and harden simulator validation` — hash recorded post-commit
-(see git log on `main`).
+`c825c14` — `fix(hum): calibrate responsive reads and harden simulator validation` (branch `main`).
+The build's code/tests/gate landed in `c825c14`; this hash line is finalized in the immediately
+following docs commit on `main`.
 
 Supersedes [v8](STABLE_BUILD_V8.md). See [`HUM_SIMULATOR_V2_REPORT.md`](HUM_SIMULATOR_V2_REPORT.md).
