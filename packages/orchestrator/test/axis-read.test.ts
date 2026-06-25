@@ -150,6 +150,74 @@ test("an in-domain prior that strongly DISAGREES with the backbone LOWERS confid
   assert.ok(disagreeing.confidence >= 0 && disagreeing.confidence <= 1);
 });
 
+// ── v9 calibration regressions (Hum Simulator–driven) ─────────────────────────────
+// These lock in the v9 fixes for the "center collapse / arousal compressed entirely below 0 /
+// valence positive-biased" findings. Each FAILS against the v8 read math.
+
+test("v9: a MODERATE neutral hum reads ~0 on both axes (arousal zero-point is correctly located)", () => {
+  // The v8 read normalized loudness LINEARLY, so a moderate hum (meanRms ≈ 0.04) read as
+  // near-silent and the whole arousal axis carried a large negative offset — the neutral
+  // reference hum read arousal ≈ −0.33. v9 normalizes loudness perceptually (log), placing a
+  // moderate hum near the cue midpoint. A genuinely neutral hum must now read near the origin.
+  const neutral = acousticAffectAxes(
+    cleanHumFeatures({
+      meanRms: 0.04, medianRms: 0.04, rmsEnergy: 0.04, activeFrameRatio: 0.7,
+      spectralCentroidHz: 1000, pitchMeanHz: 175, spectralFlux: 0.1, pitchRangeSemitones: 2.5,
+      signalToNoiseProxy: 12,
+    }),
+  );
+  assert.ok(Math.abs(neutral.arousal) < 0.2, `neutral arousal should sit near 0, got ${neutral.arousal.toFixed(3)}`);
+  assert.ok(Math.abs(neutral.valence) < 0.2, `neutral valence should sit near 0, got ${neutral.valence.toFixed(3)}`);
+});
+
+test("v9: a genuinely subdued hum REACHES the low valence pole (low pole no longer unreachable)", () => {
+  // v8's valence was dominated (0.58 weight) by a near-constant voice-quality floor (incl. the
+  // near-dead pitchStability), so the most-downbeat hum bottomed at only ≈ −0.14 and the low pole
+  // was out of reach. v9 leads valence with mood-variable prosody, so a low, flat, agitated hum
+  // reads clearly subdued.
+  const subdued = acousticAffectAxes(
+    cleanHumFeatures({
+      meanRms: 0.014, medianRms: 0.014, rmsEnergy: 0.014, activeFrameRatio: 0.5,
+      spectralCentroidHz: 600, pitchMeanHz: 105, spectralFlux: 0.04, pitchRangeSemitones: 1.0,
+      smoothnessScore: 0.45, amplitudeStability: 0.6, pitchStability: 0.62,
+      residualInstabilityScore: 0.45, vibratoRegularity: 0.4, signalToNoiseProxy: 12,
+    }),
+  );
+  assert.ok(subdued.valence < -0.2, `subdued hum should reach the low valence pole, got ${subdued.valence.toFixed(3)}`);
+  assert.ok(subdued.arousal < -0.2, `subdued hum should also read low arousal, got ${subdued.arousal.toFixed(3)}`);
+});
+
+test("v9: a genuinely energetic hum REACHES the high arousal pole (arousal no longer compressed)", () => {
+  const energetic = acousticAffectAxes(
+    cleanHumFeatures({
+      meanRms: 0.12, medianRms: 0.12, rmsEnergy: 0.12, activeFrameRatio: 0.95,
+      spectralCentroidHz: 1900, pitchMeanHz: 235, spectralFlux: 0.2, pitchRangeSemitones: 5.5,
+      signalToNoiseProxy: 14,
+    }),
+  );
+  assert.ok(energetic.arousal > 0.4, `energetic hum should reach the high arousal pole, got ${energetic.arousal.toFixed(3)}`);
+  assert.ok(energetic.valence > 0.2, `bright energetic hum should read positive valence, got ${energetic.valence.toFixed(3)}`);
+});
+
+test("v9: low capture fidelity only FADES the read toward neutral — never past it to the wrong pole", () => {
+  // The v9 fidelity contract: as SNR drops, the WHOLE acoustic read decays monotonically toward
+  // neutral and can never cross to or past a pole. This is what stops recording noise alone from
+  // manufacturing or inverting affect. (Same energetic mood, three capture fidelities.)
+  const mood = {
+    meanRms: 0.12, medianRms: 0.12, rmsEnergy: 0.12, activeFrameRatio: 0.95,
+    spectralCentroidHz: 1900, pitchMeanHz: 235, spectralFlux: 0.2, pitchRangeSemitones: 5.5,
+  } as const;
+  const clean = acousticAffectAxes(cleanHumFeatures({ ...mood, signalToNoiseProxy: 14 }));
+  const mid = acousticAffectAxes(cleanHumFeatures({ ...mood, signalToNoiseProxy: 5 }));
+  const noisy = acousticAffectAxes(cleanHumFeatures({ ...mood, signalToNoiseProxy: 2 }));
+
+  assert.ok(clean.arousal > 0.4, "the clean capture is clearly aroused");
+  // Monotone fade toward neutral: clean ≥ mid ≥ noisy ≥ 0, and never below 0 (no pole crossing).
+  assert.ok(clean.arousal >= mid.arousal - 1e-9 && mid.arousal >= noisy.arousal - 1e-9, `fade should be monotone: ${clean.arousal.toFixed(3)} → ${mid.arousal.toFixed(3)} → ${noisy.arousal.toFixed(3)}`);
+  assert.ok(noisy.arousal >= -1e-9, "a degraded capture never crosses to the opposite (low) pole");
+  assert.ok(Math.abs(noisy.arousal) < Math.abs(clean.arousal), "a degraded capture reads LESS extreme than the clean one");
+});
+
 test("a clear signal alone earns at most Medium; only in-domain trained agreement reaches High", () => {
   const features = cleanHumFeatures();
   const acousticConf = axisReadConfidence(resolveAxisRead(features));

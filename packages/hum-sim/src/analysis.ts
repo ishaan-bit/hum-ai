@@ -490,6 +490,129 @@ export function diagnoseCollapse(
   };
 }
 
+// ── release gate (the hard pass/fail contract) ──────────────────────────────────────
+
+export interface GateCheck {
+  readonly id: string;
+  readonly pass: boolean;
+  readonly detail: string;
+}
+
+export interface ReleaseGate {
+  readonly pass: boolean;
+  readonly checks: readonly GateCheck[];
+}
+
+/**
+ * Gate thresholds — derived from the observed v9 baseline corpus (with margin), NOT arbitrary
+ * aesthetic targets. They encode the implementation's own semantics: the four corner archetypes
+ * must SEPARATE, a neutral hum must sit near the origin, recording fidelity must not manufacture
+ * affect, the extractor must recover every control, and invalid audio must abstain (never become a
+ * confident neutral emotional read). Each is a regression an `axis-read` / DSP change could
+ * re-introduce; the gate fails the build if it does.
+ */
+export const GATE = {
+  /** bright-energised − low-flat arousal separation (observed ≈1.15). */
+  AROUSAL_SEPARATION: 0.6,
+  /** bright-energised − low-flat valence separation (observed ≈0.76). */
+  VALENCE_SEPARATION: 0.4,
+  /** a genuinely energetic corner must reach at least this arousal (high pole reachable; obs ≈0.6). */
+  AROUSAL_HIGH_MIN: 0.35,
+  /** a genuinely subdued corner must reach at most this arousal (low pole reachable; obs ≈−0.55). */
+  AROUSAL_LOW_MAX: -0.3,
+  /** a bright corner must reach at least this valence (obs ≈0.42). */
+  VALENCE_HIGH_MIN: 0.25,
+  /** a downbeat corner must reach at most this valence — the low pole the v8 read could not reach (obs ≈−0.34). */
+  VALENCE_LOW_MAX: -0.2,
+  /**
+   * |neutral read| on each axis — the zero-point must sit near the origin. This is a COARSE
+   * corpus-level guard on the *jittered* steady_neutral archetype (whose controls land ≈0.4, so
+   * it reads a touch subdued, arousal ≈ −0.24); the TRUE zero-point of a genuinely moderate hum
+   * (≈0, locked tightly by the `axis-read` unit regression) is much nearer 0. 0.3 still catches a
+   * gross global offset like the v8 read's −0.33 while tolerating the archetype jitter.
+   */
+  NEUTRAL_ABS_MAX: 0.3,
+} as const;
+
+/** Mean displayed V-A of an archetype group (by archetype id), or null if absent. */
+function archetypeVA(results: readonly SimResult[], archetypeId: string): { v: number; a: number } | null {
+  const rs = results.filter((r) => r.id.startsWith(`archetype/${archetypeId}/`));
+  if (rs.length === 0) return null;
+  return { v: mean(rs.map((r) => r.displayAxis.valence)), a: mean(rs.map((r) => r.displayAxis.arousal)) };
+}
+
+/**
+ * The HARD release gate `npm run hum-sim` enforces. Fails loudly (and the CLI exits non-zero)
+ * when any genuine, previously-fixed defect regresses. Inputs are the real-pipeline outputs —
+ * nothing is widened or fabricated.
+ */
+export function evaluateReleaseGate(args: {
+  readonly archetypes: readonly SimResult[];
+  readonly recovery: readonly RecoveryCheck[];
+  readonly leaks: readonly FidelityLeak[];
+  readonly malformed: ReadonlyArray<{ id: string; threw: boolean; abstained: boolean | null; decision: string | null }>;
+  readonly failures: ReadonlyArray<{ id: string; abstained: boolean; decision: string }>;
+}): ReleaseGate {
+  const checks: GateCheck[] = [];
+  const add = (id: string, pass: boolean, detail: string): void => { checks.push({ id, pass, detail }); };
+
+  const bright = archetypeVA(args.archetypes, "bright_energised");
+  const low = archetypeVA(args.archetypes, "low_flat");
+  const calm = archetypeVA(args.archetypes, "calm_content");
+  const tense = archetypeVA(args.archetypes, "tense_woundup");
+  const neutral = archetypeVA(args.archetypes, "steady_neutral");
+
+  // 1. Fidelity must not MANUFACTURE affect (the core contract).
+  const failingLeaks = args.leaks.filter((l) => l.leaks);
+  add("fidelity-no-manufacture", failingLeaks.length === 0,
+    failingLeaks.length === 0 ? "no fidelity sweep manufactures affect" : `${failingLeaks.length} fidelity sweep(s) manufacture affect: ${failingLeaks.map((l) => l.group).join(", ")}`);
+
+  // 2. The extractor must recover every synthesis control (clean acoustic differences survive).
+  const recovered = args.recovery.filter((r) => r.recovered).length;
+  add("extractor-recovery", recovered === args.recovery.length,
+    `${recovered}/${args.recovery.length} controls recovered` + (recovered === args.recovery.length ? "" : ` — missing: ${args.recovery.filter((r) => !r.recovered).map((r) => r.driver).join(", ")}`));
+
+  // 3. High- and low-energy mood families must SEPARATE on arousal (range reachable + discriminable).
+  if (bright && low) {
+    const sep = bright.a - low.a;
+    add("arousal-separation", sep >= GATE.AROUSAL_SEPARATION, `bright−low arousal = ${sep.toFixed(2)} (need ≥ ${GATE.AROUSAL_SEPARATION})`);
+    add("arousal-high-reachable", bright.a >= GATE.AROUSAL_HIGH_MIN, `energised arousal = ${bright.a.toFixed(2)} (need ≥ ${GATE.AROUSAL_HIGH_MIN})`);
+    add("arousal-low-reachable", low.a <= GATE.AROUSAL_LOW_MAX, `low-flat arousal = ${low.a.toFixed(2)} (need ≤ ${GATE.AROUSAL_LOW_MAX})`);
+  } else add("arousal-separation", false, "missing bright_energised / low_flat archetypes");
+
+  // 4. Positive- and negative-valence mood families must SEPARATE (the low pole the v8 read missed).
+  if (bright && low) {
+    const sep = bright.v - low.v;
+    add("valence-separation", sep >= GATE.VALENCE_SEPARATION, `bright−low valence = ${sep.toFixed(2)} (need ≥ ${GATE.VALENCE_SEPARATION})`);
+    add("valence-high-reachable", bright.v >= GATE.VALENCE_HIGH_MIN, `bright valence = ${bright.v.toFixed(2)} (need ≥ ${GATE.VALENCE_HIGH_MIN})`);
+    add("valence-low-reachable", low.v <= GATE.VALENCE_LOW_MAX, `low-flat valence = ${low.v.toFixed(2)} (need ≤ ${GATE.VALENCE_LOW_MAX})`);
+  } else add("valence-separation", false, "missing bright_energised / low_flat archetypes");
+
+  // 5. The arousal/valence ZERO-POINT must sit near the origin for a neutral hum (no global offset).
+  if (neutral) {
+    add("neutral-zero-point", Math.abs(neutral.a) <= GATE.NEUTRAL_ABS_MAX && Math.abs(neutral.v) <= GATE.NEUTRAL_ABS_MAX,
+      `neutral read = (${neutral.v.toFixed(2)}, ${neutral.a.toFixed(2)}) (|each| ≤ ${GATE.NEUTRAL_ABS_MAX})`);
+  } else add("neutral-zero-point", false, "missing steady_neutral archetype");
+
+  // 6. Invalid / malformed audio must NEVER become a confident neutral emotional read.
+  const badMalformed = args.malformed.filter((m) => !m.threw && m.abstained !== true);
+  add("malformed-abstains", badMalformed.length === 0,
+    badMalformed.length === 0 ? "all malformed audio throws or abstains" : `${badMalformed.length} malformed case(s) produced a non-abstained read: ${badMalformed.map((m) => m.id).join(", ")}`);
+  // Near-silent / too-faint degenerate hums must abstain or be rejected, not read as emotion.
+  const silentLeak = args.failures.filter((f) => /near_silent|too_faint/.test(f.id) && !f.abstained && f.decision !== "rejected");
+  add("near-silent-abstains", silentLeak.length === 0,
+    silentLeak.length === 0 ? "near-silent hums abstain/reject" : `${silentLeak.map((f) => f.id).join(", ")} produced an emotional read`);
+
+  // 7. Tense (high-A, low-V) and calm (low-A, high-V) must be ordered correctly vs each other
+  //    (the diagonal must not collapse — a coarse internal-coherence check).
+  if (tense && calm) {
+    add("diagonal-ordering", tense.a > calm.a && calm.v > tense.v,
+      `tense(${tense.v.toFixed(2)},${tense.a.toFixed(2)}) vs calm(${calm.v.toFixed(2)},${calm.a.toFixed(2)}): arousal & valence must order`);
+  }
+
+  return { pass: checks.every((c) => c.pass), checks };
+}
+
 /** Convenience: split a sweep-suite into per-driver groups and compute sensitivities. */
 export function sweepSensitivities(sweepResults: readonly SimResult[]): DriverSensitivity[] {
   const byDriver = new Map<string, SimResult[]>();

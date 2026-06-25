@@ -18,6 +18,7 @@ import {
 import { runBatch, type SimResult } from "./pipeline";
 import {
   diagnoseCollapse,
+  evaluateReleaseGate,
   extractorFidelity,
   featureVariance,
   fidelityLeaks,
@@ -29,6 +30,7 @@ import {
   type FeatureVariance,
   type FidelityLeak,
   type RecoveryCheck,
+  type ReleaseGate,
 } from "./analysis";
 import {
   distinctAcousticZones,
@@ -83,6 +85,7 @@ export interface AnalysisArtifact {
     readonly totalHums: number;
     readonly totalTimingMs: number;
   };
+  readonly gate: ReleaseGate;
   readonly diagnosis: CollapseDiagnosis;
   readonly extractorFidelity: readonly RecoveryCheck[];
   readonly featureVariance: readonly FeatureVariance[];
@@ -142,6 +145,13 @@ export async function analyze(opts: AnalyzeOptions = {}): Promise<AnalysisArtifa
   const diagnosis = diagnoseCollapse(broad, sensitivities, leaks);
   const recovery = extractorFidelity(sensitivities);
   const fv = featureVariance(broad);
+  const gate = evaluateReleaseGate({
+    archetypes: archetypeResults,
+    recovery,
+    leaks,
+    malformed: malformed.map((m) => ({ id: m.id, threw: m.threw, abstained: m.abstained, decision: m.decision })),
+    failures: failureResults.map((r) => ({ id: r.id, abstained: r.userFacing.abstained, decision: r.quality.decision })),
+  });
 
   let longitudinal: LongitudinalSummary | null = null;
   if (!opts.skipLongitudinal) {
@@ -192,6 +202,7 @@ export async function analyze(opts: AnalyzeOptions = {}): Promise<AnalysisArtifa
       totalHums,
       totalTimingMs: Date.now() - t0,
     },
+    gate,
     diagnosis,
     extractorFidelity: recovery,
     featureVariance: fv,
@@ -214,6 +225,15 @@ export function renderMarkdown(a: AnalysisArtifact): string {
   L.push(`# Hum Simulator — Pipeline Validation Report`);
   L.push("");
   L.push(`_Mechanistic pipeline validation, NOT clinical evidence. Model \`${a.meta.modelVersion}\`. ${a.meta.totalHums} synthesized hums through the exact \`computeFeatures → orchestrateHumRead\` path in ${(a.meta.totalTimingMs / 1000).toFixed(1)}s._`);
+  L.push("");
+
+  L.push(`## 0. Release gate — ${a.gate.pass ? "✅ PASS" : "❌ FAIL"}`);
+  L.push("");
+  L.push(`Hard pass/fail contract (\`npm run hum-sim\` exits non-zero on any ❌). Thresholds derive from the observed baseline + implementation semantics, not aesthetic targets.`);
+  L.push("");
+  L.push(`| Check | Status | Detail |`);
+  L.push(`|---|:--:|---|`);
+  for (const c of a.gate.checks) L.push(`| ${c.id} | ${c.pass ? "✅" : "❌"} | ${c.detail} |`);
   L.push("");
 
   L.push(`## 1. Center-collapse diagnosis`);

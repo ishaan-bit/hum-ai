@@ -6,8 +6,9 @@ import { runHum, makeLatent, type LatentHumProfile } from "@hum-ai/hum-sim";
  * REGRESSION GUARDS for the fidelity→affect leak the Hum Simulator found and the
  * axis-read fix closed: broadband recording noise must NOT manufacture or invert the
  * affect read. It may only fade the read toward neutral (honest low-confidence
- * down-weighting). These pin the SNR-fade + noise-floor energy de-noising in
- * `orchestrator/src/axis-read.ts` so a future change that re-opens the leak is caught.
+ * down-weighting). These pin the v9 fidelity contract in `orchestrator/src/axis-read.ts` —
+ * the whole acoustic read is blended toward neutral in proportion to capture fidelity
+ * (`0.5 + fidelity·(raw − 0.5)`) — so a future change that re-opens the leak is caught.
  */
 const fast = (over: Partial<LatentHumProfile>): LatentHumProfile =>
   makeLatent({ durationSec: 8, sampleRate: 16000, ...over });

@@ -96,16 +96,21 @@ async function main(): Promise<void> {
     writeFileSync(jsonPath, JSON.stringify(artifact, null, 2), "utf8");
     console.error(`\n[hum-sim] wrote artifact → ${jsonPath}`);
   }
-  // Gate on the genuine CONTRACT REGRESSION (fidelity manufacturing affect), not on the
-  // informational compression observations (which are conservative-by-design, reported for
-  // context). A failing fidelity leak means the noise→affect decoupling has regressed.
-  const leaks = artifact.diagnosis.failingFidelityLeaks.length;
+  // RELEASE GATE: fail the build on any hard regression (fidelity manufacturing affect, the
+  // extractor losing a control, the corner moods failing to separate / reach their poles, the
+  // zero-point drifting off origin, or invalid audio producing a confident emotional read). The
+  // compression VERDICTS (§1) are conservative-by-design observations, reported for context but
+  // NOT gated — widening a score to clear them is exactly what this build refuses to do.
   if (artifact.diagnosis.verdicts.length > 0) {
-    console.error(`\n[hum-sim] ${artifact.diagnosis.verdicts.length} diagnostic observation(s) (see report §1).`);
+    console.error(`\n[hum-sim] ${artifact.diagnosis.verdicts.length} diagnostic observation(s) (see report §1) — informational, not gated.`);
   }
-  if (leaks > 0) {
-    console.error(`[hum-sim] REGRESSION: ${leaks} fidelity→affect leak(s) — fidelity must not manufacture affect.`);
+  if (!artifact.gate.pass) {
+    const failed = artifact.gate.checks.filter((c) => !c.pass);
+    console.error(`\n[hum-sim] RELEASE GATE FAILED — ${failed.length} check(s):`);
+    for (const c of failed) console.error(`  ❌ ${c.id}: ${c.detail}`);
     process.exitCode = 1;
+  } else {
+    console.error(`\n[hum-sim] release gate: ✅ PASS (${artifact.gate.checks.length} checks).`);
   }
 }
 

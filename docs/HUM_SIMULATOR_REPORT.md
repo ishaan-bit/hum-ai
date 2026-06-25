@@ -1,5 +1,12 @@
 # Hum Simulator — Validation Report (first run)
 
+> **Superseded for the read math by v9.** This is the v8 first-run report (the fidelity→**arousal**
+> leak). The v9 corrective calibration — which fixed the remaining arousal zero-point offset, the
+> unreachable valence low pole, and replaced the per-cue fidelity fade with a single whole-read
+> blend toward neutral — is documented in [`HUM_SIMULATOR_V2_REPORT.md`](./HUM_SIMULATOR_V2_REPORT.md)
+> and [`STABLE_BUILD_V9.md`](./STABLE_BUILD_V9.md). Where this report describes the v8 `axis-read.ts`
+> mechanism (noise-floor power subtraction + per-cue SNR fade), v9 has since replaced it.
+
 **What this is.** A mechanistic, end-to-end validation of the hum-analysis pipeline using
 synthesized hum **waveforms** run through the **exact production path**
 (`computeFeatures → orchestrateHumRead`). It quantifies where output variation lives and

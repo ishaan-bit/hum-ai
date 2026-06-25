@@ -114,7 +114,12 @@ Descriptive statistics over the real pipeline's outputs (nothing widened or fabr
 - **zone histogram** + **V-A reachability** by stage (acoustic backbone → displayed →
   internal fusion);
 - **fidelity → affect leak** (drift of the affect read across a fixed-mood fidelity sweep);
-- **center-collapse diagnosis** — the synthesis, with human-readable verdicts.
+- **center-collapse diagnosis** — the synthesis, with human-readable verdicts;
+- **release gate** (`evaluateReleaseGate`, v9) — the hard pass/fail contract: the four mood
+  corners must separate + reach their poles, a neutral hum must sit at the origin, fidelity must
+  not manufacture affect, the extractor must recover every control, and invalid/near-silent audio
+  must abstain. Thresholds (`GATE`) derive from the observed baseline + implementation semantics,
+  not aesthetic targets. `npm run hum-sim` **exits non-zero** if any check fails.
 
 ### Report layer ([`report.ts`](../packages/hum-sim/src/report.ts))
 
@@ -126,7 +131,7 @@ Descriptive statistics over the real pipeline's outputs (nothing widened or fabr
 ## 3. Usage
 
 ```bash
-# Full center-collapse report (markdown to stdout; non-zero exit if collapse verdicts fire)
+# Full report + RELEASE GATE (markdown to stdout; non-zero exit if any gate check fails — v9)
 npm run hum-sim                       # = cli.ts report
 node --import tsx packages/hum-sim/src/cli.ts report --json out.json
 
@@ -188,5 +193,7 @@ product's "derived only, raw audio ephemeral" posture).
   change to `axis-read.ts`, the fusion anchors, or the DSP params.
 - This is **not** a clinical or accuracy benchmark. See the validation-scope note at the top.
 
-See [`HUM_SIMULATOR_REPORT.md`](./HUM_SIMULATOR_REPORT.md) for the findings, defects fixed,
-and before/after evidence from the first run.
+See [`HUM_SIMULATOR_REPORT.md`](./HUM_SIMULATOR_REPORT.md) for the first-run findings (v8, the
+fidelity→arousal leak), and [`HUM_SIMULATOR_V2_REPORT.md`](./HUM_SIMULATOR_V2_REPORT.md) for the
+v9 corrective calibration (arousal zero-point, valence low pole, the whole-read fidelity contract)
+and the release gate.
