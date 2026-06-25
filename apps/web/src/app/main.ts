@@ -936,7 +936,14 @@ async function runMic(): Promise<void> {
   } catch (err) {
     orb?.setMode("resting");
     setHumPhase("ready");
-    setCaptureStatus(`Mic unavailable (${(err as Error).message}). Open the tray to simulate a hum.`);
+    const msg = (err as Error).message;
+    // An interruption / too-short / no-audio outcome is part of the ritual, not a broken mic —
+    // surface the kind retry line as-is; only true mic-setup failures point to the simulate path.
+    if (/interrupted|too short|no audio/i.test(msg)) {
+      setCaptureStatus(msg.charAt(0).toUpperCase() + msg.slice(1));
+    } else {
+      setCaptureStatus(`Mic unavailable (${msg}). Open the tray to simulate a hum.`);
+    }
   } finally {
     orb?.pushLevel(null);
     setBusy(false);

@@ -712,6 +712,7 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
   width: 100%;
   accent-color: var(--state-accent);
   height: 28px;
+  touch-action: pan-y; /* vertical page-scroll passes through; horizontal drag moves the thumb */
 }
 .fb-thanks { margin: 0; color: #8fd6a4; font-size: 0.95rem; }
 .disclaimer {
@@ -1463,6 +1464,13 @@ h3 .ic,
   cursor: crosshair;
   border-radius: 18px;
   outline: none;
+  /* Let a vertical page-scroll that begins on the field pass straight through to the browser;
+     the JS claims only intentional HORIZONTAL drags + taps + handle grabs (see renderMoodAdjust).
+     This is what stops an accidental scroll from moving the dot (and minting false HiTL feedback). */
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .mood-map:focus-visible { box-shadow: 0 0 0 2px var(--state-accent-2); }
 .mood-map-grid { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -1509,6 +1517,7 @@ h3 .ic,
 .mood-range {
   -webkit-appearance: none; appearance: none; width: 100%; height: 12px; border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.07); cursor: pointer;
+  touch-action: pan-y; /* vertical page-scroll passes through; horizontal drag moves the thumb */
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--state-accent-deep) 82%, #0b0c10),
@@ -1952,7 +1961,9 @@ h3 .ic,
   width: 100%; box-sizing: border-box;
   background: rgba(255, 255, 255, 0.04); border: 1px solid var(--glass-line);
   border-radius: 10px; padding: 0.5rem 0.65rem; color: var(--ink);
-  font: inherit; font-size: 0.88rem;
+  font-family: inherit;
+  /* 16px keeps iOS Safari from auto-zooming the viewport when this field takes focus. */
+  font-size: 16px;
 }
 .diary-note input::placeholder { color: var(--ink-mute); }
 .diary-note input:focus-visible { outline: 2px solid color-mix(in srgb, var(--state-accent) 60%, transparent); outline-offset: 1px; }
@@ -2063,6 +2074,7 @@ h3 .ic,
 .trait-range {
   -webkit-appearance: none; appearance: none; width: 100%; height: 9px; border-radius: 999px; cursor: pointer;
   border: 1px solid rgba(255, 255, 255, 0.06);
+  touch-action: pan-y; /* vertical page-scroll passes through; horizontal drag moves the thumb */
   background: linear-gradient(90deg,
     color-mix(in srgb, var(--state-accent) 9%, rgba(255, 255, 255, 0.06)),
     color-mix(in srgb, var(--state-accent) 27%, rgba(255, 255, 255, 0.04)));

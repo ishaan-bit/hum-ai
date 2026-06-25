@@ -182,6 +182,18 @@ export async function recordHum(opts: RecordOptions = {}): Promise<AudioInput> {
   // Live meter: tap the same stream with an AnalyserNode (does not affect the recording).
   let meterCtx: AudioContext | null = null;
   let meterTimer: ReturnType<typeof setInterval> | null = null;
+  // Interruption guard: backgrounding (app switch, screen lock) or an incoming call freezes the
+  // page and cuts the mic mid-record on iOS — the resulting buffer is truncated/silent and would
+  // be read as a confusing "didn't catch a hum". Flag it so we fail with a clear, kind retry
+  // message instead. `mute`/`ended` on the live track catches a mid-stream device loss too.
+  let interrupted = false;
+  const markInterrupted = (): void => {
+    if (typeof document === "undefined" || document.visibilityState === "hidden") interrupted = true;
+  };
+  const track0 = stream.getAudioTracks()[0];
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", markInterrupted);
+  if (typeof window !== "undefined") window.addEventListener("pagehide", markInterrupted);
+  track0?.addEventListener("ended", () => { interrupted = true; });
   try {
     try {
       meterCtx = new AudioContext();
@@ -231,18 +243,31 @@ export async function recordHum(opts: RecordOptions = {}): Promise<AudioInput> {
     recorder.stop();
     await stopped;
 
+    // The page was backgrounded / the call interrupted us mid-record → the buffer is unreliable.
+    if (interrupted) {
+      throw new Error("recording interrupted — the app left the foreground. Tap Hum to try again.");
+    }
     const blob = new Blob(chunks, { type: chunks[0]?.type ?? "audio/webm" });
+    if (blob.size === 0) {
+      throw new Error("no audio was captured. Check the mic is allowed, then tap Hum to try again.");
+    }
     const arrayBuffer = await blob.arrayBuffer();
     const audioCtx = new AudioContext();
     try {
       const decoded = await audioCtx.decodeAudioData(arrayBuffer);
       // Copy channel 0 out so we don't retain the decoded buffer.
       const samples = Float32Array.from(decoded.getChannelData(0));
+      // A usable read needs a couple of seconds of signal; anything shorter is an interruption.
+      if (samples.length < decoded.sampleRate * 2) {
+        throw new Error("that recording was too short to read. Tap Hum and hold the note a few seconds.");
+      }
       return { sampleRate: decoded.sampleRate, samples };
     } finally {
-      await audioCtx.close();
+      await audioCtx.close().catch(() => {});
     }
   } finally {
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", markInterrupted);
+    if (typeof window !== "undefined") window.removeEventListener("pagehide", markInterrupted);
     if (meterTimer) clearInterval(meterTimer);
     if (meterCtx) await meterCtx.close().catch(() => {});
     for (const track of stream.getTracks()) track.stop();

@@ -278,9 +278,9 @@ function moodField(vRes: AxisResolution, aRes: AxisResolution): string {
       <div class="mood-poles"><span>${esc(leftPole)}</span><span>${esc(rightPole)}</span></div>
     </div>`;
   return `
-    <div class="mood-field mood-${band}" data-pv="${v.toFixed(3)}" data-pa="${a.toFixed(3)}" data-v="${v.toFixed(3)}" data-a="${a.toFixed(3)}">
+    <div class="mood-field mood-${band}" data-no-swipe data-pv="${v.toFixed(3)}" data-pa="${a.toFixed(3)}" data-v="${v.toFixed(3)}" data-a="${a.toFixed(3)}">
       <div class="mood-map-wrap">
-        <div class="mood-map" id="mood-map" role="application" aria-label="${esc(aria)}" tabindex="0" style="touch-action:none">
+        <div class="mood-map" id="mood-map" role="application" aria-label="${esc(aria)}" tabindex="0">
           <svg class="mood-map-grid" viewBox="0 0 100 100" aria-hidden="true" preserveAspectRatio="none">
             <defs><radialGradient id="mf-glow" cx="50%" cy="50%" r="60%"><stop offset="0%" class="mf-core"/><stop offset="100%" class="mf-edge"/></radialGradient></defs>
             <rect x="1" y="1" width="98" height="98" rx="16" class="mf-bg"/>
@@ -356,18 +356,84 @@ export function renderMoodAdjust(read: OrchestratedRead, onSubmit: (report: HumS
   sv.addEventListener("input", () => apply(Number(sv.value) / 100, Number(sa.value) / 100, "slider"));
   sa.addEventListener("input", () => apply(Number(sv.value) / 100, Number(sa.value) / 100, "slider"));
 
-  // Pointer drag / tap on the map → set the dot (high arousal at the top).
-  let dragging = false;
+  // ── Axis-locked pointer model on the 2-D field ──────────────────────────────────────────────
+  // The mood field is ALSO the HiTL training signal, so an accidental drag would mint false
+  // feedback. A normal vertical page-scroll that happens to begin on the field must therefore
+  // NEVER move the dot. Three intentional ways DO move it: (1) grab the dot handle → free 2-D
+  // drag (incl. vertical = energy); (2) an intentional horizontal drag on the field → claim and
+  // follow; (3) a tap → place the dot there. A vertical drag on the field is released completely
+  // to native scrolling (the map's CSS is `touch-action: pan-y`, so the browser scrolls it for
+  // us and fires pointercancel). Keyboard arrows nudge it for the focus / assistive path.
+  const SLOP = 10; // px of travel before we commit to an axis (matches the stage-swipe slop feel)
+  let active = false; // we own the gesture (pointer captured) — handle grab or claimed h-drag
+  let committed = false; // we've actually started writing values (only after real drag movement)
+  let tracking = false; // a touch is down on the field BACKGROUND, intent not yet decided
+  let onHandle = false; // the gesture began on the dot itself
+  let sx = 0;
+  let sy = 0;
   const fromPointer = (e: PointerEvent): void => {
     const r = map.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width;
-    const y = (e.clientY - r.top) / r.height;
-    apply(x * 2 - 1, 1 - y * 2, "drag");
+    if (r.width === 0 || r.height === 0) return;
+    const x = ((e.clientX - r.left) / r.width) * 2 - 1;
+    const y = 1 - ((e.clientY - r.top) / r.height) * 2;
+    apply(x, y, "drag");
   };
-  const onMove = (e: PointerEvent): void => { if (dragging) { e.preventDefault(); fromPointer(e); } };
-  map.addEventListener("pointerdown", (e) => { dragging = true; map.setPointerCapture(e.pointerId); fromPointer(e); });
-  map.addEventListener("pointermove", onMove);
-  map.addEventListener("pointerup", (e) => { dragging = false; try { map.releasePointerCapture(e.pointerId); } catch { /* ignore */ } });
+  const claim = (e: PointerEvent): void => {
+    active = true;
+    tracking = false;
+    try { map.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+  map.addEventListener("pointerdown", (e) => {
+    sx = e.clientX;
+    sy = e.clientY;
+    committed = false;
+    onHandle = !!(e.target as HTMLElement)?.closest?.("#mood-dot");
+    if (onHandle) {
+      // Explicit handle grab — own the gesture now (so a scroll can't steal it), but DON'T move
+      // the value yet: a tap or jitter on the dot must not nudge it; only a real drag does.
+      claim(e);
+    } else {
+      // Field background — wait to see horizontal vs vertical intent before committing.
+      tracking = true;
+      active = false;
+    }
+  });
+  map.addEventListener("pointermove", (e) => {
+    if (active) {
+      e.preventDefault();
+      // Don't write until the press has actually become a drag (kills accidental handle nudges).
+      if (!committed && Math.hypot(e.clientX - sx, e.clientY - sy) < SLOP) return;
+      committed = true;
+      fromPointer(e);
+      return;
+    }
+    if (!tracking) return;
+    const dx = e.clientX - sx;
+    const dy = e.clientY - sy;
+    if (Math.hypot(dx, dy) < SLOP) return; // below the slop → intent still undecided
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      // Horizontal intent → claim the gesture and follow the pointer (2-D from here).
+      claim(e);
+      committed = true;
+      e.preventDefault();
+      fromPointer(e);
+    } else {
+      // Vertical intent → let go entirely; the page scrolls and the dot stays put.
+      tracking = false;
+    }
+  });
+  const endPointer = (e: PointerEvent): void => {
+    // A press that never became a drag is an intentional TAP → place the dot there. This holds for
+    // the field background (tracking) but NOT the dot handle (a tap on the handle leaves it put).
+    if (!committed && !onHandle && Math.hypot(e.clientX - sx, e.clientY - sy) < SLOP) fromPointer(e);
+    if (active) { try { map.releasePointerCapture(e.pointerId); } catch { /* ignore */ } }
+    active = false;
+    committed = false;
+    tracking = false;
+    onHandle = false;
+  };
+  map.addEventListener("pointerup", endPointer);
+  map.addEventListener("pointercancel", () => { active = false; committed = false; tracking = false; onHandle = false; });
   // Keyboard nudge for the focused map (accessible alternative to drag).
   map.addEventListener("keydown", (e) => {
     const v = Number(field.dataset.v ?? 0), a = Number(field.dataset.a ?? 0);

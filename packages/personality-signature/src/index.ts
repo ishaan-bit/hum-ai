@@ -64,8 +64,15 @@ export const BIG_FIVE_KEYS: readonly BigFiveKey[] = [
  */
 export const PRIMARY_KEYS: readonly BigFiveKey[] = ["openness", "conscientiousness"];
 
-/** Maturity gates: a signature forms quietly, then firms up — but never beyond "tentative". */
-export const EMERGING_HUMS = 5; // below this: "forming" (abstain from a primary read)
+/**
+ * Maturity gates: the signature is AVAILABLE from the user's first completed (eligible) hum — the
+ * Big Five surface appears as an adjustable, exploratory first impression they can shape, and the
+ * acoustic suggestion behind it firms up across hums (emerging → tentative). It never claims more
+ * than "tentative". Before any eligible hum (count 0) there is nothing to read, so it stays
+ * "forming" (a gentle "it forms as you hum" invitation). V10: this gate was 5 — which hid the
+ * assessment for a new user's first few hums; the product calls for it from hum #1.
+ */
+export const EMERGING_HUMS = 1; // below this (i.e. 0 hums): "forming" (no read yet — nothing to assess)
 export const TENTATIVE_HUMS = 12; // at/above this: the steadiest read we'll offer
 
 export type SignatureStatus = "forming" | "emerging" | "tentative";
@@ -420,10 +427,13 @@ export function assessPersonalitySignature(
   const conscDef = TRAITS.find((d) => d.key === "conscientiousness")!;
   const tentativeWord = status === "tentative" ? "tentative" : "early, still-forming";
   const article = status === "tentative" ? "A" : "An"; // "A tentative" vs "An early, still-forming"
+  // Available from the first hum — name how little it rests on yet so it reads as a first
+  // impression to shape, not a verdict ("your first hum" → "your hums so far" → just "your hums").
+  const humPhrase = humCount <= 1 ? "your first hum" : humCount < TENTATIVE_HUMS ? "your hums so far" : "your hums";
   const bothBalanced = open.lean === "balanced" && consc.lean === "balanced";
   const headline = bothBalanced
-    ? `${article} ${tentativeWord} read on the Big Five (OCEAN): your openness and conscientiousness sit fairly balanced so far. Exploratory only, a mirror of your voice, not a personality test.`
-    : `${article} ${tentativeWord} read on the Big Five (OCEAN). In your hums, ${leanClause("openness", open, openDef)}, and ${leanClause("conscientiousness", consc, conscDef)}. Exploratory only, a mirror of your voice, not a personality test.`;
+    ? `${article} ${tentativeWord} read on the Big Five (OCEAN): your openness and conscientiousness sit fairly balanced in ${humPhrase}. Exploratory only, a mirror of your voice, not a personality test.`
+    : `${article} ${tentativeWord} read on the Big Five (OCEAN). In ${humPhrase}, ${leanClause("openness", open, openDef)}, and ${leanClause("conscientiousness", consc, conscDef)}. Exploratory only, a mirror of your voice, not a personality test.`;
 
   return {
     status,

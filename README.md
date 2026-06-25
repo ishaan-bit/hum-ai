@@ -106,21 +106,21 @@ The 10 required test areas and where each is covered:
 
 ## Documentation index
 
-- **Stable Build v2 — full end-to-end spec:** [docs/STABLE_BUILD_V2.md](docs/STABLE_BUILD_V2.md)
+- **Stable Build v10 — latest release spec (phone-native interaction + Big Five from hum #1):** [docs/STABLE_BUILD_V10.md](docs/STABLE_BUILD_V10.md) · earlier specs: [v9](docs/STABLE_BUILD_V9.md) … [v2](docs/STABLE_BUILD_V2.md)
 - **Architecture & tech spec (latest):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · **All-layers revamp plan:** [docs/REVAMP_PLAN.md](docs/REVAMP_PLAN.md)
 - Source manifest & provenance: [docs/source/INDEX.md](docs/source/INDEX.md) (source binaries are local-only — see [docs/source/README.md](docs/source/README.md))
 - Architecture: [docs/architecture/](docs/architecture/) (pipeline, fusion, personalization, relapse, [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md))
 - Claims ladder & non-claims: [docs/claims/CLAIMS_LADDER.md](docs/claims/CLAIMS_LADDER.md)
 - Validation & evaluation protocol: [docs/validation/](docs/validation/), [research/evaluation/](research/evaluation/README.md)
 - Privacy & data governance: [docs/privacy/DATA_GOVERNANCE.md](docs/privacy/DATA_GOVERNANCE.md), [public-repo privacy checklist](docs/privacy/PUBLIC_REPO_PRIVACY_CHECKLIST.md)
-- Decision records: [docs/adr/](docs/adr/) — naming (0000), spine (0001), audio (0002), personalization/relapse (0003), confidence (0004), datasets-as-priors (0005), **two-head separation (0006)**, **dual baseline (0007)**, **user-facing confidence (0008)**, **voice-first/camera-later (0009)**, **model-led axis read from hum #1 (0010)**
+- Decision records: [docs/adr/](docs/adr/) — naming (0000), spine (0001), audio (0002), personalization/relapse (0003), confidence (0004), datasets-as-priors (0005), **two-head separation (0006)**, **dual baseline (0007)**, **user-facing confidence (0008)**, **voice-first/camera-later (0009)**, **model-led axis read from hum #1 (0010)**, **HiTL native-hum retraining loop (0011)**, **cross-user population corpus loop (0012)**
 - DevOps & deployment: [docs/devops/](docs/devops/) (GitHub bootstrap, branch protection, Vercel setup, deployment, environment variables)
 - Research scaffolds & model cards: [research/README.md](research/README.md), [research/model-cards/](research/model-cards/)
 
 ## Next steps
 
 1. Replace heuristic experts with trained SER/embedding models; register every dataset in `dataset-registry` before use [ser_mental_health_review].
-2. **In progress — the native-hum loop ships ([ADR-0011](docs/adr/0011-hitl-native-hum-retraining-loop.md)).** A human-in-the-loop now grows the `native_hum` corpus on-device and retrains a hum-native axis model that beats the acoustic backbone before it steers the read. Next: pool the (consented, derived-only) corpus into a governed backend, raise the promotion gate toward the rigorous 0.80 / p<.01 / ECE bar as `n` grows, and fit/calibrate the `LogisticRegressionMetaLearner` on the accumulated hum data.
+2. **In progress — the native-hum loop ships ([ADR-0011](docs/adr/0011-hitl-native-hum-retraining-loop.md)), and the cross-user pooling pathway exists, gated ([ADR-0012](docs/adr/0012-cross-user-population-corpus-loop.md)).** A human-in-the-loop grows the `native_hum` corpus on-device and retrains a hum-native axis model that beats the acoustic backbone before it steers the read. The `@hum-ai/population-corpus` package implements the consented, derived-only, group-by-contributor-CV pooling into a community baseline + OCEAN norms, selected per-axis above the far-domain prior — but live cross-user write is **default-OFF** behind a distinct `population_corpus_contribution` consent, pending the contributing-UI toggle + IRB. Next: ship that toggle under governance, raise the promotion gate toward the rigorous 0.80 / p<.01 / ECE bar as `n` grows, and fit/calibrate the `LogisticRegressionMetaLearner` on the accumulated hum data.
 3. Stand up within-user DVDSA-style longitudinal evaluation for the relapse engine [longitudinal_voice_treatment_response_source].
 4. Ground intervention suggestions in the music-stress evidence base as **support, not diagnosis** [intervention_support_source].
 5. **Done — the browser capture surface ships.** `apps/web` is a deployed local-first SPA: `getUserMedia({ audio })` (no camera) feeds the full client-side spine — Stage ① acceptance gate → axis read → personalization → longitudinal — with the classical JSON priors served from `apps/web/public/models/` (ADR-0006/0007/0008/0009/0010). Next: port the mel-CNN to a browser-runnable form (mel filterbank + conv1d) or stand up a hum-native dataset so a genuinely model-led read can be served, not just refined.

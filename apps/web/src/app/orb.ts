@@ -198,8 +198,14 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
     const cy = place.y * h;
     // Cap so the orb stays a focused presence on big/desktop screens (not a wall of glow).
     const baseR = Math.min(Math.min(w, h) * 0.27, 210) * place.size;
-    // Level inflates the orb during capture; the satisfied pulse adds a brief swell.
-    const inflate = capturing ? 1 + level * 0.5 : 1;
+    // Presence — how strongly we're actually hearing a hum right now, from the live telemetry
+    // (eased voicing + level), 0..1. It makes the capture orb legibly different across the states
+    // that matter: it CONTRACTS + dims toward a small, quiet "listening" pose when it hears little
+    // (silence / too-quiet), and BLOOMS as your hum carries (active → about to land). No invented
+    // signal — just the mic level + voicing the meter already reports.
+    const presence = capturing ? clamp(voiced * 0.68 + level * 0.55, 0, 1) : 1;
+    // Level/presence inflates the orb during capture; the satisfied pulse adds a brief swell.
+    const inflate = capturing ? lerp(0.84, 1.5, presence) : 1;
     const r = baseR * breath * inflate * (1 + pulseT * 0.12);
 
     ctx.clearRect(0, 0, w, h);
@@ -268,7 +274,8 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
   function drawCore(c: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
     const g = c.createRadialGradient(cx, cy - r * 0.18, r * 0.05, cx, cy, r);
     const coreA = lerp(0.5, 0.96, cur.evidence);
-    const fill = capturing ? lerp(0.35, 0.96, voiced) : 1;
+    // Core brightness tracks presence during capture (dim while waiting, full as the hum carries).
+    const fill = capturing ? lerp(0.3, 0.96, clamp(voiced * 0.68 + level * 0.55, 0, 1)) : 1;
     g.addColorStop(0, hsl(cur, 40, coreA * fill));
     g.addColorStop(0.55, hsl(cur, 14, coreA * fill * 0.92));
     g.addColorStop(0.9, hsl(cur, -2, coreA * fill * 0.5));
