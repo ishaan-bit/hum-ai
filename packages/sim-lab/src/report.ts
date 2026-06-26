@@ -15,6 +15,7 @@ import {
   CROSS_VOICE_AROUSAL_MAX,
 } from "./scenarios";
 import { runHybridLayers } from "./hybrid";
+import { computeTemporalFindings, temporalScenarioReport } from "./temporal-scenario";
 
 /** A calibration finding the harness surfaces (consumed by the report + the regression test). */
 export interface Finding {
@@ -215,6 +216,10 @@ export function computeScenarioFindings(): Finding[] {
     findings.push({ severity: "fail", area: "hybrid", message: `gate-failed prior must be held (read should equal the acoustic backbone), got ${hy.gateFailed.refined.toFixed(3)} vs ${hy.gateFailed.acoustic.toFixed(3)}.` });
   }
 
+  // v12 WITHIN-HUM TEMPORAL: chunk-to-chunk variation → trajectory shape, incl. the
+  // not-skewed contract (identical chunks must read steady, never a manufactured arc).
+  findings.push(...computeTemporalFindings());
+
   return findings;
 }
 
@@ -291,6 +296,8 @@ export function scenarioReport(): string {
     lines.push(`| ${c.label} | ${c.acoustic.toFixed(2)} | ${c.priorValue.toFixed(2)} | ${c.refined.toFixed(2)} | ${c.moved ? "✅" : "—"} | ${c.bounded ? "✅" : "—"} | ${c.unchanged ? "✅" : "—"} |`);
   }
   lines.push("");
+
+  lines.push(temporalScenarioReport());
 
   return lines.join("\n");
 }

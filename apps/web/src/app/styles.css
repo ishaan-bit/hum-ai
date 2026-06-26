@@ -514,6 +514,7 @@ body {
 /* ── glass cards used by render output ────────────────────────────────────── */
 .read-card,
 .axes-card,
+.within-hum-card,
 .feedback-card,
 .intervention-card,
 .intervention-feedback {
@@ -528,6 +529,79 @@ body {
 .axes-card {
   margin-top: 0.7rem;
 }
+
+/* ── v12 · within-hum trajectory card ─────────────────────────────────────── */
+.within-hum-card { margin-top: 0.7rem; }
+.wh-headline {
+  margin: 0.1rem 0 0.75rem;
+  font-size: 0.96rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.wh-shape {
+  display: inline-block;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  margin-right: 0.4rem;
+  background: color-mix(in srgb, var(--state-accent) 26%, transparent);
+  border: 1px solid var(--glass-line);
+  color: var(--ink);
+  vertical-align: 0.05em;
+}
+/* the trajectory track: colour strip + energy line overlay */
+.wh-track {
+  position: relative;
+  height: 46px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--glass-line);
+}
+.wh-segs { display: flex; height: 100%; width: 100%; }
+.wh-seg { height: 100%; transition: flex 0.6s var(--ease); }
+.wh-seg + .wh-seg { box-shadow: -1px 0 0 rgba(255, 255, 255, 0.28); }
+.wh-line {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.wh-line polyline {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+}
+.wh-line .wh-bound {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  vector-effect: non-scaling-stroke;
+}
+.wh-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.8rem;
+  margin: 0.6rem 0 0.4rem;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+}
+.wh-legend li { display: flex; align-items: center; gap: 0.35rem; }
+.wh-dot {
+  width: 0.62rem;
+  height: 0.62rem;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+}
+.wh-detail { margin: 0.2rem 0 0; line-height: 1.5; }
+.wh-tent { font-style: italic; }
 
 /* ── emotive read card: ambient mood bloom behind the content ────────────── */
 /* A soft radial bleed from the current mood colour (--state-accent, set by    */

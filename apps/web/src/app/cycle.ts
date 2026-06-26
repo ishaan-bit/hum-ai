@@ -15,7 +15,7 @@
  * longitudinal model at 20) so personalization and the longitudinal-diagnostic layer
  * progressively engage across hums. `nextState` is what the caller persists.
  */
-import { computeFeatures, type AudioInput } from "@hum-ai/audio-features";
+import { analyzeTemporalDynamics, computeFeatures, type AudioInput } from "@hum-ai/audio-features";
 import {
   orchestrateHumRead,
   humHistoryFromState,
@@ -90,6 +90,9 @@ export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult>
 
   // 1. Derive features on-device; the raw audio buffer is not retained past this call.
   const features = computeFeatures(input.audio);
+  // 1·v12. Within-hum temporal analysis: track the parameters live, cut the hum into
+  //        change-point chunks, and read how it moved (consumed from the same buffer).
+  const temporal = analyzeTemporalDynamics(input.audio);
 
   // 1a. STAGE ① — capture acceptance (ADR-0005). Affect is NEVER read from a capture that
   //     isn't a usable hum. A rejected capture short-circuits BEFORE any affect inference and
@@ -118,6 +121,7 @@ export async function runHumCycle(input: HumCycleInput): Promise<HumCycleResult>
     learnedAffectPrior: input.prior ?? undefined,
     axisPriors: input.axisPriors,
     metaLearner: input.metaLearner ?? undefined,
+    temporal,
   });
 
   // 3. LEARN: fold this hum into the model (no-op for ineligible/low-quality hums).

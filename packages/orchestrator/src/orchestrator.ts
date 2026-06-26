@@ -8,8 +8,9 @@ import {
   type ModelVersion,
   type UnitInterval,
 } from "@hum-ai/shared-types";
-import { computeFeatures, metricsFromFeatures } from "@hum-ai/audio-features";
-import type { AcousticFeatures, AudioInput } from "@hum-ai/audio-features";
+import { analyzeTemporalDynamics, computeFeatures, metricsFromFeatures } from "@hum-ai/audio-features";
+import type { AcousticFeatures, AudioInput, TemporalAnalysis } from "@hum-ai/audio-features";
+import { computeTemporalRead, temporalReadStrings, type TemporalRead } from "./temporal-read";
 import { evaluateQuality } from "@hum-ai/quality-gate";
 import type { QualityResult } from "@hum-ai/quality-gate";
 import { HeuristicDomainClassifier, HumDomainAdapter } from "@hum-ai/domain-classifier";
@@ -294,6 +295,14 @@ export interface OrchestratorInput {
    * the deterministic stub (the dimensional V-A read is unaffected either way).
    */
   readonly metaLearner?: MetaLearner;
+  /**
+   * Optional WITHIN-HUM temporal analysis (Stable Build v12): the change-point chunks
+   * of this hum + their features (`@hum-ai/audio-features` `analyzeTemporalDynamics`).
+   * When supplied the read surfaces a within-hum TRAJECTORY (how the hum moved across
+   * its chunks) alongside the whole-hum read. Omit ⇒ no trajectory layer (sim-lab and
+   * feature-only callers run unchanged). `orchestrateHumAudio` computes it from audio.
+   */
+  readonly temporal?: TemporalAnalysis;
 }
 
 /** The off-domain stub slot a trained acted-speech prior is a drop-in for. */
@@ -383,6 +392,14 @@ export interface UserFacingRead {
    * no raw confidence number.
    */
   readonly interventionOfDay: InterventionOfDay;
+  /**
+   * WITHIN-HUM TRAJECTORY (Stable Build v12) — how this hum MOVED across its
+   * change-point chunks (settled / wound up / brightened / faded / restless / steady),
+   * predicted from the chunk-to-chunk variation. Null when the read abstained or no
+   * temporal analysis was supplied. Reflective + non-diagnostic; its copy is screened
+   * with the rest of the user-facing strings.
+   */
+  readonly temporal: TemporalRead | null;
 }
 
 /** Internal, NEVER-rendered detail (logging, eval, consent-gated risk surfacing). */
@@ -431,6 +448,13 @@ export interface InternalRead {
   readonly axis: AxisRead;
   /** Secondary 6-way affect-label hint (most-likely benign broad state), or null. */
   readonly affectHint: AffectStateHead | null;
+  /**
+   * The within-hum temporal read (Stable Build v12): per-chunk V/A, the chunk-to-chunk
+   * variation summaries, and the predicted trajectory shape. Same object surfaced (in
+   * sanitized form) on `userFacing.temporal`; kept here in full for eval/diagnostics.
+   * Null when no temporal analysis was supplied or the read abstained.
+   */
+  readonly temporal: TemporalRead | null;
 }
 
 export interface OrchestratedRead {
@@ -499,6 +523,7 @@ function userFacingStrings(read: UserFacingRead): string[] {
   ];
   if (read.innerState) strings.push(read.innerState);
   if (read.suggestion) strings.push(read.suggestion.copy);
+  strings.push(...temporalReadStrings(read.temporal));
   strings.push(...interventionOfDayStrings(read.interventionOfDay));
   return strings;
 }
@@ -770,6 +795,13 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   );
   const affectHint = inference.abstained ? null : dominantBroadState(twoHead.broad.states);
 
+  // WITHIN-HUM TRAJECTORY (Stable Build v12). The change-point chunks of this hum are
+  // read with the same transparent acoustic backbone and the inner-state trajectory is
+  // predicted from the chunk-to-chunk VARIATION. Surfaced as a reflective, non-diagnostic
+  // layer alongside the whole-hum read — it never rewrites the V/A backbone. Omitted when
+  // the read abstained (a non-usable hum has no honest trajectory) or no analysis was passed.
+  const temporal = inference.abstained ? null : computeTemporalRead(input.temporal);
+
   // Intervention of the Day — built from the SAME sanitized view + qualitative
   // confidence + abstracted trend the rest of the safe layer uses. No clinical
   // label, no raw confidence number; self-screened, then screened again below.
@@ -823,6 +855,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       ? null
       : { type: suggestion.type, copy: INTERVENTION_COPY[suggestion.type] },
     interventionOfDay,
+    temporal,
   };
 
   // Lexical screen (no diagnosis/clinical-certainty phrasing; no raw % confidence).
@@ -889,6 +922,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
       // against the user's own usual. Each axis still carries its transparent `acousticValue`.
       axis: displayAxis,
       affectHint,
+      temporal,
     },
   };
 }
@@ -918,6 +952,9 @@ export interface AudioOrchestratorInput {
  */
 export async function orchestrateHumAudio(input: AudioOrchestratorInput): Promise<OrchestratedRead> {
   const features = computeFeatures(input.audio);
+  // v12: derive the within-hum change-point chunks from the SAME raw buffer (consumed
+  // here, never retained). The trajectory layer reads how the hum moved across them.
+  const temporal = analyzeTemporalDynamics(input.audio);
   return orchestrateHumRead({
     features,
     consent: input.consent,
@@ -927,6 +964,7 @@ export async function orchestrateHumAudio(input: AudioOrchestratorInput): Promis
     learnedAffectPrior: input.learnedAffectPrior,
     axisPriors: input.axisPriors,
     metaLearner: input.metaLearner,
+    temporal,
   });
 }
 
@@ -1039,6 +1077,53 @@ export interface HumSyncPayload {
   readonly evidenceLevel: UserFacingConfidence["evidenceLevel"];
   readonly eligibleHumCount: number;
   readonly abstained: boolean;
+  /**
+   * v12 within-hum trajectory summary — derived scalars only (chunk count, shape, the
+   * chunk-to-chunk arcs, per-chunk V/A + energy, boundary times). No raw audio; safe to
+   * sync. Null when the read abstained or no temporal analysis was computed.
+   */
+  readonly temporal: TemporalSyncSummary | null;
+}
+
+/** Derived, sync-safe projection of the within-hum trajectory (no raw audio). */
+export interface TemporalSyncSummary {
+  readonly temporalMode: string;
+  readonly segmentCount: number;
+  readonly shape: TemporalRead["shape"];
+  readonly valenceArc: number;
+  readonly arousalArc: number;
+  readonly energyArc: number;
+  readonly volatility: number;
+  readonly boundarySec: readonly number[];
+  readonly segments: readonly {
+    readonly startSec: number;
+    readonly endSec: number;
+    readonly valence: number;
+    readonly arousal: number;
+    readonly energy: number;
+  }[];
+}
+
+/** Project the full temporal read into the derived sync summary. */
+export function temporalSyncSummary(t: TemporalRead | null): TemporalSyncSummary | null {
+  if (!t) return null;
+  return {
+    temporalMode: t.temporalMode,
+    segmentCount: t.segmentCount,
+    shape: t.shape,
+    valenceArc: t.valenceArc,
+    arousalArc: t.arousalArc,
+    energyArc: t.energyArc,
+    volatility: t.volatility,
+    boundarySec: t.boundarySec,
+    segments: t.segments.map((s) => ({
+      startSec: s.startSec,
+      endSec: s.endSec,
+      valence: s.valence,
+      arousal: s.arousal,
+      energy: s.energy,
+    })),
+  };
 }
 
 /**
@@ -1068,6 +1153,7 @@ export function buildHumSyncPayload(
     evidenceLevel: read.userFacing.confidence.evidenceLevel,
     eligibleHumCount: read.internal.eligibleHumCount,
     abstained: read.userFacing.abstained,
+    temporal: temporalSyncSummary(read.internal.temporal),
   };
 
   assertNoRawAudioFields(payload); // privacy guard — no raw-audio-like field may sync

@@ -186,15 +186,27 @@ export function renderControls(c: SynthControls): AudioInput {
   let vibPhase = rng() * TAU;
   const fadeN = Math.round(0.03 * sr);
 
+  // v12 within-hum CONTOUR: a logistic late-vs-early transition at `shiftCenter`. When
+  // both shifts are 0 the envelope contributes exactly 1×/+0 (no rng, byte-identical).
+  const hasContour = c.energyShift !== 0 || c.pitchShiftSemis !== 0;
+
   for (let i = 0; i < regionLen; i++) {
     const t = i / sr;
     const k = ctrlAt(t);
+
+    // contour phase: 0 at the start of the body → 1 at the end, switching near shiftCenter.
+    let ph01half = 0; // (logistic − 0.5) ∈ [−0.5, +0.5]
+    if (hasContour) {
+      const frac = regionSec > 0 ? t / regionSec : 0;
+      const z = (frac - c.shiftCenter) * c.shiftSharpness;
+      ph01half = 1 / (1 + Math.exp(-z)) - 0.5;
+    }
 
     // --- pitch: register × slow contour × vibrato × frame-scale jitter ---
     let shape = 0.62 * Math.sin(TAU * fShape1 * t + phi1) + 0.42 * Math.sin(TAU * fShape2 * t + phi2);
     if (shape > 1) shape = 1;
     if (shape < -1) shape = -1;
-    const contourSemis = (c.contourRangeSemitones / 2) * shape;
+    const contourSemis = (c.contourRangeSemitones / 2) * shape + c.pitchShiftSemis * ph01half;
     const vibRate = c.vibratoRateHz * (1 + (1 - c.vibratoRegularity) * 0.6 * (vibRateWalk[k] as number));
     vibPhase += (TAU * vibRate) / sr;
     const vib = c.vibratoFrac * Math.sin(vibPhase);
@@ -217,6 +229,7 @@ export function renderControls(c: SynthControls): AudioInput {
 
     // --- amplitude: tremolo + shimmer + voicing duty + edge fades ---
     let amp = 1 + c.tremoloDepth * Math.sin(TAU * c.modRateHz * t);
+    if (hasContour && c.energyShift !== 0) amp *= Math.max(0.05, 1 + c.energyShift * ph01half);
     amp *= 1 + c.shimmerFrac * (shimmerWalk[k] as number);
     // voicing gaps (continuity): mute "off" portions of each 1.2 s cycle to a near-silent floor.
     if (onFrac < 0.999) {

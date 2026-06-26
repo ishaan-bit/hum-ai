@@ -192,6 +192,8 @@ export function renderRead(read: OrchestratedRead, consent: ConsentState): void 
           : "The signal was too faint or unclear to read this time.";
       axes.innerHTML = `<p class="muted">${copy(why)}</p>`;
       if (diag) diag.hidden = true;
+      const wh = $("within-hum-card");
+      if (wh) wh.hidden = true;
       return;
     }
     const a = read.internal.axis;
@@ -216,6 +218,9 @@ export function renderRead(read: OrchestratedRead, consent: ConsentState): void 
       ${hint}
     `;
   }
+  // v12 · WITHIN-HUM TRAJECTORY — how this hum moved across its change-point chunks.
+  renderWithinHum(read);
+
   // Richer, first-class diagnostics on the main screen (everything Hum noticed this hum).
   if (diag) {
     if (uf.abstained) diag.hidden = true;
@@ -224,6 +229,100 @@ export function renderRead(read: OrchestratedRead, consent: ConsentState): void 
       diag.innerHTML = diagnosticsBody(read, consent);
     }
   }
+}
+
+/** A hum chunk's colour, derived from its own valence (hue) + arousal (lightness). */
+function vaColor(v: number, a: number): string {
+  const vv = clampUnit(v);
+  const aa = clampUnit(a);
+  // valence: low → indigo (255°), neutral → periwinkle (220°), high → warm gold (45°).
+  const hue = vv >= 0 ? 220 - vv * 175 : 220 + -vv * 35;
+  const sat = 48 + Math.abs(aa) * 22; // more activated → more saturated
+  const light = 50 + aa * 12; // calmer → deeper, more activated → brighter
+  return `hsl(${Math.round(hue)} ${Math.round(sat)}% ${Math.round(light)}%)`;
+}
+
+/** Short within-hum word for a chunk (house vocabulary: mood · energy). */
+function chunkWord(v: number, a: number): string {
+  return `${moodWord(v)} · ${energyWord(a)}`;
+}
+
+const SHAPE_BADGE: Record<string, string> = {
+  steady: "Steady",
+  settling: "Settling",
+  winding_up: "Winding up",
+  brightening: "Brightening",
+  fading: "Easing off",
+  unsettled: "Restless",
+};
+
+/**
+ * THE WITHIN-HUM TRAJECTORY CARD (v12). Renders how the hum moved across its
+ * change-point chunks: a colour strip (one band per chunk, coloured by that chunk's own
+ * valence/arousal), the live energy contour drawn over it with the chunk boundaries
+ * marked, the predicted trajectory shape, and the reflective phrase. Purely a
+ * reflection of the (already safety-screened) temporal read — no numbers reach the user.
+ */
+function renderWithinHum(read: OrchestratedRead): void {
+  const host = $("within-hum-card");
+  if (!host) return;
+  const t = read.userFacing.temporal;
+  if (!t || t.segments.length === 0) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+
+  const total = Math.max(0.001, (t.segments[t.segments.length - 1]?.endSec ?? 12) - (t.segments[0]?.startSec ?? 0));
+  const start0 = t.segments[0]?.startSec ?? 0;
+
+  // Colour strip: one flex band per chunk, width ∝ its duration.
+  const segs = t.segments
+    .map((s) => {
+      const dur = Math.max(0.001, s.endSec - s.startSec);
+      const col = vaColor(s.valence, s.arousal);
+      return `<span class="wh-seg" style="flex:${dur.toFixed(3)};background:${col}" title="${esc(chunkWord(s.valence, s.arousal))}"></span>`;
+    })
+    .join("");
+
+  // Energy contour as an SVG polyline (0..1, self-normalized), boundaries as ticks.
+  const c = t.energyContour;
+  const pts =
+    c.length >= 2
+      ? c.map((y, i) => `${((i / (c.length - 1)) * 100).toFixed(2)},${(27 - clampUnit(y) * 24).toFixed(2)}`).join(" ")
+      : "";
+  const bounds = t.boundarySec
+    .map((b) => {
+      const x = (((b - start0) / total) * 100).toFixed(2);
+      return `<line x1="${x}" y1="1" x2="${x}" y2="27" class="wh-bound" />`;
+    })
+    .join("");
+  const spark =
+    pts.length > 0
+      ? `<svg class="wh-line" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" />${bounds}</svg>`
+      : "";
+
+  const chips = t.segments
+    .map((s) => `<li><span class="wh-dot" style="background:${vaColor(s.valence, s.arousal)}"></span>${copy(chunkWord(s.valence, s.arousal))}</li>`)
+    .join("");
+
+  const badge = SHAPE_BADGE[t.shape] ?? "Steady";
+  const tentative = t.confidence === "tentative" ? `<span class="muted small wh-tent">a tentative read</span>` : "";
+  const chunkNote =
+    t.segmentCount <= 1
+      ? "Read as one continuous stretch."
+      : `Read across ${t.segmentCount} stretches.`;
+
+  host.innerHTML = `
+    <h3>${icon("pulse")} Across this hum <span class="muted small">(how it moved)</span></h3>
+    <p class="wh-headline"><span class="wh-shape wh-shape-${esc(t.shape)}">${copy(badge)}</span> ${copy(t.headline)}</p>
+    <div class="wh-track" role="img" aria-label="${esc(t.headline)}">
+      <div class="wh-segs">${segs}</div>
+      ${spark}
+    </div>
+    <ul class="wh-legend">${chips}</ul>
+    <p class="wh-detail muted small">${copy(t.detail)} ${copy(chunkNote)} ${tentative}</p>
+  `;
 }
 
 const clampUnit = (x: number): number => (x < -1 ? -1 : x > 1 ? 1 : x);

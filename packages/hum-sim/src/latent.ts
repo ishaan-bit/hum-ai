@@ -227,6 +227,21 @@ export interface SynthControls {
   /** Leading silent pad, seconds (onset delay). */
   readonly onsetPadSec: number;
   readonly seed: number;
+
+  // ── v12 within-hum CONTOUR (net trend across the hum; 0 ⇒ no trend, byte-identical) ──
+  /**
+   * Signed late-vs-early fractional AMPLITUDE shift across the body (logistic at
+   * `shiftCenter`). >0 swells (quiet→loud), <0 fades (loud→quiet). The body is still
+   * RMS-normalized, so the MEAN level is preserved — only the trajectory changes. Used
+   * by the v12 temporal battery to validate change-point direction recovery. Default 0.
+   */
+  readonly energyShift: number;
+  /** Signed late-vs-early F0 glide across the body, semitones. >0 rises, <0 falls. Default 0. */
+  readonly pitchShiftSemis: number;
+  /** Position of the contour transition along the body, [0,1]. Default 0.5 (mid-hum). */
+  readonly shiftCenter: number;
+  /** Logistic steepness of the transition (small = gradual ramp, large = step). Default 8. */
+  readonly shiftSharpness: number;
 }
 
 /**
@@ -273,5 +288,11 @@ export function latentToControls(p: LatentHumProfile): SynthControls {
     dcOffset: 0.2 * p.dcOffset,
     onsetPadSec: 0.3,
     seed: p.seed,
+    // v12 contour: no net trend by default (a profile is a steady-mood hum unless the
+    // temporal battery overrides these on the controls). Zero ⇒ byte-identical synth.
+    energyShift: 0,
+    pitchShiftSemis: 0,
+    shiftCenter: 0.5,
+    shiftSharpness: 8,
   };
 }

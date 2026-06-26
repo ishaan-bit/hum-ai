@@ -28,6 +28,7 @@ import {
   pinUnpinSequence,
   runSequence,
 } from "./longitudinal";
+import { runTemporalGate } from "./temporal-scenarios";
 
 const argv = process.argv.slice(2);
 const mode = argv[0] && !argv[0].startsWith("--") ? argv[0] : "report";
@@ -65,6 +66,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (mode === "temporal") {
+    const t = runTemporalGate();
+    console.log("=== v12 WITHIN-HUM TEMPORAL GATE (known contour → recovered trajectory) ===\n");
+    for (const row of t.rows) console.log("  " + row);
+    console.log("");
+    for (const c of t.checks) console.log(`${c.pass ? "OK " : "XX "} ${c.id.padEnd(38)} ${c.detail}`);
+    console.error(t.pass ? `\n[hum-sim] temporal gate: ✅ PASS (${t.checks.length} checks).` : `\n[hum-sim] temporal gate: ❌ FAIL`);
+    if (!t.pass) process.exitCode = 1;
+    return;
+  }
+
   if (mode === "longitudinal") {
     const pin = await runSequence(pinUnpinSequence());
     const damp = await runSequence(personalizationDampSequence());
@@ -92,8 +104,16 @@ async function main(): Promise<void> {
   const artifact = await analyze(opts);
   const md = renderMarkdown(artifact);
   console.log(md);
+
+  // v12 WITHIN-HUM TEMPORAL GATE — printed + folded into the release gate below.
+  const temporal = runTemporalGate();
+  console.log("\n## v12 · Within-hum temporal gate\n");
+  for (const row of temporal.rows) console.log("    " + row);
+  console.log("");
+  for (const c of temporal.checks) console.log(`- ${c.pass ? "✅" : "❌"} \`${c.id}\` — ${c.detail}`);
+
   if (jsonPath) {
-    writeFileSync(jsonPath, JSON.stringify(artifact, null, 2), "utf8");
+    writeFileSync(jsonPath, JSON.stringify({ ...artifact, temporal }, null, 2), "utf8");
     console.error(`\n[hum-sim] wrote artifact → ${jsonPath}`);
   }
   // RELEASE GATE: fail the build on any hard regression (fidelity manufacturing affect, the
@@ -104,13 +124,16 @@ async function main(): Promise<void> {
   if (artifact.diagnosis.verdicts.length > 0) {
     console.error(`\n[hum-sim] ${artifact.diagnosis.verdicts.length} diagnostic observation(s) (see report §1) — informational, not gated.`);
   }
-  if (!artifact.gate.pass) {
-    const failed = artifact.gate.checks.filter((c) => !c.pass);
-    console.error(`\n[hum-sim] RELEASE GATE FAILED — ${failed.length} check(s):`);
-    for (const c of failed) console.error(`  ❌ ${c.id}: ${c.detail}`);
+  const failedCore = artifact.gate.checks.filter((c) => !c.pass);
+  const failedTemporal = temporal.checks.filter((c) => !c.pass);
+  if (!artifact.gate.pass || !temporal.pass) {
+    console.error(`\n[hum-sim] RELEASE GATE FAILED — ${failedCore.length + failedTemporal.length} check(s):`);
+    for (const c of [...failedCore, ...failedTemporal]) console.error(`  ❌ ${c.id}: ${c.detail}`);
     process.exitCode = 1;
   } else {
-    console.error(`\n[hum-sim] release gate: ✅ PASS (${artifact.gate.checks.length} checks).`);
+    console.error(
+      `\n[hum-sim] release gate: ✅ PASS (${artifact.gate.checks.length} core + ${temporal.checks.length} temporal checks).`,
+    );
   }
 }
 
