@@ -22,7 +22,7 @@
  */
 import { makeRng } from "@hum-ai/shared-types";
 import type { AudioInput } from "@hum-ai/audio-features";
-import { makeLatent, UNIT_LATENT_KEYS, type LatentHumProfile, type UnitLatentKey } from "./latent";
+import { makeLatent, NEUTRAL_LATENT, UNIT_LATENT_KEYS, type LatentHumProfile, type UnitLatentKey } from "./latent";
 
 export type Sign = -1 | 0 | 1;
 
@@ -46,12 +46,24 @@ export interface ScenarioItem {
  */
 const JITTER_EXCLUDE_FIDELITY = new Set<string>(["noiseLevel", "micBandwidth", "roomReverb", "clipping"]);
 
-/** Small deterministic jitter on the "irrelevant" AFFECT/voice-quality controls (fidelity held clean). */
+/**
+ * Small deterministic jitter on the "irrelevant" AFFECT/voice-quality controls (fidelity held clean).
+ *
+ * The held (non-driven) controls fall back to the TRUE `NEUTRAL_LATENT` reference, NOT a flat 0.4.
+ * This matters: 0.4 is a CHOPPY, QUIET hum (energy 0.4 → low RMS; voicingContinuity 0.4 → ~0.64 duty
+ * cycle → broken voicing), and the whole suite held its non-swept controls there. That parked every
+ * reachability sweep AND the `steady_neutral` archetype on a degraded, low-arousal baseline, which (a)
+ * dragged the entire zone histogram toward "Quiet/Subdued" (the symptom: ~73% of affect sweeps read
+ * arousal < −0.2 vs ~6% when held at true neutral) and (b) made the gate's `neutral-zero-point` check
+ * validate a 0.4-hum (arousal ≈ −0.25) instead of an actual neutral hum (arousal ≈ −0.05). Holding the
+ * untouched controls at the real neutral reference is the whole point of the simulator: an outcome must
+ * depend on the VARIED control, measured against a genuine neutral hum — not a silently-degraded one.
+ */
 function jitterIrrelevant(base: Partial<LatentHumProfile>, exclude: ReadonlySet<string>, rng: () => number): Partial<LatentHumProfile> {
   const out: Record<string, number> = {};
   for (const k of UNIT_LATENT_KEYS) {
     if (exclude.has(k) || JITTER_EXCLUDE_FIDELITY.has(k)) continue;
-    const baseVal = (base as Record<string, number>)[k] ?? 0.4;
+    const baseVal = (base as Record<string, number>)[k] ?? (NEUTRAL_LATENT as unknown as Record<string, number>)[k] ?? 0.5;
     out[k] = Math.min(1, Math.max(0, baseVal + (rng() * 2 - 1) * 0.06));
   }
   return out as Partial<LatentHumProfile>;

@@ -494,6 +494,14 @@ export function diagnoseCollapse(
   if (zones.centerFraction > 0.4) {
     verdicts.push(`CENTER COLLAPSE: ${(zones.centerFraction * 100).toFixed(0)}% of varied hums land in "Steady/Even"; diagonals reached ${(zones.diagonalFraction * 100).toFixed(0)}%.`);
   }
+  // OFF-CENTRE PIN — the inverse of center collapse: varied hums pile into ONE non-neutral zone (the
+  // "every hum reads quiet/subdued" symptom). Reported descriptively here; gated in `evaluateReleaseGate`.
+  const topOffCentre = Object.entries(zones.counts)
+    .filter(([z]) => z !== "Steady/Even")
+    .sort((a, b) => b[1] - a[1])[0];
+  if (topOffCentre && zones.total && topOffCentre[1] / zones.total > 0.4) {
+    verdicts.push(`OFF-CENTRE PIN: ${((topOffCentre[1] / zones.total) * 100).toFixed(0)}% of varied hums land in the off-centre "${topOffCentre[0]}" zone — outcomes collapse to one pole instead of tracking the hum (arousal median ${displayBox.arousal.p50.toFixed(2)}, valence median ${displayBox.valence.p50.toFixed(2)}).`);
+  }
   if (displayBox.arousal.p95 - displayBox.arousal.p05 < 0.6) {
     verdicts.push(`AROUSAL COMPRESSED: displayed arousal P05–P95 spans only ${(displayBox.arousal.p05).toFixed(2)}…${(displayBox.arousal.p95).toFixed(2)} (of [-1,1]).`);
   }
@@ -556,13 +564,16 @@ export const GATE = {
   /** a downbeat corner must reach at most this valence — the low pole the v8 read could not reach (obs ≈−0.34). */
   VALENCE_LOW_MAX: -0.2,
   /**
-   * |neutral read| on each axis — the zero-point must sit near the origin. This is a COARSE
-   * corpus-level guard on the *jittered* steady_neutral archetype (whose controls land ≈0.4, so
-   * it reads a touch subdued, arousal ≈ −0.24); the TRUE zero-point of a genuinely moderate hum
-   * (≈0, locked tightly by the `axis-read` unit regression) is much nearer 0. 0.3 still catches a
-   * gross global offset like the v8 read's −0.33 while tolerating the archetype jitter.
+   * |neutral read| on each axis — the zero-point must sit near the origin. The `steady_neutral`
+   * archetype now resolves to the TRUE neutral reference (the harness holds its un-set controls at
+   * `NEUTRAL_LATENT`, not a degraded 0.4 — see `jitterIrrelevant`), so this guard tests an actual
+   * moderate hum (which reads ≈(0.05, −0.02)). The tolerance is therefore tightened to sit INSIDE the
+   * ±`ZONE_THRESHOLD` (0.2) headline-zone boundary: a neutral hum that reads past ±0.15 on an axis is
+   * about to display an off-centre zone ("Quiet/Subdued" et al.) instead of "Steady/Even" — exactly the
+   * pin this gate must catch. The old 0.3 tolerance was LOOSER than the zone boundary, so it green-lit a
+   * neutral hum reading −0.23 arousal (displayed "Quiet/Subdued") — the regression that shipped.
    */
-  NEUTRAL_ABS_MAX: 0.3,
+  NEUTRAL_ABS_MAX: 0.15,
   /**
    * v11 CROSS-VOICE INVARIANCE: with mood held fixed, five voices spanning low/husky → bright/high
    * must read within this displayed span on each axis. The v11 trait-decoupled read keeps the
@@ -574,6 +585,22 @@ export const GATE = {
    */
   CROSS_VOICE_VALENCE_MAX: 0.45,
   CROSS_VOICE_AROUSAL_MAX: 0.3,
+  /**
+   * The displayed read across the broad VARIED set must not be globally SKEWED off-origin: each axis'
+   * MEDIAN must sit near 0. A varied population of hums should straddle the origin — a persistently
+   * non-zero median means a global offset is pushing every hum toward one pole (the "every hum reads
+   * quiet/subdued" pin) no matter how the hum is produced. This is the direct, corpus-level guard on the
+   * exact symptom; the shipped read had a broad arousal median of ≈−0.25.
+   */
+  READ_MEDIAN_ABS_MAX: 0.18,
+  /**
+   * No single OFF-CENTRE headline zone may dominate the varied-hum histogram. When outcomes genuinely
+   * depend on the hum's style, the modal zone is the neutral "Steady/Even" and the rest spread out; a
+   * pile-up of varied hums in ONE off-centre zone is the collapse symptom itself (the shipped read put
+   * 43% of varied hums in "Quiet/Subdued"). 0.45 leaves head-room for an honestly lopsided sample while
+   * catching a genuine one-zone pin.
+   */
+  MAX_OFFCENTER_ZONE_FRACTION: 0.45,
 } as const;
 
 /** Mean displayed V-A of an archetype group (by archetype id), or null if absent. */
@@ -596,6 +623,12 @@ export function evaluateReleaseGate(args: {
   readonly failures: ReadonlyArray<{ id: string; abstained: boolean; decision: string }>;
   /** v11: cross-voice invariance (fixed mood, varied voice identity) — optional so older callers still run. */
   readonly crossVoice?: CrossVoiceInvariance;
+  /**
+   * The displayed-read distribution across the broad VARIED set (archetypes + interactions + affect
+   * sweeps) — its per-axis medians and headline-zone histogram. Drives the global-skew / one-zone-pin
+   * guards that catch a read collapsing every varied hum onto one pole. Optional so older callers run.
+   */
+  readonly distribution?: { readonly arousalMedian: number; readonly valenceMedian: number; readonly zones: ZoneHistogram };
 }): ReleaseGate {
   const checks: GateCheck[] = [];
   const add = (id: string, pass: boolean, detail: string): void => { checks.push({ id, pass, detail }); };
@@ -660,6 +693,25 @@ export function evaluateReleaseGate(args: {
     const ok = cv.displayValenceSpan <= GATE.CROSS_VOICE_VALENCE_MAX && cv.displayArousalSpan <= GATE.CROSS_VOICE_AROUSAL_MAX;
     add("cross-voice-invariance", ok,
       `${cv.voices} voices, same mood → displayed span V ${cv.displayValenceSpan.toFixed(2)} (≤ ${GATE.CROSS_VOICE_VALENCE_MAX}), A ${cv.displayArousalSpan.toFixed(2)} (≤ ${GATE.CROSS_VOICE_AROUSAL_MAX})`);
+  }
+
+  // 9. The varied-hum population must STRADDLE the origin — no global axis skew pinning every hum to one
+  //    pole. This is the direct guard on the "every hum reads quiet/subdued" symptom: a varied corpus
+  //    with a strongly non-zero median read means the outcome is driven by a fixed offset, not the hum.
+  if (args.distribution) {
+    const { arousalMedian, valenceMedian, zones } = args.distribution;
+    add("read-not-skewed",
+      Math.abs(arousalMedian) <= GATE.READ_MEDIAN_ABS_MAX && Math.abs(valenceMedian) <= GATE.READ_MEDIAN_ABS_MAX,
+      `varied-hum median read = (${valenceMedian.toFixed(2)}, ${arousalMedian.toFixed(2)}) (|each| ≤ ${GATE.READ_MEDIAN_ABS_MAX})`);
+
+    // 10. No single OFF-CENTRE zone may dominate — the histogram-level form of the same contract.
+    const offCenter = Object.entries(zones.counts).filter(([z]) => z !== "Steady/Even");
+    const worst = offCenter.sort((a, b) => b[1] - a[1])[0];
+    const worstFrac = worst && zones.total ? worst[1] / zones.total : 0;
+    add("no-single-zone-pin", worstFrac <= GATE.MAX_OFFCENTER_ZONE_FRACTION,
+      worst
+        ? `most common off-centre zone "${worst[0]}" = ${(worstFrac * 100).toFixed(0)}% of varied hums (≤ ${(GATE.MAX_OFFCENTER_ZONE_FRACTION * 100).toFixed(0)}%)`
+        : "no off-centre zones");
   }
 
   return { pass: checks.every((c) => c.pass), checks };

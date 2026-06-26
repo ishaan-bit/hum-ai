@@ -140,17 +140,22 @@ export async function analyze(opts: AnalyzeOptions = {}): Promise<AnalysisArtifa
   const crossVoice = crossVoiceInvariance(crossVoiceResults);
   const malformed = await runMalformed();
 
-  // The "broad" set for the collapse diagnosis: realistic varied hums (archetypes +
-  // interactions + the affect/voice-quality sweeps), EXCLUDING fidelity/robustness/failure
-  // scenarios that deliberately degrade capture (those bias the zone histogram).
+  // The "varied" set for the collapse diagnosis = realistic COMBINED-mood hums (archetypes +
+  // interactions). It deliberately EXCLUDES the single-axis reachability sweeps: a sweep holds every
+  // control but one at the neutral reference, so most of its range is a near-neutral hum that trivially
+  // reads "Steady/Even" — folding those into the zone histogram buries the real question ("do varied
+  // FELT-STATES spread across zones?") under a pile of neutral perturbation points (it put center at
+  // 62% and tripped a false CENTER-COLLAPSE verdict). The sweeps power the sensitivity Jacobian (§3) and
+  // extractor-fidelity instead. Feature variance (§5) still spans the full affect set for breadth.
   const affectSweeps = sweepResults.filter((r) => !/(noiseLevel|micBandwidth|roomReverb)/.test(r.id));
-  const broad = [...archetypeResults, ...interactionResults, ...affectSweeps];
+  const varied = [...archetypeResults, ...interactionResults];
+  const broadFeatureSet = [...varied, ...affectSweeps];
 
   const sensitivities = sweepSensitivities(sweepResults);
   const leaks = fidelityLeaks(fidelityResults);
-  const diagnosis = diagnoseCollapse(broad, sensitivities, leaks);
+  const diagnosis = diagnoseCollapse(varied, sensitivities, leaks);
   const recovery = extractorFidelity(sensitivities);
-  const fv = featureVariance(broad);
+  const fv = featureVariance(broadFeatureSet);
   const gate = evaluateReleaseGate({
     archetypes: archetypeResults,
     recovery,
@@ -158,6 +163,8 @@ export async function analyze(opts: AnalyzeOptions = {}): Promise<AnalysisArtifa
     malformed: malformed.map((m) => ({ id: m.id, threw: m.threw, abstained: m.abstained, decision: m.decision })),
     failures: failureResults.map((r) => ({ id: r.id, abstained: r.userFacing.abstained, decision: r.quality.decision })),
     crossVoice,
+    // The broad varied-set distribution feeds the global-skew / one-zone-pin guards.
+    distribution: { arousalMedian: diagnosis.displayBox.arousal.p50, valenceMedian: diagnosis.displayBox.valence.p50, zones: diagnosis.zones },
   });
 
   let longitudinal: LongitudinalSummary | null = null;
@@ -248,7 +255,7 @@ export function renderMarkdown(a: AnalysisArtifact): string {
   if (d.verdicts.length === 0) L.push(`No collapse verdicts triggered on this run.`);
   for (const v of d.verdicts) L.push(`- ⚠️ ${v}`);
   L.push("");
-  L.push(`**Headline-zone histogram** (${d.zones.total} varied hums):`);
+  L.push(`**Headline-zone histogram** (${d.zones.total} varied combined-mood hums — archetypes + interactions; single-axis sweeps power §3):`);
   L.push("");
   L.push(`| Zone | Count | % |`);
   L.push(`|---|---:|---:|`);

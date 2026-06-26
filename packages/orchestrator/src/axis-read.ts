@@ -218,12 +218,24 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   // genuine choppiness pulls it down.
   const activeN = clamp01(0.5 + (f.activeFrameRatio - ACTIVE_CENTRE) / ACTIVE_SCALE);
   // Windows are tightened to the extractor's REACHABLE range (a real hum's centroid tops out
-  // ≈2200 Hz and its frame-to-frame flux ≈0.22, not the 2600 / 0.30 the v8 windows assumed) so a
+  // ≈2200 Hz, frame-to-frame flux ≈0.17, not the 2600 / 0.30 the v8 windows assumed) so a
   // genuinely bright / animated hum can drive the cue to its high pole instead of capping ~0.5.
   const brightN = unit(f.spectralCentroidHz, 250, 2200, 0.3); // TIMBRE (identity) — brightness register
   const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5); // TIMBRE (identity) — pitch register
   const pitchMoveN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // STATE — melodic movement → more activated
-  const fluxN = unit(f.spectralFlux, 0.01, 0.22, 0.2); // STATE — more spectral change → more activated
+  // STATE — frame-to-frame spectral change → more activated. The window is centred on the REACHABLE
+  // flux range: a real sustained hum's flux runs ≈0.05 (the steadiest held tone) to ≈0.16 (a genuinely
+  // animated, timbrally-roving hum); a MODERATE hum sits ≈0.09. The pre-correction window (0.01–0.22)
+  // overshot both ends — its high pole (0.22) was unreachable, so even an animated hum only drove the
+  // cue to ≈0.7, and a moderate hum (flux 0.09) landed at only ≈0.38, well BELOW the 0.5 midpoint.
+  // Because flux carries the second-largest arousal weight (0.24), that single mis-window contributed
+  // almost the entire negative arousal offset on an ordinary hum (≈−0.05 of the −0.05 neutral read) and
+  // capped the high pole — so a gentle/steady hum read "quiet/subdued" and animation could not lift it.
+  // Re-centring to the reachable range maps a moderate hum to the cue midpoint and lets an animated one
+  // actually reach the high pole. This is a units/reachability calibration (same class as the log-loudness
+  // and AROUSAL_RMS corrections), NOT a score-widening — the endpoints are the steadiest / most-animated
+  // hums the extractor produces. Validated by the Hum Simulator distribution + cross-voice gates.
+  const fluxN = unit(f.spectralFlux, 0.02, 0.17, 0.2); // STATE — more spectral change → more activated
   // v11 TRAIT-DECOUPLING of the FIRST-hum read. `brightN` (brightness register) and `pitchN` (pitch
   // register) are pure IDENTITY cues — a heavier/huskier voice sits dark+low and a brighter voice
   // sits bright+high regardless of mood — so reading them as arousal pins a husky hummer "calm" and a
@@ -231,11 +243,19 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   // weights here, and the read LEADS on loudness (the strongest, most universal arousal cue, identity
   // offset removed downstream by the within-user display re-reference) and on the STATE cues the person
   // controls hum-to-hum (spectral flux, melodic movement, voiced activity). vs v9: brightness 0.10→0.06,
-  // pitch register 0.12→0.06; the freed weight goes to loudness 0.40→0.44, flux 0.20→0.24, movement
-  // 0.08→0.10. Weights sum to 1; signs unchanged (all cues ↑ arousal), validated by sim-lab `calibration`
-  // and the new cross-voice invariance probe (two voices, same mood → reads cluster).
+  // pitch register 0.12→0.06; the freed weight goes to loudness (0.40→0.44, then →0.48 in v11.1), flux
+  // (0.20→0.24, then →0.20 in v11.1), movement 0.08→0.10. Weights sum to 1; signs unchanged (all cues ↑
+  // arousal), validated by sim-lab `calibration` and the cross-voice invariance probe (two voices, same
+  // mood → reads cluster).
+  // v11.1: flux weight trimmed 0.24→0.20 into LOUDNESS (0.44→0.48). Re-centring the flux window to the
+  // reachable range (above) restored its zero-point + high-pole reach but also STEEPENED its slope, which
+  // amplified the brightness→flux coupling the synth (and, to a degree, real voices) carries — so a brighter
+  // voice's higher flux leaked into a higher arousal read across voices feeling the SAME mood, widening the
+  // cross-voice arousal span past its trait-decoupling bound. Folding that weight into loudness — the single
+  // most universal, identity-ROBUST arousal cue — keeps the zero-point fix while holding the cross-voice
+  // invariance contract (validated by the Hum Simulator `cross-voice-invariance` gate). Weights still sum to 1.
   const arousalRaw = clamp01(
-    0.44 * energyN + 0.1 * activeN + 0.06 * brightN + 0.06 * pitchN + 0.1 * pitchMoveN + 0.24 * fluxN,
+    0.48 * energyN + 0.1 * activeN + 0.06 * brightN + 0.06 * pitchN + 0.1 * pitchMoveN + 0.2 * fluxN,
   );
   const arousal01 = fadeToNeutral(arousalRaw);
 
