@@ -186,6 +186,20 @@ function winInv(v: number | null, key: string, lo: number, hi: number, nrm: Norm
  * musicality / controlledExpression / smoothness / vibrato, which need no window). This is the
  * single source of truth the population OCEAN-norm computation recomputes from pooled data;
  * `compute()` reads the same keys through `winN`/`winInv`. `invert` marks the ↓-feature→↑-trait cues.
+ *
+ * v11 TRAIT-DECOUPLING. `identity: true` marks the cues whose ABSOLUTE level is voice IDENTITY
+ * (loudness / pitch / brightness register — `meanRms`, `peakAmplitude`, `spectralCentroidHz`),
+ * exactly the `timbre` features the affect read decouples. Reading their absolute level as a trait
+ * pins a heavier/huskier voice "reserved/direct" and a brighter voice "outgoing" regardless of who
+ * they are — the same cross-person bias the user flagged for mood. The fix DIFFERS from the affect
+ * read: personality is a STABLE between-person property, so the correct reference is the POPULATION,
+ * not the person's own rolling baseline (within-person standardization would conflate a real trait
+ * with baseline maturation and erase the very between-person position a trait describes). That
+ * decoupling is already wired: when a population corpus exists, `computePopulationOceanNorms`
+ * recomputes each identity cue's window from the pooled p10–p90, so the trait is read RELATIVE TO
+ * THE POPULATION. Until then the protocol-default windows apply and the read stays honestly
+ * "tentative / exploratory — a mirror of your voice, not a test". Reducing these cues' weight is NOT
+ * an option (Extraversion is fundamentally a loudness trait — there is no within-hum-relative proxy).
  */
 export const OCEAN_WINDOWED_FEATURES: ReadonlyArray<{
   readonly key: string;
@@ -193,17 +207,19 @@ export const OCEAN_WINDOWED_FEATURES: ReadonlyArray<{
   readonly lo: number;
   readonly hi: number;
   readonly invert: boolean;
+  /** v11: absolute level is voice IDENTITY → population-decoupled via `PopulationOceanNorms` (not within-person). */
+  readonly identity?: boolean;
 }> = [
   { key: "openness.pitchRangeSemitones", feature: "pitchRangeSemitones", lo: 0.5, hi: 6, invert: false },
   { key: "conscientiousness.amplitudeStability", feature: "amplitudeStability", lo: 0.5, hi: 0.99, invert: false },
   { key: "conscientiousness.pitchStability", feature: "pitchStability", lo: 0.6, hi: 0.99, invert: false },
   { key: "conscientiousness.residualInstabilityScore", feature: "residualInstabilityScore", lo: 0.1, hi: 0.6, invert: true },
   { key: "conscientiousness.shimmerProxy", feature: "shimmerProxy", lo: 0.05, hi: 0.5, invert: true },
-  { key: "extraversion.meanRms", feature: "meanRms", lo: 0.04, hi: 0.25, invert: false },
-  { key: "extraversion.peakAmplitude", feature: "peakAmplitude", lo: 0.1, hi: 0.7, invert: false },
+  { key: "extraversion.meanRms", feature: "meanRms", lo: 0.04, hi: 0.25, invert: false, identity: true },
+  { key: "extraversion.peakAmplitude", feature: "peakAmplitude", lo: 0.1, hi: 0.7, invert: false, identity: true },
   { key: "extraversion.activeFrameRatio", feature: "activeFrameRatio", lo: 0.4, hi: 0.95, invert: false },
-  { key: "extraversion.spectralCentroidHz", feature: "spectralCentroidHz", lo: 600, hi: 1400, invert: false },
-  { key: "agreeableness.spectralCentroidHz", feature: "spectralCentroidHz", lo: 700, hi: 1600, invert: true },
+  { key: "extraversion.spectralCentroidHz", feature: "spectralCentroidHz", lo: 600, hi: 1400, invert: false, identity: true },
+  { key: "agreeableness.spectralCentroidHz", feature: "spectralCentroidHz", lo: 700, hi: 1600, invert: true, identity: true },
   { key: "agreeableness.breathinessProxy", feature: "breathinessProxy", lo: 0.1, hi: 0.7, invert: true },
   { key: "emotional_stability.jitter", feature: "jitter", lo: 0.005, hi: 0.05, invert: true },
   { key: "emotional_stability.shimmerProxy", feature: "shimmerProxy", lo: 0.05, hi: 0.5, invert: true },

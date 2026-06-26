@@ -7,6 +7,7 @@
  */
 import {
   archetypeScenarios,
+  crossVoiceScenarios,
   failureScenarios,
   fidelityInvarianceScenarios,
   interactionScenarios,
@@ -17,6 +18,7 @@ import {
 } from "./scenarios";
 import { runBatch, type SimResult } from "./pipeline";
 import {
+  crossVoiceInvariance,
   diagnoseCollapse,
   evaluateReleaseGate,
   extractorFidelity,
@@ -26,6 +28,7 @@ import {
   zoneHistogram,
   vaBox,
   type CollapseDiagnosis,
+  type CrossVoiceInvariance,
   type DriverSensitivity,
   type FeatureVariance,
   type FidelityLeak,
@@ -87,6 +90,7 @@ export interface AnalysisArtifact {
   };
   readonly gate: ReleaseGate;
   readonly diagnosis: CollapseDiagnosis;
+  readonly crossVoice: CrossVoiceInvariance;
   readonly extractorFidelity: readonly RecoveryCheck[];
   readonly featureVariance: readonly FeatureVariance[];
   readonly sensitivities: readonly DriverSensitivity[];
@@ -132,6 +136,8 @@ export async function analyze(opts: AnalyzeOptions = {}): Promise<AnalysisArtifa
   const fidelityResults = await runBatch(fidelity);
   const robustnessResults = await runBatch(robustnessItems);
   const failureResults = await runBatch(failureItems);
+  const crossVoiceResults = await runBatch(crossVoiceScenarios());
+  const crossVoice = crossVoiceInvariance(crossVoiceResults);
   const malformed = await runMalformed();
 
   // The "broad" set for the collapse diagnosis: realistic varied hums (archetypes +
@@ -151,6 +157,7 @@ export async function analyze(opts: AnalyzeOptions = {}): Promise<AnalysisArtifa
     leaks,
     malformed: malformed.map((m) => ({ id: m.id, threw: m.threw, abstained: m.abstained, decision: m.decision })),
     failures: failureResults.map((r) => ({ id: r.id, abstained: r.userFacing.abstained, decision: r.quality.decision })),
+    crossVoice,
   });
 
   let longitudinal: LongitudinalSummary | null = null;
@@ -204,6 +211,7 @@ export async function analyze(opts: AnalyzeOptions = {}): Promise<AnalysisArtifa
     },
     gate,
     diagnosis,
+    crossVoice,
     extractorFidelity: recovery,
     featureVariance: fv,
     sensitivities,
@@ -249,6 +257,21 @@ export function renderMarkdown(a: AnalysisArtifact): string {
   }
   L.push("");
   L.push(`Center "Steady/Even": **${(d.zones.centerFraction * 100).toFixed(0)}%** · diagonal corners: ${(d.zones.diagonalFraction * 100).toFixed(0)}% · distinct zones reached: ${d.zones.distinctZones}/9`);
+  L.push("");
+
+  const cv = a.crossVoice;
+  L.push(`## 1b. Cross-voice invariance (v11 trait-decoupling) — same mood, ${cv.voices} different voices`);
+  L.push("");
+  L.push(`A heavier/huskier voice and a brighter voice FEELING THE SAME must read alike — voice identity is not mood. Displayed read spread across voices (the surfaced contract) vs the absolute acoustic spread (the real identity difference the read damps):`);
+  L.push("");
+  L.push(`| | Valence span | Arousal span |`);
+  L.push(`|---|---:|---:|`);
+  L.push(`| **Displayed (surfaced)** | ${num(cv.displayValenceSpan)} | ${num(cv.displayArousalSpan)} |`);
+  L.push(`| Absolute acoustic | ${num(cv.acousticValenceSpan)} | ${num(cv.acousticArousalSpan)} |`);
+  L.push("");
+  L.push(`| Voice | Displayed valence | Displayed arousal |`);
+  L.push(`|---|---:|---:|`);
+  for (const v of cv.perVoice) L.push(`| ${v.id.replace("crossvoice/", "")} | ${num(v.valence)} | ${num(v.arousal)} |`);
   L.push("");
   L.push(`**V-A reachability by stage** (P05…P95):`);
   L.push("");

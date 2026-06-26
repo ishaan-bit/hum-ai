@@ -1,4 +1,5 @@
 import type { RobustStats } from "@hum-ai/shared-types";
+import { isTimbreFeature } from "@hum-ai/audio-features";
 import type { BaselineVector } from "./profile";
 
 /**
@@ -69,6 +70,16 @@ export function adaptiveBlendWeight(nPersonal: number, base = 0.4): number {
 export const SALIENCE_COVERAGE_K = 6;
 /** |correlation| at/above which two features are treated as mutually redundant. */
 export const REDUNDANCY_CORR_THRESHOLD = 0.6;
+/**
+ * v11 TRAIT-DECOUPLING: down-weight (not zero) the salience of IDENTITY-bearing `timbre`
+ * features (pitch + brightness + loudness register). The personal DEVIATION read should lean
+ * on how a hum departs from the person's usual MOOD (the `state` cues), not on slow drift in
+ * their voice/mic register (a head-cold, a new microphone) which is identity, not mood. A small
+ * residual weight is kept so a genuine, large within-person register change can still register.
+ * (Divergence/regime detection that must stay ABSOLUTE lives in `dual-baseline`, which does NOT
+ * use salience — so this only re-references the MOOD read, never the objective drift signal.)
+ */
+export const TIMBRE_SALIENCE_FACTOR = 0.4;
 
 /** Evidence/coverage weight for a baseline estimate: n/(n+K) ∈ [0,1). */
 export function coverageWeight(n: number, k = SALIENCE_COVERAGE_K): number {
@@ -151,7 +162,10 @@ export function featureSalience(baseline: BaselineVector, opts: SalienceOptions 
     const s: RobustStats = stats;
     const cov = coverageWeight(s.n, opts.coverageK);
     const red = redund ? redund[feature] ?? 1 : 1;
-    out[feature] = cov * red;
+    // v11: identity-bearing timbre features carry their MOOD only through their within-person
+    // deviation, so they get a reduced salience here — the deviation read leans on the state cues.
+    const trait = isTimbreFeature(feature) ? TIMBRE_SALIENCE_FACTOR : 1;
+    out[feature] = cov * red * trait;
   }
   return out;
 }

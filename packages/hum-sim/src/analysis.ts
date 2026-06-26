@@ -404,6 +404,37 @@ export function fidelityLeaks(results: readonly SimResult[]): FidelityLeak[] {
   return out.sort((a, b) => Math.max(b.directionalValence, b.directionalArousal) - Math.max(a.directionalValence, a.directionalArousal));
 }
 
+// ── cross-voice invariance (v11 trait-decoupling) ──────────────────────────────────
+
+export interface CrossVoiceInvariance {
+  readonly voices: number;
+  /** Spread (max−min) of the SURFACED (displayed) read across the fixed-mood voices. */
+  readonly displayValenceSpan: number;
+  readonly displayArousalSpan: number;
+  /** Spread of the ABSOLUTE acoustic backbone across voices (the real identity difference). */
+  readonly acousticValenceSpan: number;
+  readonly acousticArousalSpan: number;
+  /** The displayed read per voice, for the report table. */
+  readonly perVoice: ReadonlyArray<{ readonly id: string; readonly valence: number; readonly arousal: number }>;
+}
+
+const spanOf = (xs: readonly number[]): number => (xs.length ? Math.max(...xs) - Math.min(...xs) : 0);
+
+/**
+ * Measure how much the read spreads across DIFFERENT voices feeling the SAME mood (the v11
+ * trait-decoupling contract). A small displayed span = voice identity does NOT dictate the read.
+ */
+export function crossVoiceInvariance(results: readonly SimResult[]): CrossVoiceInvariance {
+  return {
+    voices: results.length,
+    displayValenceSpan: spanOf(results.map((r) => r.displayAxis.valence)),
+    displayArousalSpan: spanOf(results.map((r) => r.displayAxis.arousal)),
+    acousticValenceSpan: spanOf(results.map((r) => r.axisAcoustic.valence)),
+    acousticArousalSpan: spanOf(results.map((r) => r.axisAcoustic.arousal)),
+    perVoice: results.map((r) => ({ id: r.id, valence: r.displayAxis.valence, arousal: r.displayAxis.arousal })),
+  };
+}
+
 // ── center-collapse diagnosis (the synthesis) ──────────────────────────────────────
 
 export interface DriverRank {
@@ -532,6 +563,17 @@ export const GATE = {
    * gross global offset like the v8 read's −0.33 while tolerating the archetype jitter.
    */
   NEUTRAL_ABS_MAX: 0.3,
+  /**
+   * v11 CROSS-VOICE INVARIANCE: with mood held fixed, five voices spanning low/husky → bright/high
+   * must read within this displayed span on each axis. The v11 trait-decoupled read keeps the
+   * husky→bright valence span ≈0.33 / arousal ≈0.17; the pre-v11 read (pitch-register-heavy) spread
+   * ≈0.55 / ≈0.33, so these thresholds CATCH a revert to reading voice identity as mood while leaving
+   * the honest residual (one cold hum cannot fully separate a low voice from a low mood). The full
+   * separation is earned as the personal baseline forms (the within-user display re-reference + the
+   * models retrained on within-person deviations) — measured by the longitudinal pin/un-pin check.
+   */
+  CROSS_VOICE_VALENCE_MAX: 0.45,
+  CROSS_VOICE_AROUSAL_MAX: 0.3,
 } as const;
 
 /** Mean displayed V-A of an archetype group (by archetype id), or null if absent. */
@@ -552,6 +594,8 @@ export function evaluateReleaseGate(args: {
   readonly leaks: readonly FidelityLeak[];
   readonly malformed: ReadonlyArray<{ id: string; threw: boolean; abstained: boolean | null; decision: string | null }>;
   readonly failures: ReadonlyArray<{ id: string; abstained: boolean; decision: string }>;
+  /** v11: cross-voice invariance (fixed mood, varied voice identity) — optional so older callers still run. */
+  readonly crossVoice?: CrossVoiceInvariance;
 }): ReleaseGate {
   const checks: GateCheck[] = [];
   const add = (id: string, pass: boolean, detail: string): void => { checks.push({ id, pass, detail }); };
@@ -608,6 +652,14 @@ export function evaluateReleaseGate(args: {
   if (tense && calm) {
     add("diagonal-ordering", tense.a > calm.a && calm.v > tense.v,
       `tense(${tense.v.toFixed(2)},${tense.a.toFixed(2)}) vs calm(${calm.v.toFixed(2)},${calm.a.toFixed(2)}): arousal & valence must order`);
+  }
+
+  // 8. v11 CROSS-VOICE INVARIANCE — voice identity must not dictate the read (the headline contract).
+  if (args.crossVoice) {
+    const cv = args.crossVoice;
+    const ok = cv.displayValenceSpan <= GATE.CROSS_VOICE_VALENCE_MAX && cv.displayArousalSpan <= GATE.CROSS_VOICE_AROUSAL_MAX;
+    add("cross-voice-invariance", ok,
+      `${cv.voices} voices, same mood → displayed span V ${cv.displayValenceSpan.toFixed(2)} (≤ ${GATE.CROSS_VOICE_VALENCE_MAX}), A ${cv.displayArousalSpan.toFixed(2)} (≤ ${GATE.CROSS_VOICE_AROUSAL_MAX})`);
   }
 
   return { pass: checks.every((c) => c.pass), checks };

@@ -1,4 +1,5 @@
 export * from "./features";
+export * from "./feature-taxonomy";
 export * from "./extract";
 export * from "./hum-extractor";
 export * from "./synth";

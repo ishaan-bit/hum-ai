@@ -170,6 +170,18 @@ function logUnit(value: number, low: number, high: number): number {
  *    with expressive instability. It is intentionally INDEPENDENT of capture fidelity
  *    (clarity / SNR / flatness / breathiness) — those reflect the mic and room, not the
  *    mood, and belong to signal strength + confidence, not to the affect read.
+ *
+ * v11 TRAIT-DECOUPLING. The purest IDENTITY cues (`FEATURE_KIND === "timbre"`: pitch + brightness
+ * REGISTER) carry a large, fixed per-speaker+mic offset — a heavier/huskier voice sits low+dark and
+ * a brighter voice high+bright regardless of mood. Reading their ABSOLUTE level as affect pins a
+ * husky hummer "calm/low" and a bright one "activated/warm" on the very first hum (the cross-person
+ * bias). So on the cold read those register cues are given the SMALLEST weights, and the read leads
+ * on loudness (the strongest, most universal arousal cue) and on the STATE cues the person varies
+ * hum-to-hum (melodic movement, spectral flux, steadiness). The residual per-person offset is then
+ * removed as the personal baseline forms — by the within-user display re-reference (`display-read`),
+ * the personalization re-reference, and models retrained on within-person standardized deviations
+ * (`@hum-ai/audio-features` `FEATURE_KIND`, `signal-lab` `toFeatureVector(f, baseline)`). The
+ * transparent absolute `acousticValue` is always preserved as provenance.
  */
 export function acousticAffectAxes(f: AcousticFeatures): {
   valence: number;
@@ -208,17 +220,22 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   // Windows are tightened to the extractor's REACHABLE range (a real hum's centroid tops out
   // ≈2200 Hz and its frame-to-frame flux ≈0.22, not the 2600 / 0.30 the v8 windows assumed) so a
   // genuinely bright / animated hum can drive the cue to its high pole instead of capping ~0.5.
-  const brightN = unit(f.spectralCentroidHz, 250, 2200, 0.3);
-  const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5); // pitch register
-  const pitchMoveN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // melodic movement → more activated
-  const fluxN = unit(f.spectralFlux, 0.01, 0.22, 0.2); // more spectral change → more activated
-  // Weighting LEADS with the cues that demonstrably discriminate arousal in-domain (loudness,
-  // then spectral flux), and lightens the ones the Hum Simulator showed are weak or confounded
-  // in a sustained hum (brightness — energy-confounded; activity — a continuity cue). Loudness
-  // 0.32 → 0.40, brightness 0.16 → 0.10, activity 0.12 → 0.10; flux stays 0.20. Weights sum to 1;
-  // signs validated by sim-lab `calibration` (meanRms / centroid / flux / pitch all ↑ arousal).
+  const brightN = unit(f.spectralCentroidHz, 250, 2200, 0.3); // TIMBRE (identity) — brightness register
+  const pitchN = unit(f.pitchMeanHz, 95, 260, 0.5); // TIMBRE (identity) — pitch register
+  const pitchMoveN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // STATE — melodic movement → more activated
+  const fluxN = unit(f.spectralFlux, 0.01, 0.22, 0.2); // STATE — more spectral change → more activated
+  // v11 TRAIT-DECOUPLING of the FIRST-hum read. `brightN` (brightness register) and `pitchN` (pitch
+  // register) are pure IDENTITY cues — a heavier/huskier voice sits dark+low and a brighter voice
+  // sits bright+high regardless of mood — so reading them as arousal pins a husky hummer "calm" and a
+  // bright one "activated" on hum #1 (the cross-person bias). They are therefore given the SMALLEST
+  // weights here, and the read LEADS on loudness (the strongest, most universal arousal cue, identity
+  // offset removed downstream by the within-user display re-reference) and on the STATE cues the person
+  // controls hum-to-hum (spectral flux, melodic movement, voiced activity). vs v9: brightness 0.10→0.06,
+  // pitch register 0.12→0.06; the freed weight goes to loudness 0.40→0.44, flux 0.20→0.24, movement
+  // 0.08→0.10. Weights sum to 1; signs unchanged (all cues ↑ arousal), validated by sim-lab `calibration`
+  // and the new cross-voice invariance probe (two voices, same mood → reads cluster).
   const arousalRaw = clamp01(
-    0.4 * energyN + 0.1 * activeN + 0.1 * brightN + 0.12 * pitchN + 0.08 * pitchMoveN + 0.2 * fluxN,
+    0.44 * energyN + 0.1 * activeN + 0.06 * brightN + 0.06 * pitchN + 0.1 * pitchMoveN + 0.24 * fluxN,
   );
   const arousal01 = fadeToNeutral(arousalRaw);
 
@@ -251,21 +268,26 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   const stabilityN = clamp01(0.75 * f.amplitudeStability + 0.25 * (f.pitchStability ?? 0.5));
   const vibratoN = f.vibratoRegularity === null ? 0.5 : clamp01(f.vibratoRegularity);
   const calmN = clamp01(1 - f.residualInstabilityScore); // settled (inverse of agitation)
-  const pitchHeightN = unit(f.pitchMeanHz, 95, 260, 0.5); // mood-variable: higher → brighter affect
-  const melodyN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // mood-variable: melodic movement → expressive
-  // The MOOD-VARIABLE prosody (pitch height + melodic movement) now LEADS the valence read (0.58
-  // of the weight), and the person-ish voice-quality block follows (0.42). The v8 split was the
-  // reverse (0.58 voice-quality), so the near-constant steadiness/vibrato terms formed a positive
-  // floor that overpowered the very cues the person controls hum-to-hum — pinning valence slightly
-  // positive every time and making the low pole unreachable (the Hum Simulator: the most-downbeat
-  // archetype bottomed at only ≈ −0.14). This rebalance lets a genuinely flat, low, agitated hum
-  // read clearly subdued while a neutral hum still sits ~0. Signs are unchanged (all cues ↑ valence,
-  // agitation ↓ via `calmN`), validated by sim-lab `calibration`. Weights sum to 1.
+  const pitchHeightN = unit(f.pitchMeanHz, 95, 260, 0.5); // TIMBRE (identity): pitch register
+  const melodyN = unit(f.pitchRangeSemitones, 0.5, 8, 0.3); // STATE: melodic movement (semitones) → expressive
+  // v11 TRAIT-DECOUPLING of the FIRST-hum valence read. Pitch HEIGHT is the single purest IDENTITY
+  // cue — a heavier/huskier voice sits low and a brighter voice sits high no matter how they feel —
+  // so keying valence on its ABSOLUTE level pins a husky hummer "low/flat" and a bright one "warm" on
+  // hum #1 (the exact cross-person bias). It is therefore given the SMALLEST mood weight here, and the
+  // read LEADS on melodic MOVEMENT (relative, in semitones — the person's own contour, not their
+  // register) plus the within-hum voice-quality block (steadiness / smoothness / settledness), which
+  // are honest mood cues from the first hum. The husky/bright OFFSET that remains is removed downstream
+  // by the within-user display re-reference once a few hums exist. vs v9: pitch height 0.30→0.18; the
+  // freed weight goes to melodic movement 0.28→0.32 and the voice-quality block 0.42→0.50. The earlier
+  // v8→v9 lesson still holds — valence must NOT be built only from the near-constant voice-quality
+  // features (that was the original "tense every time" pin), so MOVEMENT (which the person varies) still
+  // leads the prosody half. Weights sum to 1; signs unchanged (all cues ↑ valence, agitation ↓ via
+  // `calmN`), validated by sim-lab `calibration` + the new cross-voice invariance probe.
   const valenceRaw = clamp01(
-    // mood-variable prosody (what the person changes hum-to-hum) — leads, 0.58 of the weight
-    0.3 * pitchHeightN + 0.28 * melodyN +
-    // settled / in-control (voice-quality; person-ish, follows so it can't pin the axis) — 0.42
-    0.16 * stabilityN + 0.12 * smoothN + 0.06 * vibratoN + 0.08 * calmN,
+    // mood-variable: melodic MOVEMENT leads (relative contour), pitch height de-weighted (identity) — 0.50
+    0.18 * pitchHeightN + 0.32 * melodyN +
+    // settled / in-control (within-hum voice-quality; honest mood from hum #1) — 0.50
+    0.18 * stabilityN + 0.13 * smoothN + 0.07 * vibratoN + 0.12 * calmN,
   );
   const valence01 = fadeToNeutral(valenceRaw);
 

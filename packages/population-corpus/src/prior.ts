@@ -1,5 +1,5 @@
 import type { AffectAxisPriors } from "@hum-ai/orchestrator";
-import { axisPriorsFromArtifact } from "@hum-ai/native-corpus";
+import { axisPriorsFromArtifact, type FeatureBaseline } from "@hum-ai/native-corpus";
 import { hasPromotedPopulationModel, type PopulationArtifact } from "./train";
 
 /**
@@ -9,10 +9,21 @@ import { hasPromotedPopulationModel, type PopulationArtifact } from "./train";
  * `axisPriorsFromArtifact` seam and is in-domain for hums — no far-domain penalty.
  */
 
-/** Population axis priors, but only once the contributor-diversity + axis gates have passed. */
-export function populationAxisPriors(artifact: PopulationArtifact | null): AffectAxisPriors {
+/**
+ * Population axis priors, but only once the contributor-diversity + axis gates have passed.
+ *
+ * v11: the population model is trained on each contributor's WITHIN-PERSON timbre deviations, so a
+ * live read must standardize the current hum against the LIVE USER's own rolling baseline (passed
+ * here) — "louder/higher/brighter than YOUR usual" — exactly as each contributor's rows were
+ * standardized at training. Without a baseline the inference falls back to absolute features (only
+ * correct for a model that was ALSO trained absolute); the web always supplies the user's baseline.
+ */
+export function populationAxisPriors(
+  artifact: PopulationArtifact | null,
+  baseline?: FeatureBaseline,
+): AffectAxisPriors {
   if (!hasPromotedPopulationModel(artifact)) return {};
-  return axisPriorsFromArtifact(artifact!.axes);
+  return axisPriorsFromArtifact(artifact!.axes, baseline);
 }
 
 export interface AxisPriorTiers {

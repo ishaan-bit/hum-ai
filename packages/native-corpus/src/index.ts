@@ -1,3 +1,4 @@
+export type { FeatureBaseline } from "@hum-ai/signal-lab/feature-schema";
 export * from "./corpus";
 export * from "./calibration";
 export * from "./benefit";

@@ -7,7 +7,7 @@
  * resilient: with no mic, no cloud, or no model artifact, it still runs honestly.
  */
 import "./styles.css";
-import { newPersonalizationState, stagePolicy, ingestFeedback, updateArm } from "@hum-ai/personalization-engine";
+import { newPersonalizationState, stagePolicy, ingestFeedback, updateArm, buildBaselineVector } from "@hum-ai/personalization-engine";
 import {
   asIsoTimestamp,
   asModelVersion,
@@ -239,9 +239,15 @@ const RETRAIN_EVERY = 4;
  * through the same `AffectAxisPrior` seam — the orchestrator is unchanged.
  */
 function effectiveAxisPriors(): AffectAxisPriors {
+  // v11: the POPULATION model is trained on each contributor's within-person timbre deviations, so
+  // the live read standardizes the current hum against THIS user's own rolling baseline (their usual
+  // register/loudness/brightness). The within-user native model is trained on absolute features (it
+  // is already personal — one voice — so it carries no cross-person bias), and the far-domain prior
+  // is absolute acted speech; both read absolute (no baseline). Same `AffectAxisPrior` seam.
+  const baseline = buildBaselineVector(session.state.featureWindows);
   return selectAxisPriors({
     personal: axisPriorsFromArtifact(session.artifact),
-    population: populationAxisPriors(session.populationArtifact),
+    population: populationAxisPriors(session.populationArtifact, baseline),
     farDomain: session.prior?.axisPriors ?? {},
   });
 }

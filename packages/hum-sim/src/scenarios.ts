@@ -189,6 +189,37 @@ export function interactionScenarios(): ScenarioItem[] {
 }
 
 /**
+ * CROSS-VOICE INVARIANCE probe (v11) — the headline trait-decoupling contract. A FIXED neutral
+ * MOOD (identical STATE cues: energy, melodic movement, instabilities, vibrato), with only the
+ * speaker's VOICE IDENTITY varied: pitch register (low/husky → high) and timbral brightness
+ * (dark → bright). A correct v11 read must NOT spread much across these — two people who FEEL the
+ * same but have different natural voices must read alike on the FIRST hum. This is exactly the bias
+ * the user flagged ("don't read the husky voice as calmer and the bright voice as unsettled"). The
+ * absolute-acoustic read still differs across voices (that difference is real identity); the gate
+ * checks the surfaced read's cross-voice SPREAD stays bounded.
+ */
+export function crossVoiceScenarios(): ScenarioItem[] {
+  const MOOD: Partial<LatentHumProfile> = {
+    energy: 0.5, melodicMovement: 0.35, timbralChange: 0.3,
+    pitchInstability: 0.2, amplitudeInstability: 0.2, vibratoDepth: 0.4, vibratoRegularity: 0.65,
+  };
+  const VOICES = [
+    { k: "husky_low", pitchHeight: 0.1, brightness: 0.2 },
+    { k: "low", pitchHeight: 0.3, brightness: 0.35 },
+    { k: "mid", pitchHeight: 0.5, brightness: 0.5 },
+    { k: "high", pitchHeight: 0.7, brightness: 0.65 },
+    { k: "bright_high", pitchHeight: 0.9, brightness: 0.8 },
+  ];
+  return VOICES.map((v, i) => ({
+    id: `crossvoice/${v.k}`,
+    group: "crossvoice",
+    drivenBy: null,
+    drivenValue: null,
+    latent: makeLatent({ ...MOOD, pitchHeight: v.pitchHeight, brightness: v.brightness, seed: 7700 + i }),
+  }));
+}
+
+/**
  * FIDELITY-LEAK probe: a FIXED mood, with ONLY the fidelity controls (noise / mic band /
  * reverb) varied across a range. A correct pipeline keeps valence AND arousal essentially
  * invariant here (fidelity belongs to signal-strength + confidence, never the affect read).

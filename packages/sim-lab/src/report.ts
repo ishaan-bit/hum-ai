@@ -10,6 +10,9 @@ import {
   runMoodScenarios,
   runFidelityInvariance,
   runPinReReference,
+  runCrossVoice,
+  CROSS_VOICE_VALENCE_MAX,
+  CROSS_VOICE_AROUSAL_MAX,
 } from "./scenarios";
 import { runHybridLayers } from "./hybrid";
 
@@ -184,6 +187,18 @@ export function computeScenarioFindings(): Finding[] {
     });
   }
 
+  // v11 CROSS-VOICE INVARIANCE: voice identity (register/brightness) must not spread the read
+  // when the mood is held fixed — the inverse of the pin test (same person/many moods → SPREAD;
+  // many voices/same mood → CLUSTER).
+  const cv = runCrossVoice();
+  if (!cv.invariant) {
+    findings.push({
+      severity: "fail",
+      area: "cross-voice",
+      message: `voice identity spreads the cold read too much (valence span ${cv.valenceSpan.toFixed(2)} ≤ ${CROSS_VOICE_VALENCE_MAX}?, arousal span ${cv.arousalSpan.toFixed(2)} ≤ ${CROSS_VOICE_AROUSAL_MAX}?) — a husky and a bright voice feeling the same must read alike (trait-decoupling).`,
+    });
+  }
+
   // HYBRID CONTRACT: ML priors refine the rule-based backbone, never override it.
   const hy = runHybridLayers();
   if (!hy.inDomainNative.moved || !hy.inDomainNative.bounded) {
@@ -256,6 +271,16 @@ export function scenarioReport(): string {
   for (let i = 0; i < pin.acoustic.length; i++) {
     lines.push(`| ${pin.acoustic[i]!.id} | ${pin.acoustic[i]!.zone} | ${pin.displayed[i]!.zone} |`);
   }
+  lines.push("");
+
+  const cv = runCrossVoice();
+  lines.push("## Cross-voice invariance (v11 — 5 voices, same neutral mood, varied register/brightness)\n");
+  lines.push(`- displayed valence span **${cv.valenceSpan.toFixed(2)}** (≤ ${CROSS_VOICE_VALENCE_MAX}), arousal span **${cv.arousalSpan.toFixed(2)}** (≤ ${CROSS_VOICE_AROUSAL_MAX})`);
+  lines.push(`- voice identity does not dictate the read: ${cv.invariant ? "✅ yes" : "❌ no"}`);
+  lines.push("");
+  lines.push("| voice | valence | arousal | zone |");
+  lines.push("|---|---|---|---|");
+  for (const v of cv.perVoice) lines.push(`| ${v.id} | ${v.valence.toFixed(2)} | ${v.arousal.toFixed(2)} | ${v.zone} |`);
   lines.push("");
 
   const hy = runHybridLayers();

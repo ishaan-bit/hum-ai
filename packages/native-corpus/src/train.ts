@@ -1,7 +1,8 @@
 import type { NativeHumExample } from "@hum-ai/affect-model-contracts";
-import { makeRng } from "@hum-ai/shared-types";
+import { computeRobustStats, makeRng } from "@hum-ai/shared-types";
+import { TIMBRE_FEATURE_KEYS } from "@hum-ai/audio-features";
 import { trainLogReg, predictProba, type LogRegParams } from "@hum-ai/signal-lab/model";
-import { toFeatureVector, featureVectorNames } from "@hum-ai/signal-lab/feature-schema";
+import { toFeatureVector, featureVectorNames, type FeatureBaseline } from "@hum-ai/signal-lab/feature-schema";
 import { acousticAffectAxes } from "@hum-ai/orchestrator";
 import { trainableExamples, type NativeCorpus } from "./corpus";
 import { CALIBRATION_DEADZONE, calibrationTrend, type Axis } from "./calibration";
@@ -78,21 +79,71 @@ interface AxisRow {
 export type FoldKey = (example: NativeHumExample) => string;
 export const defaultFoldKey: FoldKey = (ex) => ex.id;
 
+/**
+ * v11 within-person standardization key. The native (single-user) retrain groups ALL the
+ * user's hums into ONE baseline ("self") so the IDENTITY-bearing timbre features are emitted
+ * as deviations from THEIR own usual (`toFeatureVector(f, baseline)`); the population retrain
+ * passes a per-CONTRIBUTOR key so each person's timbre is standardized against their own
+ * baseline before pooling (otherwise pooling re-introduces the cross-voice variance v11 removes).
+ */
+export const SELF_BASELINE_KEY: FoldKey = () => "self";
+
 /** Options for the (re)training entry points. Omitted ⇒ the within-user behavior, unchanged. */
 export interface RetrainOptions {
   /** CV-fold grouping key (defaults to per-example — the within-user behavior). */
   readonly foldKey?: FoldKey;
+  /**
+   * v11: groups examples for WITHIN-PERSON timbre standardization. Each group's robust per-feature
+   * baseline standardizes that group's identity (timbre) features into deviations. Omitted ⇒ the
+   * features are emitted ABSOLUTE (unchanged behaviour). Use `SELF_BASELINE_KEY` for a single user
+   * or the contributor key for a pooled population corpus.
+   */
+  readonly baselineKey?: FoldKey;
+}
+
+/** Robust per-feature (timbre) baseline over a group of examples — the within-person reference. */
+function corpusTimbreBaseline(examples: readonly NativeHumExample[]): FeatureBaseline {
+  const samples: Record<string, number[]> = {};
+  for (const ex of examples) {
+    for (const k of TIMBRE_FEATURE_KEYS) {
+      const v = (ex.features as unknown as Record<string, number | null>)[k];
+      if (typeof v === "number" && Number.isFinite(v)) (samples[k] ??= []).push(v);
+    }
+  }
+  const out: FeatureBaseline = {};
+  for (const [k, vals] of Object.entries(samples)) out[k] = computeRobustStats(vals);
+  return out;
+}
+
+/** Per-group within-person baselines, keyed by `baselineKey` (e.g. self / contributor). */
+function groupTimbreBaselines(examples: readonly NativeHumExample[], key: FoldKey): Map<string, FeatureBaseline> {
+  const groups = new Map<string, NativeHumExample[]>();
+  for (const ex of examples) {
+    const k = key(ex);
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(ex);
+  }
+  const out = new Map<string, FeatureBaseline>();
+  for (const [k, exs] of groups) out.set(k, corpusTimbreBaseline(exs));
+  return out;
 }
 
 /** Build training rows for one axis: eligible, non-ambiguous examples → (vector, pole label). */
-export function buildAxisRows(corpus: NativeCorpus, axis: Axis): AxisRow[] {
+export function buildAxisRows(corpus: NativeCorpus, axis: Axis, opts: RetrainOptions = {}): AxisRow[] {
   const poles = AXIS_POLE_LABELS[axis];
+  const examples = [...trainableExamples(corpus)];
+  // v11: when a baseline key is supplied, standardize each example's IDENTITY (timbre) features
+  // against its group's own baseline so the model learns from within-person mood deviations, not
+  // absolute voice identity. The baseline is a nuisance (the speaker's center), not a label, so
+  // estimating it over the whole group is leakage-safe — and mirrors how inference standardizes
+  // a live hum against the user's accumulated baseline.
+  const baselines = opts.baselineKey ? groupTimbreBaselines(examples, opts.baselineKey) : null;
   const rows: AxisRow[] = [];
-  for (const ex of trainableExamples(corpus)) {
+  for (const ex of examples) {
     const v = ex.label[axis];
     if (!Number.isFinite(v) || Math.abs(v) < CALIBRATION_DEADZONE) continue; // skip ambiguous ground truth
     const high = v >= 0;
-    rows.push({ example: ex, vector: toFeatureVector(ex.features), label: high ? poles.high : poles.low, high });
+    const baseline = baselines && opts.baselineKey ? baselines.get(opts.baselineKey(ex)) : undefined;
+    rows.push({ example: ex, vector: toFeatureVector(ex.features, baseline), label: high ? poles.high : poles.low, high });
   }
   return rows;
 }
@@ -319,7 +370,7 @@ export interface AxisPromotion {
  */
 export function evaluateAxisPromotion(corpus: NativeCorpus, axis: Axis, opts: RetrainOptions = {}): AxisPromotion {
   const foldKey = opts.foldKey ?? defaultFoldKey;
-  const allRows = buildAxisRows(corpus, axis);
+  const allRows = buildAxisRows(corpus, axis, opts);
   // Bound the per-retrain training window to the most recent rows (responsiveness).
   const rows = allRows.length > NATIVE_TRAIN_MAX_ROWS ? allRows.slice(allRows.length - NATIVE_TRAIN_MAX_ROWS) : allRows;
   const counts = classCounts(rows);

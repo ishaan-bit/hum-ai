@@ -308,3 +308,49 @@ export function runPinReReference(): PinResult {
       span(displayed) > span(acoustic) * PIN_MIN_SPAN_GAIN,
   };
 }
+
+// ── 4. Cross-voice invariance (v11 trait-decoupling) ───────────────────────────
+
+/**
+ * FIVE different VOICES feeling the SAME (neutral) mood: only the IDENTITY features vary —
+ * pitch register + brightness register — while every mood-variable state cue is held at the
+ * neutral reference. The v11 trait-decoupled read must NOT spread much across these: a heavier/
+ * huskier voice and a brighter voice that feel the same must read alike on the first hum. (The
+ * remaining cross-person separation is earned only once a personal baseline forms — the within-
+ * user re-reference + models retrained on within-person deviations.)
+ */
+const CROSS_VOICES: ReadonlyArray<{ id: string; over: Partial<AcousticFeatures> }> = [
+  { id: "husky-low", over: { pitchMeanHz: 110, spectralCentroidHz: 650 } },
+  { id: "low", over: { pitchMeanHz: 145, spectralCentroidHz: 850 } },
+  { id: "mid", over: { pitchMeanHz: 175, spectralCentroidHz: 1000 } },
+  { id: "high", over: { pitchMeanHz: 215, spectralCentroidHz: 1300 } },
+  { id: "bright-high", over: { pitchMeanHz: 250, spectralCentroidHz: 1650 } },
+];
+
+export interface CrossVoiceResult {
+  readonly perVoice: ReadonlyArray<{ id: string; valence: number; arousal: number; zone: string }>;
+  readonly valenceSpan: number;
+  readonly arousalSpan: number;
+  readonly invariant: boolean;
+}
+
+/** Max displayed valence span across voices feeling the same mood (the v11 cross-person contract). */
+export const CROSS_VOICE_VALENCE_MAX = 0.45;
+/** Max displayed arousal span across voices feeling the same mood. */
+export const CROSS_VOICE_AROUSAL_MAX = 0.3;
+
+/** Read five voices (fixed neutral mood) cold and measure how much voice identity spreads the read. */
+export function runCrossVoice(): CrossVoiceResult {
+  const perVoice = CROSS_VOICES.map((v) => {
+    const ax = resolveAxisRead(refHum(v.over));
+    return { id: v.id, valence: ax.dimensional.valence, arousal: ax.dimensional.arousal, zone: zoneOf(ax.dimensional.valence, ax.dimensional.arousal) };
+  });
+  const valenceSpan = Math.max(...perVoice.map((p) => p.valence)) - Math.min(...perVoice.map((p) => p.valence));
+  const arousalSpan = Math.max(...perVoice.map((p) => p.arousal)) - Math.min(...perVoice.map((p) => p.arousal));
+  return {
+    perVoice,
+    valenceSpan,
+    arousalSpan,
+    invariant: valenceSpan <= CROSS_VOICE_VALENCE_MAX && arousalSpan <= CROSS_VOICE_AROUSAL_MAX,
+  };
+}

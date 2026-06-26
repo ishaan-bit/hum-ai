@@ -106,7 +106,7 @@ The 10 required test areas and where each is covered:
 
 ## Documentation index
 
-- **Stable Build v10 — latest release spec (phone-native interaction + Big Five from hum #1):** [docs/STABLE_BUILD_V10.md](docs/STABLE_BUILD_V10.md) · earlier specs: [v9](docs/STABLE_BUILD_V9.md) … [v2](docs/STABLE_BUILD_V2.md)
+- **Stable Build v11 — latest release spec (trait-decoupling: a person's natural voice is not read as their mood; models retrain on within-person standardized deviations):** [docs/STABLE_BUILD_V11.md](docs/STABLE_BUILD_V11.md) · [ADR-0013](docs/adr/0013-trait-decoupled-within-person-standardized-read.md) · earlier specs: [v10](docs/STABLE_BUILD_V10.md) … [v2](docs/STABLE_BUILD_V2.md)
 - **Architecture & tech spec (latest):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · **All-layers revamp plan:** [docs/REVAMP_PLAN.md](docs/REVAMP_PLAN.md)
 - Source manifest & provenance: [docs/source/INDEX.md](docs/source/INDEX.md) (source binaries are local-only — see [docs/source/README.md](docs/source/README.md))
 - Architecture: [docs/architecture/](docs/architecture/) (pipeline, fusion, personalization, relapse, [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md))

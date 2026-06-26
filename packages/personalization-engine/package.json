@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@hum-ai/shared-types": "*",
+    "@hum-ai/audio-features": "*",
     "@hum-ai/affect-model-contracts": "*",
     "@hum-ai/relapse-engine": "*"
   }

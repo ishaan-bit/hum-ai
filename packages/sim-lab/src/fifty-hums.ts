@@ -8,6 +8,15 @@ import { refHum } from "./reference";
  * brightness and voice quality) and print the resulting headline distribution. If a
  * single zone dominates, the read is pinned and the calibration is biased. This is the
  * "simulate 50-60 different hums" diagnostic.
+ *
+ * v11 TWO-PART CONTRACT. The healthy distribution is NOT "every acoustic input spreads the
+ * read" — that conflated voice IDENTITY with mood. It is:
+ *  (1) MOOD spread — varying the STATE cues (energy/melody/dynamics) must still spread the read
+ *      across zones (mood is readable from the first hum), AND
+ *  (2) CROSS-VOICE invariance — varying only the IDENTITY cues (pitch + brightness register) with
+ *      mood FIXED must CLUSTER the read (a husky and a bright voice feeling the same read alike).
+ * The probe prints both: the full distribution (mostly mood-driven) and a dedicated cross-voice
+ * cluster check. A wide cross-voice spread is now the BUG, not a wide overall spread.
  */
 
 // Mirror of axisHeadline in copy.ts (kept local so the probe has no extra export coupling).
@@ -108,6 +117,32 @@ function main(): void {
   const top = sorted[0];
   if (top && top[1] / HUMS.length > 0.4) {
     console.log(`\n⚠️  PINNED: "${top[0]}" dominates ${((top[1] / HUMS.length) * 100).toFixed(0)}% of diverse hums.`);
+  }
+
+  // v11 CROSS-VOICE INVARIANCE — the read must NOT spread when ONLY voice identity changes.
+  // Fixed neutral mood; five voices from husky/low+dark → bright/high. They should cluster.
+  console.log("\n=== CROSS-VOICE INVARIANCE (fixed mood, identity varied) ===\n");
+  const CROSS_VOICES = [
+    { k: "husky-low", pitchMeanHz: 110, spectralCentroidHz: 650 },
+    { k: "low", pitchMeanHz: 145, spectralCentroidHz: 850 },
+    { k: "mid", pitchMeanHz: 175, spectralCentroidHz: 1000 },
+    { k: "high", pitchMeanHz: 215, spectralCentroidHz: 1300 },
+    { k: "bright-high", pitchMeanHz: 250, spectralCentroidHz: 1650 },
+  ];
+  let cvMinV = 1, cvMaxV = -1, cvMinA = 1, cvMaxA = -1;
+  for (const cv of CROSS_VOICES) {
+    const read = resolveAxisRead(refHum({ pitchMeanHz: cv.pitchMeanHz, spectralCentroidHz: cv.spectralCentroidHz }));
+    const v = read.dimensional.valence, a = read.dimensional.arousal;
+    cvMinV = Math.min(cvMinV, v); cvMaxV = Math.max(cvMaxV, v);
+    cvMinA = Math.min(cvMinA, a); cvMaxA = Math.max(cvMaxA, a);
+    console.log(`${cv.k.padEnd(14)} v=${v.toFixed(2).padStart(5)} a=${a.toFixed(2).padStart(5)}  ${headline(v, a)}`);
+  }
+  const cvSpanV = cvMaxV - cvMinV, cvSpanA = cvMaxA - cvMinA;
+  console.log(`\ncross-voice valence span: ${cvSpanV.toFixed(2)} (≤0.45 good)   arousal span: ${cvSpanA.toFixed(2)} (≤0.30 good)`);
+  if (cvSpanV > 0.45 || cvSpanA > 0.3) {
+    console.log(`⚠️  CROSS-VOICE BIAS: voice identity is dictating the read — a husky and a bright voice read differently at the same mood.`);
+  } else {
+    console.log(`✅  voice identity does not dictate the cold read (the residual separates only as a personal baseline forms).`);
   }
 }
 

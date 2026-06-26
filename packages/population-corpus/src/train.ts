@@ -58,8 +58,16 @@ export function trainPopulationArtifact(
   now: IsoTimestamp,
 ): PopulationArtifact {
   const pooled = poolContributions(pool);
-  // The within-user gate, run with group-by-contributor CV folds.
-  const axes = buildHumNativeArtifact(pooled.corpus, now, { foldKey: pooled.foldKey });
+  // The within-user gate, run with group-by-contributor CV folds AND per-contributor within-person
+  // timbre standardization (v11): each contributor's IDENTITY (timbre) features are emitted as
+  // deviations from THEIR OWN usual before pooling, so the pooled model learns the population's
+  // shared MOOD mapping rather than a blend of everyone's voice identities. `baselineKey` shares the
+  // contributor grouping with `foldKey` — the same pseudonym keeps a person's hums together for both
+  // the CV split and their standardization reference.
+  const axes = buildHumNativeArtifact(pooled.corpus, now, {
+    foldKey: pooled.foldKey,
+    baselineKey: pooled.foldKey,
+  });
   const ocean = computePopulationOceanNorms(pooled.corpus.examples);
   const eligibleForPromotion = pooled.contributorCount >= POPULATION_MIN_CONTRIBUTORS;
   const last = pooled.corpus.examples[pooled.corpus.examples.length - 1];

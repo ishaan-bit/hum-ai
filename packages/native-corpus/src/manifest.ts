@@ -2,6 +2,7 @@ import type { IsoTimestamp } from "@hum-ai/shared-types";
 import type { AffectAxisPriors } from "@hum-ai/orchestrator";
 import type { LogRegParams } from "@hum-ai/signal-lab/model";
 import { deserializeModel } from "@hum-ai/signal-lab/model";
+import type { FeatureBaseline } from "@hum-ai/signal-lab/feature-schema";
 import type { NativeCorpus } from "./corpus";
 import { buildHumNativeAxisPrior } from "./prior";
 import { retrainNativeAxes, type AxisPromotion, type RetrainResult, type RetrainOptions } from "./train";
@@ -126,20 +127,23 @@ export function parseArtifact(json: string | null | undefined): HumNativeArtifac
  * optionally refined by the far-domain prior). Zero orchestrator change: these flow
  * straight into `orchestrateHumRead`'s `axisPriors`.
  */
-export function axisPriorsFromArtifact(artifact: HumNativeArtifact | null): AffectAxisPriors {
+export function axisPriorsFromArtifact(
+  artifact: HumNativeArtifact | null,
+  baseline?: FeatureBaseline,
+): AffectAxisPriors {
   if (!artifact) return {};
   const priors: { valence?: ReturnType<typeof buildHumNativeAxisPrior>; arousal?: ReturnType<typeof buildHumNativeAxisPrior> } = {};
   if (artifact.valenceModel && artifact.manifest.valence.decision === "promote") {
     priors.valence = buildHumNativeAxisPrior(artifact.valenceModel, {
       axis: "valence",
       balancedAccuracy: artifact.manifest.valence.challengerBalancedAccuracy,
-    });
+    }, baseline);
   }
   if (artifact.arousalModel && artifact.manifest.arousal.decision === "promote") {
     priors.arousal = buildHumNativeAxisPrior(artifact.arousalModel, {
       axis: "arousal",
       balancedAccuracy: artifact.manifest.arousal.challengerBalancedAccuracy,
-    });
+    }, baseline);
   }
   return priors;
 }

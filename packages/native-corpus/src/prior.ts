@@ -2,7 +2,7 @@ import { clamp, clamp01 } from "@hum-ai/shared-types";
 import type { AcousticFeatures } from "@hum-ai/audio-features";
 import type { AffectAxisPrior, AxisPrediction } from "@hum-ai/orchestrator";
 import { meanAbsZ, predictProba, type LogRegParams } from "@hum-ai/signal-lab/model";
-import { toFeatureVector } from "@hum-ai/signal-lab/feature-schema";
+import { toFeatureVector, type FeatureBaseline } from "@hum-ai/signal-lab/feature-schema";
 import { AXIS_POLE_LABELS } from "./train";
 import type { Axis } from "./calibration";
 
@@ -26,7 +26,11 @@ export interface HumNativeAxisMeta {
   readonly oodThreshold?: number;
 }
 
-export function buildHumNativeAxisPrior(params: LogRegParams, meta: HumNativeAxisMeta): AffectAxisPrior {
+export function buildHumNativeAxisPrior(
+  params: LogRegParams,
+  meta: HumNativeAxisMeta,
+  baseline?: FeatureBaseline,
+): AffectAxisPrior {
   const oodThreshold = meta.oodThreshold ?? 3.0; // hums fit their own standardizer (mz ~0.7–1.5); only a wildly atypical capture is OOD
   const poles = AXIS_POLE_LABELS[meta.axis];
   return {
@@ -35,7 +39,12 @@ export function buildHumNativeAxisPrior(params: LogRegParams, meta: HumNativeAxi
     passedGate: true, // a native prior only exists once it cleared the native gate
     nativeDomain: true, // on-domain hum truth — earns the larger nudge cap (ADR-0011)
     predict(features: AcousticFeatures): AxisPrediction {
-      const raw = toFeatureVector(features);
+      // v11: inference must standardize the live hum's IDENTITY (timbre) features the SAME way
+      // training did. A model trained on within-person/within-contributor deviations (population
+      // path) gets a `baseline` here so a hum is read as "louder/higher than YOUR usual", not its
+      // absolute level. A model trained on absolute features (the within-user native default) gets
+      // no baseline → unchanged. Mismatched standardization would silently corrupt the prediction.
+      const raw = toFeatureVector(features, baseline);
       const dist = predictProba(params, raw);
       const pHigh = dist[poles.high] ?? 0;
       const value = clamp(2 * pHigh - 1, -1, 1); // P(high pole) → signed [-1,1]
