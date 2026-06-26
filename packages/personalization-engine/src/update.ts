@@ -66,6 +66,8 @@ export interface HumObservation {
   readonly domainMatch?: UnitInterval;
   /** The (personalized) dimensional read, retained for relapse references. */
   readonly dimensional?: ValenceArousal;
+  /** Re-referenced display dimensional — matches what was shown on the read screen. */
+  readonly displayDimensional?: ValenceArousal;
   /** Composite risk score [0,1] for this hum (relapse history + signature routing). */
   readonly riskScore?: UnitInterval;
   /** Observed intervention response: `riskDelta = risk_after − risk_before` (<0 helped). */
@@ -109,7 +111,7 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     obs.dimensional && obs.riskScore !== undefined
       ? pushBounded(
           state.relapseHistory,
-          { capturedAt: obs.capturedAt, dimensional: obs.dimensional, riskScore: obs.riskScore },
+          { capturedAt: obs.capturedAt, dimensional: obs.dimensional, displayDimensional: obs.displayDimensional, riskScore: obs.riskScore },
           RELAPSE_HISTORY_LIMIT,
         )
       : state.relapseHistory;

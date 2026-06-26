@@ -475,12 +475,15 @@ function studyRelapseLine(): string | null {
  * context (local-only) and the inspected moment ride alongside.
  */
 function renderDiary(read: OrchestratedRead | null): void {
-  const points = session.state.relapseHistory.map((s) => ({
-    at: s.capturedAt as string,
-    valence: s.dimensional.valence,
-    arousal: s.dimensional.arousal,
-    risk: s.riskScore,
-  }));
+  const points = session.state.relapseHistory.map((s) => {
+    const disp = s.displayDimensional ?? s.dimensional;
+    return {
+      at: s.capturedAt as string,
+      valence: disp.valence,
+      arousal: disp.arousal,
+      risk: s.riskScore,
+    };
+  });
   renderLongitudinal(
     read,
     session.consent,

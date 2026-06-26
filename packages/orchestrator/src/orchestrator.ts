@@ -1002,6 +1002,7 @@ export function observationFromRead(read: OrchestratedRead, capturedAt: IsoTimes
     heardDomain: internal.domain.predicted,
     domainMatch: internal.domainMatch,
     dimensional: internal.inference.dimensional,
+    displayDimensional: internal.axis.dimensional,
     riskScore: clinicalRiskScore(internal.inference),
     // Persist the consecutive-drift streak so the next read can honour the relapse
     // engine's "min consecutive hums" rule (ineligible hums never reach here, so a

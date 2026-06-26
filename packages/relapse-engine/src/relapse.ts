@@ -12,7 +12,14 @@ import type { DvdsaClass } from "@hum-ai/affect-model-contracts";
 /** A compact, comparable summary of one hum's risk-relevant affect. */
 export interface RelapseSample {
   readonly capturedAt: IsoTimestamp;
+  /** Raw acoustic/inference dimensional — used by the risk + relapse engine. */
   readonly dimensional: ValenceArousal;
+  /**
+   * Re-referenced display dimensional (trait-decoupled, within-user standardized) —
+   * matches what was shown on the read screen. Used by the diary for color mapping.
+   * Optional for backwards-compat with stored entries that predate this field.
+   */
+  readonly displayDimensional?: ValenceArousal;
   /**
    * Composite risk score in [0,1] (higher = more concerning): a blend of the
    * depressive/anxiety/stress/instability heads. The orchestrator computes this
