@@ -17,7 +17,8 @@ and the cross-voice gate. Recorded as [ADR-0013](adr/0013-trait-decoupled-within
 ## 0. Coordinates
 
 - **Starting commit:** `6b8a28a` (`docs(stable-build-v10): record final commit hash + verified production deploy`), branch `main`.
-- **Final commit:** `__FINAL_COMMIT__` (recorded in the immediately-following docs commit, per the v8–v10 convention).
+- **Final commit:** `5de8045` (`feat(stable-build-v11): trait-decoupled within-person standardized read — voice identity is not read as mood`), branch `main`. The build's code+docs landed in `5de8045`; this hash line is finalized in the immediately-following docs commit, per the v8–v10 convention.
+- **Verified production deploy:** `hum-ai-beige.vercel.app` → HTTP 200, serving build asset `index-Clcxeqsi.js` (matches the local `npm run build:web` output); aliased to deployment `hum-imvpofz1n-ishaans-projects-f5eaf242.vercel.app`.
 - **Scope (new):** `packages/audio-features/src/feature-taxonomy.ts` (+ test),
   `packages/orchestrator/test/cross-voice.test.ts`, `packages/signal-lab/test/feature-schema-standardize.test.ts`,
   this spec, `docs/adr/0013-…`.
