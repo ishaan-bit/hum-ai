@@ -19,8 +19,8 @@ the existing `npm run hum-sim` + `npm run sim` release gates are all **preserved
 ## 0. Coordinates
 
 - **Starting commit:** `da49fdd` (`docs: bring README/CONTRIBUTING/SECURITY/web + env docs up to date`), branch `main`.
-- **Final commit:** `__PENDING__` (`feat(stable-build-v14): state→KPI wiring audit …`), branch `main`. This hash line is finalized in the immediately-following docs commit, per the v8–v13 convention.
-- **Verified production deploy:** `__PENDING__` — `hum-ai-beige.vercel.app` → HTTP 200, serving the clean v14 worktree build asset.
+- **Final commit:** `f2aef91` (`feat(stable-build-v14): state→KPI wiring audit — fidelity isolation, headline-aligned zones, revived dead branches, Sound Lab taste coherence`), branch `main`. This hash line is finalized in the immediately-following docs commit, per the v8–v13 convention.
+- **Verified production deploy:** `hum-ai-beige.vercel.app` → HTTP 200, serving build asset `index-Cynaufqr.js` (matches the clean `f2aef91` tree build), with the v14 surface strings live in the bundle (`wh-region` per-chunk region axis, "Pick a genre to choose a flow", "Fits your read", "Tuned to"). Vercel CLI prebuilt deploy → production deployment `hum-3syrhlgt9-ishaans-projects-f5eaf242.vercel.app`. Deployed from the clean committed `f2aef91` tree.
 - **Scope (changed):** `packages/personalization-engine/src/{profile,dual-baseline}.ts`, `packages/personality-signature/src/index.ts`, `packages/orchestrator/src/{copy,temporal-read,axis-read,display-read}.ts`, `packages/relapse-engine/src/risk-markers.ts`, `packages/intervention-engine/src/sound-lab.ts`, `apps/web/src/app/{render,sound-lab,sound-lab-store,styles}.{ts,css}`, plus new unit tests in `personalization-engine` and `intervention-engine`, this spec, and `docs/adr/0016-…`.
 - **Unchanged:** the V/A acoustic backbone math, `toFeatureVector` (byte-identical), the far-domain prior, the raw-audio/clinical privacy guards, the unsupervised chunking + vocal-range model, two-head separation, and every axis gate (`read-not-skewed` / `no-single-zone-pin` / `cross-voice-invariance` / fidelity ⊥ affect — none widened).
 
