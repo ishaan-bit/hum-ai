@@ -11,6 +11,7 @@ import {
 export * from "./states";
 export * from "./templates";
 export * from "./music";
+export * from "./sound-lab";
 export * from "./intervention-of-day";
 
 /**

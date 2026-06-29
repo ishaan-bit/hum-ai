@@ -120,6 +120,21 @@
             <section id="longitudinal-card" class="longitudinal-card" data-no-swipe></section>
           </div>
         </section>
+
+        <!-- ─────────────── WINDOW E · SOUND LAB ─────────────── -->
+        <!-- Turns the read's valence/arousal steer + the user's taste (language · genre · flavor)
+             into a real, grounding song played in an embedded YouTube player. Reachable once the
+             first usable read of the session has unlocked the result windows. -->
+        <section class="window window-sound-lab" data-step="sound-lab" aria-label="Sound Lab">
+          <div class="sound-lab" data-no-swipe>
+            <button class="btn btn-ghost btn-back" data-nav="back">← Diary</button>
+            <div id="sound-lab-card" class="sound-lab-card">
+              <h3>Sound Lab</h3>
+              <p class="muted">Hum first, then I'll tune a song to where you are.</p>
+            </div>
+            <div id="sound-lab-content" class="sound-lab-content"></div>
+          </div>
+        </section>
       </main>
 
       <!-- redundant navigation: dots (swipe + buttons live in the windows + arrow keys too) -->
@@ -128,6 +143,7 @@
         <button data-goto="state" class="dot" aria-current="false"><span>State</span></button>
         <button data-goto="today" class="dot" aria-current="false"><span>Today</span></button>
         <button data-goto="diary" class="dot" aria-current="false"><span>Diary</span></button>
+        <button data-goto="sound-lab" class="dot" aria-current="false"><span>Sound</span></button>
       </nav>
     </div>
 

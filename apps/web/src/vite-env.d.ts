@@ -10,6 +10,11 @@ interface ImportMetaEnv {
   readonly HUM_AI_FIREBASE_APP_ID?: string;
   /** Build-time model version stamp. */
   readonly HUM_AI_MODEL_VERSION?: string;
+  /**
+   * Public, referrer-restricted YouTube Data API v3 key for the Sound Lab's in-app player.
+   * Optional: with no key the Sound Lab degrades to an "Open on YouTube" search link.
+   */
+  readonly HUM_AI_YOUTUBE_API_KEY?: string;
 }
 
 interface ImportMeta {

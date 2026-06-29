@@ -277,7 +277,8 @@ body {
 #stage[data-step="hum"] .window-hum,
 #stage[data-step="state"] .window-state,
 #stage[data-step="today"] .window-today,
-#stage[data-step="diary"] .window-diary {
+#stage[data-step="diary"] .window-diary,
+#stage[data-step="sound-lab"] .window-sound-lab {
   opacity: 1;
   transform: none;
   filter: blur(0);
@@ -446,13 +447,15 @@ body {
    justify-content on the window, avoids the flex-end+overflow "top unreachable" bug). */
 .window-state,
 .window-today,
-.window-diary {
+.window-diary,
+.window-sound-lab {
   justify-content: flex-start;
   overflow: hidden;
 }
 .reveal,
 .today,
-.diary {
+.diary,
+.sound-lab {
   position: relative;
   width: 100%;
   max-width: var(--maxw);
@@ -1069,6 +1072,118 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 }
 .chip-on { background: rgba(123, 211, 145, 0.14); border-color: rgba(123, 211, 145, 0.4); color: #8fd6a4; }
 .chip-forming { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); color: var(--ink-mute); }
+
+/* ── Sound Lab (Window E) ──────────────────────────────────────────────────── */
+.sound-lab-card { margin-bottom: 0.6rem; }
+.sound-lab-card h3 { margin: 0 0 0.2rem; }
+.sl-state {
+  margin: 0.5rem 0 0.2rem;
+  font: 600 clamp(1.02rem, 4.4vw, 1.18rem) / 1.3 "Iowan Old Style", Georgia, serif;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.sl-steer {
+  margin-top: 0.55rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--state-accent) 9%, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--glass-line);
+}
+.sl-dir { margin: 0 0 0.2rem; font-weight: 700; color: var(--ink); }
+.sl-dir-tag {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em;
+  font-weight: 800; color: var(--ink-mute); margin-right: 0.4rem;
+}
+.sl-copy { margin: 0 0 0.25rem; color: var(--ink-soft); }
+
+/* preference chip groups */
+.sl-prefs { margin: 0.2rem 0 0.5rem; }
+.sl-pref { margin: 0.55rem 0; }
+.sl-pref-label {
+  font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.07em;
+  font-weight: 800; color: var(--ink-mute); margin: 0 0 0.35rem;
+}
+.sl-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.sl-chip {
+  font-size: 0.78rem;
+  padding: 0.34rem 0.7rem;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  color: var(--ink-soft);
+  cursor: pointer;
+  min-height: 34px;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.sl-chip:hover:not(:disabled) { color: var(--ink); }
+.sl-chip.is-on {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--state-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--state-accent) 18%, var(--glass));
+}
+.sl-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+.sl-pref-hint { margin: 0.3rem 0 0; }
+
+/* read-only "vibe" descriptors */
+.sl-vibes { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin: 0.4rem 0; }
+.sl-vibe {
+  font-size: 0.72rem;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--ink-mute);
+}
+
+.sl-cta { margin: 0.7rem 0 0.3rem; display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; }
+
+/* result / player */
+.sl-result:empty { display: none; }
+.sl-player-wrap { margin-top: 0.7rem; }
+.sl-loading { color: var(--ink-soft); padding: 1.2rem 0; text-align: center; }
+.sl-listening {
+  text-transform: uppercase; letter-spacing: 0.07em; font-weight: 800;
+  margin: 0 0 0.4rem;
+}
+.sl-embed {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--glass-line);
+  box-shadow: 0 10px 34px -12px rgba(0, 0, 0, 0.6);
+}
+.sl-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.sl-track { display: flex; flex-direction: column; gap: 0.1rem; margin: 0.5rem 0 0.3rem; }
+.sl-track-title { font-weight: 700; color: var(--ink); }
+.sl-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0 0.2rem; }
+.sl-fallback {
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+}
+.sl-fallback p { margin: 0 0 0.5rem; color: var(--ink-soft); }
+
+/* fit feedback */
+.sl-feedback { margin-top: 0.7rem; padding-top: 0.55rem; border-top: 1px solid var(--line); }
+.sl-fb-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.35rem 0; }
+.sl-fb {
+  font-size: 0.74rem;
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.sl-fb.is-on { color: var(--ink); border-color: color-mix(in srgb, var(--state-accent) 55%, transparent); background: color-mix(in srgb, var(--state-accent) 14%, var(--glass)); }
+.sl-fb-note { min-height: 1.1em; margin: 0.2rem 0 0; }
+.sl-foot { margin: 0.9rem 0 0.2rem; }
+.sl-empty { padding: 1.4rem 0.2rem; display: flex; flex-direction: column; gap: 0.8rem; align-items: flex-start; }
 .refine-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0; }
 .ladder-card .stage { margin: 0 0 0.5rem; color: var(--ink-soft); }
 
@@ -1242,13 +1357,15 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
   /* orb sits left, the content column sits right and uses the full height */
   .window-state,
   .window-today,
-  .window-diary {
+  .window-diary,
+  .window-sound-lab {
     justify-content: flex-start;
     align-items: center;
   }
   .reveal,
   .today,
-  .diary {
+  .diary,
+  .sound-lab {
     max-width: 30rem;
     margin: 0 0 0 auto;
     max-height: 100%;
@@ -1444,7 +1561,7 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 /* ── reduced motion / accessibility ───────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .window { transition: opacity 0.25s ease; transform: none; filter: none; }
-  .today.is-entering > *, .diary.is-entering > * { animation: none; }
+  .today.is-entering > *, .diary.is-entering > *, .sound-lab.is-entering > * { animation: none; }
   .hum-btn-ring { animation: none; }
   .hum-sonar { animation: none; opacity: 0; }
   .hum-btn { animation: none; }
@@ -1504,7 +1621,8 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
    richer `.unfurl` (with the tuning sweep), so this is scoped to .today / .diary only — no fight.
    Re-triggered by toggling `.is-entering` on each visit (see playWindowEntrance in main.ts). */
 .today.is-entering > *,
-.diary.is-entering > * {
+.diary.is-entering > *,
+.sound-lab.is-entering > * {
   animation: win-rise 0.62s var(--ease-bloom) both;
 }
 @keyframes win-rise {
@@ -1512,10 +1630,10 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
   60%  { filter: blur(0); }
   to   { opacity: 1; transform: none; }
 }
-.today.is-entering > *:nth-child(1), .diary.is-entering > *:nth-child(1) { animation-delay: 0.02s; }
-.today.is-entering > *:nth-child(2), .diary.is-entering > *:nth-child(2) { animation-delay: 0.1s; }
-.today.is-entering > *:nth-child(3), .diary.is-entering > *:nth-child(3) { animation-delay: 0.18s; }
-.today.is-entering > *:nth-child(n+4), .diary.is-entering > *:nth-child(n+4) { animation-delay: 0.26s; }
+.today.is-entering > *:nth-child(1), .diary.is-entering > *:nth-child(1), .sound-lab.is-entering > *:nth-child(1) { animation-delay: 0.02s; }
+.today.is-entering > *:nth-child(2), .diary.is-entering > *:nth-child(2), .sound-lab.is-entering > *:nth-child(2) { animation-delay: 0.1s; }
+.today.is-entering > *:nth-child(3), .diary.is-entering > *:nth-child(3), .sound-lab.is-entering > *:nth-child(3) { animation-delay: 0.18s; }
+.today.is-entering > *:nth-child(n+4), .diary.is-entering > *:nth-child(n+4), .sound-lab.is-entering > *:nth-child(n+4) { animation-delay: 0.26s; }
 
 /* A one-shot diagonal "tuning" light sweeps across the read as it resolves (cinematic). */
 .reveal.unfurl::before {
@@ -1539,7 +1657,8 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
    #read-avatar now carries the "this is you" meaning), so the read can own the full screen. */
 body[data-step="state"] #orb-canvas,
 body[data-step="today"] #orb-canvas,
-body[data-step="diary"] #orb-canvas {
+body[data-step="diary"] #orb-canvas,
+body[data-step="sound-lab"] #orb-canvas {
   /* Cinematic: the orb stays a present, breathing aura behind the read (was a near-invisible 0.24).
      It sits behind the blurred glass cards, so the read text stays crisp while the world feels alive. */
   opacity: 0.4;

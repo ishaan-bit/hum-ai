@@ -1,17 +1,18 @@
 /**
  * The windowed stage — the friction-free main path is four windows the user moves through:
  *
- *   hum   → YOUR INNER STATE → TODAY'S SUGGESTION → YOUR DIARY OF HUMS
+ *   hum   → YOUR INNER STATE → TODAY'S SUGGESTION → YOUR DIARY OF HUMS → SOUND LAB
  *
  * One continuous world (the orb + atmosphere persist beneath); only the foreground content
  * changes. Navigation has THREE redundant affordances (never swipe-only, for accessibility and
  * large screens): horizontal swipe, tappable dots, and explicit Next/Back buttons — plus arrow
  * keys. The Diary tab makes the longitudinal "pattern over time" a first-class destination
- * (it used to be buried at the bottom of the State window). The deeper diagnostic surfaces live
- * in a pull-up "instrument tray" (bottom sheet on phones, side panel on large screens).
+ * (it used to be buried at the bottom of the State window). The Sound Lab tab turns the read
+ * into a grounding song the user can play. The deeper diagnostic surfaces live in a pull-up
+ * "instrument tray" (bottom sheet on phones, side panel on large screens).
  */
-export type Step = "hum" | "state" | "today" | "diary";
-const ORDER: readonly Step[] = ["hum", "state", "today", "diary"];
+export type Step = "hum" | "state" | "today" | "diary" | "sound-lab";
+const ORDER: readonly Step[] = ["hum", "state", "today", "diary", "sound-lab"];
 
 export interface Stage {
   go(step: Step): void;

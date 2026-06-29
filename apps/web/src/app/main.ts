@@ -112,6 +112,7 @@ import { applyStateVisual, visualFromRead, NEUTRAL_VISUAL, ABSTAIN_VISUAL, type 
 import { saveAuraCard } from "./aura-card";
 import { maybeShowOnboarding, showOnboarding, type OnboardingOptions } from "./onboarding";
 import { initStudyUi, offerCaptureToStudy } from "./study-ui";
+import { initSoundLab, type SoundLabController } from "./sound-lab";
 
 const MODEL_VERSION: ModelVersion = asModelVersion(import.meta.env.HUM_AI_MODEL_VERSION ?? "hum-web@0.1.0");
 
@@ -231,6 +232,8 @@ function currentSignature(): PersonalitySignature {
 /** The persistent AURA orb (one Canvas, shared across windows) + the windowed stage controller. */
 let orb: Orb | null = null;
 let stage: Stage | null = null;
+/** The Sound Lab window controller (Window E) — grounds a song in the latest read + taste. */
+let soundLab: SoundLabController | null = null;
 
 /** Re-evaluate the hum-native model after this many new labels (kept cheap + responsive). */
 const RETRAIN_EVERY = 4;
@@ -314,7 +317,7 @@ function setupExperience(): void {
  */
 function playWindowEntrance(step: Step): void {
   if (typeof document === "undefined") return;
-  const sel = step === "today" ? ".today" : step === "diary" ? ".diary" : null;
+  const sel = step === "today" ? ".today" : step === "diary" ? ".diary" : step === "sound-lab" ? ".sound-lab" : null;
   if (!sel) return;
   const el = document.querySelector(sel) as HTMLElement | null;
   if (!el) return;
@@ -460,6 +463,11 @@ async function boot(): Promise<void> {
   setModelStatus();
 
   wireControls();
+
+  // Sound Lab (Window E) — grounds a song in the latest read + the user's taste. Self-contained
+  // (its own taste/feedback store + the YouTube resolve), so it only needs the localId and a way
+  // back to the Hum window from its empty state. Starts empty until the first usable read.
+  soundLab = initSoundLab({ localId: session.localId, onHum: () => focusHum() });
 
   // First-landing walkthrough (once; re-openable from the tray's "How it works"). Ends on a
   // consent step that primes the mic and offers the early-noticing opt-in.
@@ -653,6 +661,7 @@ async function runOne(
     session.pending = null;
     clearInterventionFeedback();
     renderCaptureRejected(result.captureGate);
+    soundLab?.update(null);
     // The world dims to a hollow "listening" state — we only read a clear, sustained hum.
     applyStateVisual(ABSTAIN_VISUAL);
     orb?.setVisual(ABSTAIN_VISUAL);
@@ -699,6 +708,8 @@ async function runOne(
   // A fresh usable hum becomes the newly-inspected moment (its context panel is ready immediately).
   if (!result.read.userFacing.abstained) session.diaryFocus = null;
   renderDiary(result.read);
+  // Re-tune the Sound Lab to this read (its steer + grounding song follow the latest hum).
+  soundLab?.update(result.read);
   renderSignature(session.signature ?? currentSignature(), result.read, session.consent, result.read.internal.eligibleHumCount, session.localId);
   renderProvenance(result.read, session.prior, syncEnabled());
 
@@ -1130,6 +1141,7 @@ function wireControls(): void {
     renderLadderForState(session.state);
     renderHistory(session.log);
     resetReadSurfaces();
+    soundLab?.update(null);
     // Return the world to its idle neutral state and re-lock the result windows.
     applyStateVisual(NEUTRAL_VISUAL);
     orb?.setMode("resting");
