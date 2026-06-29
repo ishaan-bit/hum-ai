@@ -1,6 +1,6 @@
 /**
- * WITHIN-HUM TEMPORAL DYNAMICS — live per-frame parameter tracking + a rule-based
- * CHANGE-POINT segmentation of one hum (Stable Build v12).
+ * WITHIN-HUM TEMPORAL DYNAMICS — live per-frame tracking of the FULL feature set +
+ * an UNSUPERVISED segmentation of one hum into meaningful chunks (Stable Build v13).
  *
  * Motivation (research-grounded). A hum is not a single static state — it is a short
  * trajectory. The literature on vocal emotion is explicit that the LOCAL/DYNAMIC
@@ -16,30 +16,43 @@
  *   - Pitch and intensity FLUCTUATE MORE in high-arousal segments — so a GROWING
  *     fluctuation across the hum is building agitation, a SETTLING one is
  *     self-regulation (the vagal/soothing function humming is used for).
- *   - Utterance-FINAL segments are disproportionately informative to listeners — the
- *     end of the hum is weighted.
+ *   - Utterance-FINAL segments are disproportionately informative to listeners.
  *
- * Design (v12, revised). Rather than chop the hum into arbitrary clock-time thirds,
- * we TRACK the mood-variable parameters live on the native 80 ms frame grid, then let
- * a transparent rule-based CHANGE-POINT layer find where the hum actually SHIFTS. The
- * resulting chunks are MEANINGFUL (a phrase, a swell, a settle) and variable-length;
- * the number of them is itself a signal (a restless hum fragments, a settled one stays
- * whole). The CHUNK-TO-CHUNK VARIATIONS are what the read reasons over (see
- * `@hum-ai/orchestrator` `temporal-read.ts`).
+ * Design (v13). We TRACK the FULL mood-variable parameter set live on the native 80 ms
+ * frame grid (energy, pitch, brightness/centroid, bandwidth, rolloff, spectral flux,
+ * zero-crossing rate, and the frame-to-frame pitch/amplitude perturbation) — the
+ * "entire feature set through each hum" the design brief calls for. We then z-score every
+ * channel WITHIN this hum and let an UNSUPERVISED segmenter decide how many chunks the hum
+ * holds and where they fall.
  *
- * Trait-decoupling (v11 contract, preserved). Every channel is z-scored WITHIN this
- * hum before change detection, and every per-segment feature is a within-hum quantity,
+ * The segmenter (v13). The chunking is unsupervised least-squares change-point detection
+ * by DYNAMIC PROGRAMMING with PENALIZED model selection — i.e. for every candidate chunk
+ * count K it finds the GLOBALLY optimal partition that minimizes within-segment variance
+ * (the k-segments / PELT-family objective), then a complexity penalty selects K. No label,
+ * no target, no threshold tuned per-hum: the data's own variability decides the number of
+ * chunks and their boundaries. Because the cost compares WHOLE segments it fires on BOTH an
+ * abrupt step AND a gradual monotonic ramp (a step detector misses ramps), and a steady hum
+ * whose bounded oscillation never clears the penalty stays ONE chunk — a meaningful "steady
+ * throughout", not a forced split. The number of chunks is itself a signal (a restless hum
+ * fragments, a settled one stays whole). The chunks — and the CHUNK-TO-CHUNK variation — are
+ * what the read reasons over (see `@hum-ai/orchestrator` `temporal-read.ts`).
+ *
+ * Local-only. The dense per-frame track is computed on-device and is NEVER returned on the
+ * analysis object, never persisted, never synced — only the small derived chunks leave this
+ * module (the design's "live tracking … processed locally … only the chunks need be saved").
+ *
+ * Trait-decoupling (v11 contract, preserved). Every channel is z-scored WITHIN this hum
+ * before change detection, and every per-segment quantity the read compares is within-hum,
  * so the segmentation and the trajectory are inherently within-person / within-hum — a
- * husky vs bright VOICE cannot manufacture a trajectory. The temporal layer is built
- * entirely from `FEATURE_KIND === "state"` dynamics; it never reads absolute timbre.
+ * husky vs bright VOICE cannot manufacture a trajectory.
  *
- * Honesty contract (same posture as the rest of `audio-features`). This is
- * deterministic signal processing, NOT a trained or clinically-validated model. The
- * change-point rule is a documented heuristic; the per-segment features are produced
- * by the EXACT production extractor (`computeFeatures`) on the segment's samples, so
- * a segment feature means exactly what a whole-hum feature means.
+ * Honesty contract (same posture as the rest of `audio-features`). This is deterministic
+ * signal processing, NOT a trained or clinically-validated model. The segmenter is an
+ * unsupervised least-squares optimum; the per-segment features are produced by the EXACT
+ * production extractor (`computeFeatures`) on the segment's samples, so a segment feature
+ * means exactly what a whole-hum feature means.
  */
-import { clamp01, mean, normalize } from "@hum-ai/shared-types";
+import { clamp01, mean } from "@hum-ai/shared-types";
 import type { AcousticFeatures } from "./features";
 import type { AudioInput } from "./extract";
 import { computeFeatures } from "./hum-extractor";
@@ -48,10 +61,10 @@ import { frameRmsSeries, removeDcOffset, std, toFloat64 } from "./dsp/signal";
 import { trackPitch } from "./dsp/pitch";
 import { ceilPow2, magnitudeSpectrum } from "./dsp/fft";
 
-/** Tunable constants for the change-point segmentation (one discoverable home). */
+/** Tunable constants for the unsupervised within-hum segmentation (one discoverable home). */
 export const TEMPORAL_PARAMS = {
   /** Schema tag stamped onto every temporal analysis. */
-  temporalMode: "hum-temporal-v1",
+  temporalMode: "hum-temporal-v2",
   /** Minimum length of any derived chunk (s). Keeps each chunk feature-stable. */
   minSegmentSec: 2.5,
   /** Hard cap on the number of chunks (so a noisy hum can't shatter into dozens). */
@@ -59,23 +72,65 @@ export const TEMPORAL_PARAMS = {
   /** Moving-average smoothing applied to each channel before segmentation (frames). */
   smoothFrames: 3,
   /**
-   * Minimum normalized between-segment separation GAIN for a split to be accepted (the
-   * binary-segmentation threshold). The gain `(nL·nR/N)·Δμ²` is summed over the four
-   * within-hum z-scored channels and divided by the segment length, so it is a scale-free
-   * "robust σ² of separation per frame." A steady hum's bounded oscillation produces a
-   * best-split gain ≈0.3–0.5 from sampling noise alone; a decisive, sustained shift (a
-   * real swell / glide, even a GRADUAL one) clears ≈0.8+. The threshold sits in that
-   * measured gap — validated by the hum-sim temporal gate (flat ≈0.4, contoured ≈1.0+).
+   * UNSUPERVISED model-selection PENALTY — the per-frame, per-channel between-segment
+   * separation a split must add to be worth one extra chunk. The DP minimizes the average
+   * within-segment variance across the within-hum z-scored channels; an additional segment is
+   * accepted only when it reduces that average by more than `splitGain` per frame. Because the
+   * channels are z-scored (unit variance), this is a scale-free "robust σ² of separation per
+   * frame, per channel": a steady hum's bounded oscillation produces a best gain ≈0.04–0.08 from
+   * sampling noise alone; a decisive, sustained shift (a swell / glide, even a GRADUAL one) clears
+   * ≈0.15+. The threshold sits in that measured gap — validated by the hum-sim temporal gate.
+   * (Named `splitGain` for continuity; it is now the penalized-K acceptance gain, not a binary-seg
+   * threshold.) Calibrated on the gate's fixed deterministic seeds: flat hums peak ≤0.124, the
+   * weakest contour (a falling pitch glide) peaks ≥0.154 — `0.139` sits symmetrically in the gap.
    */
-  splitGain: 0.62,
+  splitGain: 0.139,
   /** Points in the compact energy contour exposed for visualization. */
   contourPoints: 24,
 } as const;
 
+/** The within-hum channels the unsupervised segmenter differentiates (display/diagnostic order). */
+export const TEMPORAL_CHANNELS = [
+  "energy",
+  "pitch",
+  "brightness",
+  "flux",
+  "bandwidth",
+  "rolloff",
+  "zcr",
+  "pitchPerturbation",
+  "ampPerturbation",
+] as const;
+export type TemporalChannel = (typeof TEMPORAL_CHANNELS)[number];
+
 /**
- * The LIVE per-frame parameter track — the mood-variable parameters sampled on the
- * native 80 ms frame grid, aligned one-to-one. This is the raw material the
- * change-point layer differentiates. Derived (not raw audio); safe to inspect.
+ * Per-channel weights in the segmentation cost, aligned to `TEMPORAL_CHANNELS`. The four
+ * PRIMARY affect carriers (energy, pitch, brightness, spectral flux) — the channels the v12
+ * change-point statistic was validated on — carry full weight; the AUXILIARY channels
+ * (bandwidth, rolloff, zcr, and the frame-to-frame pitch/amplitude perturbation) add refinement
+ * at reduced weight so the full feature set informs the chunking WITHOUT a single-channel shift
+ * (e.g. a pure energy swell) being diluted below the penalty by the auxiliary channels' noise.
+ * The cost is a WEIGHTED AVERAGE (normalized by Σ weights), so the penalty stays scale-free.
+ */
+export const TEMPORAL_CHANNEL_WEIGHTS: Readonly<Record<TemporalChannel, number>> = {
+  energy: 1,
+  pitch: 1,
+  brightness: 1,
+  flux: 1,
+  bandwidth: 0.35,
+  rolloff: 0.35,
+  zcr: 0.35,
+  pitchPerturbation: 0.5,
+  ampPerturbation: 0.5,
+};
+const WEIGHTS: readonly number[] = TEMPORAL_CHANNELS.map((c) => TEMPORAL_CHANNEL_WEIGHTS[c]);
+const WEIGHT_SUM: number = WEIGHTS.reduce((s, w) => s + w, 0);
+
+/**
+ * The LIVE per-frame parameter track — the FULL mood-variable parameter set sampled on the
+ * native 80 ms frame grid, aligned one-to-one. This is the raw material the unsupervised
+ * segmenter differentiates. Derived (not raw audio) and LOCAL-ONLY: it is never placed on
+ * `TemporalAnalysis`, never persisted, never synced.
  */
 export interface FrameTrack {
   readonly hopSec: number;
@@ -88,13 +143,19 @@ export interface FrameTrack {
   readonly f0Hz: readonly (number | null)[];
   /** Per-frame spectral centroid (Hz); 0 for sub-active frames. */
   readonly centroidHz: readonly number[];
+  /** Per-frame spectral bandwidth (Hz spread around the centroid); 0 at breaks. */
+  readonly bandwidthHz: readonly number[];
+  /** Per-frame spectral rolloff (Hz below which 85% of energy lies); 0 at breaks. */
+  readonly rolloffHz: readonly number[];
   /** Per-frame positive spectral flux vs the previous active frame; 0 at breaks. */
   readonly flux: readonly number[];
+  /** Per-frame zero-crossing rate (fraction of sign changes); 0 at breaks. */
+  readonly zcr: readonly number[];
   /** Per-frame "loud enough to analyze" flag (RMS ≥ quiet floor). */
   readonly active: readonly boolean[];
 }
 
-/** One CHANGE-POINT-derived chunk of the hum, with the full features of its span. */
+/** One unsupervised chunk of the hum, with the full features of its span. */
 export interface HumSegment {
   readonly index: number;
   readonly startSec: number;
@@ -117,7 +178,7 @@ export interface TemporalAnalysis {
   readonly boundarySec: readonly number[];
   /** Mean of the within-hum novelty curve — overall internal movement. */
   readonly changeMean: number;
-  /** Peak of the novelty curve — the sharpest single shift. */
+  /** Peak of the novelty curve — the sharpest single shift (per-frame, per-channel gain). */
   readonly changePeak: number;
   /** Compact, self-normalized [0,1] energy contour for visualization (≤ contourPoints). */
   readonly energyContour: readonly number[];
@@ -137,7 +198,9 @@ function hann(n: number): Float64Array {
 /**
  * Compute the live per-frame parameter track for one hum. Mirrors the framing of
  * `computeFeatures` exactly (80 ms windows, non-overlapping) so the track aligns with
- * the production feature grid.
+ * the production feature grid. The richer spectral channels (bandwidth, rolloff, zcr) are
+ * computed in the SAME FFT pass that produces the centroid, so the full track is one cheap
+ * sweep of the signal.
  */
 export function computeFrameTrack(input: AudioInput): FrameTrack {
   const sampleRate = input.sampleRate;
@@ -147,7 +210,10 @@ export function computeFrameTrack(input: AudioInput): FrameTrack {
   const x0 = toFloat64(input.samples);
   const n = x0.length;
   if (n === 0) {
-    return { hopSec: 0, frameCount: 0, timeSec: [], energy: [], f0Hz: [], centroidHz: [], flux: [], active: [] };
+    return {
+      hopSec: 0, frameCount: 0, timeSec: [], energy: [], f0Hz: [], centroidHz: [],
+      bandwidthHz: [], rolloffHz: [], flux: [], zcr: [], active: [],
+    };
   }
   const x = removeDcOffset(x0);
 
@@ -171,14 +237,19 @@ export function computeFrameTrack(input: AudioInput): FrameTrack {
   // Pitch on the same grid (decimated autocorrelation inside trackPitch).
   const pitch = trackPitch(x, sampleRate, frameLen, hop, nf, loudEnough);
 
-  // Per-frame spectral centroid + positive flux (Hann-windowed FFT per 80 ms frame).
+  // Per-frame spectral centroid / bandwidth / rolloff + positive flux (Hann-windowed FFT
+  // per 80 ms frame) and zero-crossing rate (time-domain).
   const nfft = ceilPow2(frameLen);
   const freqPerBin = sampleRate / nfft;
   const bins = (nfft >> 1) + 1;
   const win = hann(frameLen);
   const framed = new Float64Array(frameLen);
   const centroidHz = new Array<number>(nf).fill(0);
+  const bandwidthHz = new Array<number>(nf).fill(0);
+  const rolloffHz = new Array<number>(nf).fill(0);
   const flux = new Array<number>(nf).fill(0);
+  const zcr = new Array<number>(nf).fill(0);
+  const ROLLOFF_FRAC = 0.85;
   let prevMag: Float64Array | null = null;
   for (let f = 0; f < nf; f++) {
     if (!active[f]) {
@@ -186,7 +257,20 @@ export function computeFrameTrack(input: AudioInput): FrameTrack {
       continue;
     }
     const start = f * hop;
-    for (let i = 0; i < frameLen; i++) framed[i] = (x[start + i] as number) * (win[i] as number);
+    // zero-crossing rate from the raw (un-windowed) frame body.
+    let crossings = 0;
+    let prevSign = 0;
+    for (let i = 0; i < frameLen; i++) {
+      const v = x[start + i] as number;
+      const s = v > 0 ? 1 : v < 0 ? -1 : 0;
+      if (s !== 0) {
+        if (prevSign !== 0 && s !== prevSign) crossings++;
+        prevSign = s;
+      }
+      framed[i] = v * (win[i] as number);
+    }
+    zcr[f] = frameLen > 1 ? crossings / (frameLen - 1) : 0;
+
     const mag = magnitudeSpectrum(framed);
     let magSum = 0;
     let centroid = 0;
@@ -199,7 +283,29 @@ export function computeFrameTrack(input: AudioInput): FrameTrack {
       prevMag = null;
       continue;
     }
-    centroidHz[f] = centroid / magSum;
+    const cen = centroid / magSum;
+    centroidHz[f] = cen;
+    // bandwidth = magnitude-weighted RMS spread around the centroid; rolloff = freq below
+    // which ROLLOFF_FRAC of the magnitude energy lies.
+    let spread = 0;
+    let cum = 0;
+    const rolloffTarget = ROLLOFF_FRAC * magSum;
+    let rolloff = 0;
+    let rolloffSet = false;
+    for (let k = 1; k < bins; k++) {
+      const m = mag[k] as number;
+      const fk = k * freqPerBin;
+      const d = fk - cen;
+      spread += m * d * d;
+      cum += m;
+      if (!rolloffSet && cum >= rolloffTarget) {
+        rolloff = fk;
+        rolloffSet = true;
+      }
+    }
+    bandwidthHz[f] = Math.sqrt(spread / magSum);
+    rolloffHz[f] = rolloffSet ? rolloff : cen;
+
     if (prevMag) {
       let up = 0;
       let cur = 0;
@@ -217,7 +323,7 @@ export function computeFrameTrack(input: AudioInput): FrameTrack {
   const timeSec = new Array<number>(nf);
   for (let f = 0; f < nf; f++) timeSec[f] = f * hopSec;
 
-  return { hopSec, frameCount: nf, timeSec, energy, f0Hz: pitch.f0Hz, centroidHz, flux, active };
+  return { hopSec, frameCount: nf, timeSec, energy, f0Hz: pitch.f0Hz, centroidHz, bandwidthHz, rolloffHz, flux, zcr, active };
 }
 
 /** Fill invalid entries by linear interpolation between nearest valid neighbours. */
@@ -270,6 +376,14 @@ function smooth(values: readonly number[], w: number): number[] {
   return out;
 }
 
+/** Absolute first difference of a series (local perturbation), 0 at the first frame. */
+function absDiff(values: readonly number[]): number[] {
+  const n = values.length;
+  const out = new Array<number>(n).fill(0);
+  for (let i = 1; i < n; i++) out[i] = Math.abs((values[i] as number) - (values[i - 1] as number));
+  return out;
+}
+
 /** Mean of a sub-window [lo,hi) of a series. */
 function windowMean(values: readonly number[], lo: number, hi: number): number {
   let acc = 0;
@@ -281,7 +395,7 @@ function windowMean(values: readonly number[], lo: number, hi: number): number {
   return cnt > 0 ? acc / cnt : 0;
 }
 
-/** Prefix sums of a series so any sub-range mean is O(1): mean(a,b)=(P[b]-P[a])/(b-a). */
+/** Prefix sums of a series so any sub-range sum is O(1): sum(a,b)=P[b]-P[a]. */
 function prefixSums(values: readonly number[]): Float64Array {
   const n = values.length;
   const p = new Float64Array(n + 1);
@@ -290,66 +404,14 @@ function prefixSums(values: readonly number[]): Float64Array {
 }
 
 /**
- * Best split of channels over the frame range [a,b): the t that maximizes the summed
- * between-segment separation gain, normalized by the segment length. The gain for one
- * channel splitting [a,b) at t is `(nL·nR/N)·(meanL−meanR)²` — the standard variance-
- * reduction (CUSUM) statistic — summed across channels. Unlike a local step detector,
- * this fires on BOTH an abrupt step AND a gradual monotonic ramp (whose best split is
- * its midpoint), because it compares the FULL segments, not a sliding window.
+ * Build the within-hum z-scored, smoothed multivariate channel matrix — the FULL feature
+ * set tracked through the hum (energy, pitch, brightness, flux, bandwidth, rolloff, zcr, and
+ * the frame-to-frame pitch/amplitude perturbation). Each channel is gap-filled, z-scored
+ * within THIS hum (so a husky vs bright voice cannot manufacture separation), and smoothed.
+ * Returned in `TEMPORAL_CHANNELS` order. Exported for the chunk-relative read + diagnostics.
  */
-function bestSplit(
-  prefixes: readonly Float64Array[],
-  a: number,
-  b: number,
-  minSegFrames: number,
-): { t: number; gain: number } {
-  const N = b - a;
-  let bestT = -1;
-  let bestGain = 0;
-  const tLo = a + minSegFrames;
-  const tHi = b - minSegFrames;
-  for (let t = tLo; t <= tHi; t++) {
-    const nL = t - a;
-    const nR = b - t;
-    let g = 0;
-    for (const P of prefixes) {
-      const meanL = ((P[t] as number) - (P[a] as number)) / nL;
-      const meanR = ((P[b] as number) - (P[t] as number)) / nR;
-      const d = meanL - meanR;
-      g += ((nL * nR) / N) * d * d;
-    }
-    if (g > bestGain) {
-      bestGain = g;
-      bestT = t;
-    }
-  }
-  // Normalize by segment length so the threshold is a per-frame, scale-free quantity.
-  return { t: bestT, gain: bestT < 0 ? 0 : bestGain / N };
-}
-
-/**
- * The rule-based change-point detector (BINARY SEGMENTATION). Builds the within-hum
- * z-scored channels (log-energy, pitch in semitones, log-brightness, flux), then
- * recursively splits at the point of greatest between-segment separation while that
- * separation clears a scale-free gain threshold and the chunks stay above the minimum
- * length, up to a hard chunk cap. Because the statistic compares whole segments it
- * detects both abrupt STEPS and gradual monotonic TRENDS — a pure step detector misses
- * the latter (a linear ramp has no local peak). Returns the internal boundary FRAME
- * indices (sorted ascending; empty ⇒ one chunk).
- */
-export function detectChangePoints(
-  track: FrameTrack,
-  opts: { minSegmentSec?: number; maxSegments?: number } = {},
-): { boundaries: number[]; novelty: number[]; changeMean: number; changePeak: number } {
-  const nf = track.frameCount;
-  const hopSec = track.hopSec || DSP_PARAMS.rmsHopMs / 1000;
-  const minSegFrames = Math.max(2, Math.round((opts.minSegmentSec ?? TEMPORAL_PARAMS.minSegmentSec) / hopSec));
-  const maxSegments = Math.max(1, opts.maxSegments ?? TEMPORAL_PARAMS.maxSegments);
-
-  const novelty = new Array<number>(nf).fill(0);
-  if (nf < 2 * minSegFrames) return { boundaries: [], novelty, changeMean: 0, changePeak: 0 };
-
-  // Channels (within-hum z-scored, gap-filled, smoothed).
+export function buildTemporalChannels(track: FrameTrack): { channels: number[][]; names: readonly string[] } {
+  const sf = TEMPORAL_PARAMS.smoothFrames;
   const energyLog = track.energy.map((e) => Math.log(Math.max(e, 1e-5)));
   const f0Valid = track.f0Hz.map((v) => v !== null && Number.isFinite(v as number));
   const f0Semi = fillGaps(
@@ -360,74 +422,150 @@ export function detectChangePoints(
     track.centroidHz.map((c, i) => (track.active[i] && c > 0 ? Math.log(c) : null)),
     track.active,
   );
-  const fluxFilled = fillGaps(
-    track.flux.map((c, i) => (track.active[i] ? c : null)),
+  const bandwidthLog = fillGaps(
+    track.bandwidthHz.map((c, i) => (track.active[i] && c > 0 ? Math.log(c) : null)),
     track.active,
   );
+  const rolloffLog = fillGaps(
+    track.rolloffHz.map((c, i) => (track.active[i] && c > 0 ? Math.log(c) : null)),
+    track.active,
+  );
+  const fluxFilled = fillGaps(track.flux.map((c, i) => (track.active[i] ? c : null)), track.active);
+  const zcrFilled = fillGaps(track.zcr.map((c, i) => (track.active[i] ? c : null)), track.active);
+  const pitchPerturb = absDiff(f0Semi);
+  const ampPerturb = absDiff(energyLog);
 
-  const sf = TEMPORAL_PARAMS.smoothFrames;
   const channels = [
     smooth(zScore(energyLog), sf),
     smooth(zScore(f0Semi), sf),
     smooth(zScore(centroidLog), sf),
     smooth(zScore(fluxFilled), sf),
+    smooth(zScore(bandwidthLog), sf),
+    smooth(zScore(rolloffLog), sf),
+    smooth(zScore(zcrFilled), sf),
+    smooth(zScore(pitchPerturb), sf),
+    smooth(zScore(ampPerturb), sf),
   ];
-  const prefixes = channels.map(prefixSums);
-
-  const threshold = TEMPORAL_PARAMS.splitGain;
-  const maxBoundaries = maxSegments - 1;
-  const accepted: number[] = [];
-  let peak = 0;
-
-  // Greedy binary segmentation: recursively split the strongest separations first.
-  const recurse = (a: number, b: number): void => {
-    if (accepted.length >= maxBoundaries) return;
-    if (b - a < 2 * minSegFrames) return;
-    const { t, gain } = bestSplit(prefixes, a, b, minSegFrames);
-    if (t < 0) return;
-    if (a === 0 && b === nf) peak = gain; // top-level separation (reported as changePeak)
-    if (gain < threshold) return;
-    accepted.push(t);
-    recurse(a, t);
-    recurse(t, b);
-  };
-  recurse(0, nf);
-  accepted.sort((a, b) => a - b);
-
-  // Record the per-frame top-level gain curve for visualization/diagnostics.
-  const top = bestSplitCurve(prefixes, 0, nf, minSegFrames, novelty);
-  return { boundaries: accepted, novelty, changeMean: top.mean, changePeak: Math.max(peak, top.peak) };
+  return { channels, names: TEMPORAL_CHANNELS };
 }
 
-/** Fill `out[t]` with the normalized top-level split gain at each t (for viz/debug). */
-function bestSplitCurve(
-  prefixes: readonly Float64Array[],
-  a: number,
-  b: number,
-  minSegFrames: number,
-  out: number[],
-): { mean: number; peak: number } {
-  const N = b - a;
-  let sum = 0;
-  let count = 0;
+/** O(1) within-segment SSE of channel `c` over [a,b) from its sum/sumSq prefixes. */
+function segSSE(P1: Float64Array, P2: Float64Array, a: number, b: number): number {
+  const nseg = b - a;
+  if (nseg <= 0) return 0;
+  const s = (P1[b] as number) - (P1[a] as number);
+  const ss = (P2[b] as number) - (P2[a] as number);
+  return Math.max(0, ss - (s * s) / nseg);
+}
+
+/** Weighted-average (over channels) within-segment SSE of [a,b). */
+function avgSegCost(prefix1: readonly Float64Array[], prefix2: readonly Float64Array[], a: number, b: number): number {
+  const d = prefix1.length;
+  if (d === 0) return 0;
+  let acc = 0;
+  for (let c = 0; c < d; c++) acc += (WEIGHTS[c] as number) * segSSE(prefix1[c] as Float64Array, prefix2[c] as Float64Array, a, b);
+  return acc / WEIGHT_SUM;
+}
+
+/**
+ * The UNSUPERVISED segmenter (Stable Build v13). Builds the within-hum z-scored multivariate
+ * channels, then finds — for every candidate chunk count K — the GLOBALLY optimal partition
+ * minimizing the average within-segment variance (k-segments / PELT-family least-squares
+ * objective) by DYNAMIC PROGRAMMING, subject to the minimum chunk length. A complexity
+ * PENALTY (`splitGain` per added chunk, per frame) then selects K: an extra chunk is kept only
+ * when it reduces the average within-segment variance by more than the penalty. No per-hum
+ * threshold tuning, no label — the data's own variability decides the chunk count. Because the
+ * cost compares whole segments it detects both abrupt STEPS and gradual TRENDS (a step detector
+ * misses the latter). Returns the internal boundary FRAME indices (sorted ascending; empty ⇒ one
+ * chunk) plus the per-frame novelty curve for visualization.
+ */
+export function detectChangePoints(
+  track: FrameTrack,
+  opts: { minSegmentSec?: number; maxSegments?: number } = {},
+): { boundaries: number[]; novelty: number[]; changeMean: number; changePeak: number } {
+  const nf = track.frameCount;
+  const hopSec = track.hopSec || DSP_PARAMS.rmsHopMs / 1000;
+  const minSegFrames = Math.max(2, Math.round((opts.minSegmentSec ?? TEMPORAL_PARAMS.minSegmentSec) / hopSec));
+  const maxSegments = Math.max(1, opts.maxSegments ?? TEMPORAL_PARAMS.maxSegments);
+  const penaltyPerFrame = TEMPORAL_PARAMS.splitGain;
+
+  const novelty = new Array<number>(nf).fill(0);
+  if (nf < 2 * minSegFrames) return { boundaries: [], novelty, changeMean: 0, changePeak: 0 };
+
+  const { channels } = buildTemporalChannels(track);
+  const prefix1 = channels.map(prefixSums);
+  const prefix2 = channels.map((ch) => prefixSums(ch.map((v) => v * v)));
+
+  // Top-level novelty curve (per-frame, per-channel between-segment gain) for viz + changeMean/Peak.
+  const wholeCost = avgSegCost(prefix1, prefix2, 0, nf);
   let peak = 0;
-  for (let t = a + minSegFrames; t <= b - minSegFrames; t++) {
-    const nL = t - a;
-    const nR = b - t;
-    let g = 0;
-    for (const P of prefixes) {
-      const meanL = ((P[t] as number) - (P[a] as number)) / nL;
-      const meanR = ((P[b] as number) - (P[t] as number)) / nR;
-      const d = meanL - meanR;
-      g += ((nL * nR) / N) * d * d;
-    }
-    const ng = g / N;
-    out[t] = ng;
-    sum += ng;
-    count++;
-    if (ng > peak) peak = ng;
+  let novSum = 0;
+  let novCount = 0;
+  for (let t = minSegFrames; t <= nf - minSegFrames; t++) {
+    const split = avgSegCost(prefix1, prefix2, 0, t) + avgSegCost(prefix1, prefix2, t, nf);
+    const gainPerFrame = (wholeCost - split) / nf;
+    novelty[t] = gainPerFrame;
+    novSum += gainPerFrame;
+    novCount++;
+    if (gainPerFrame > peak) peak = gainPerFrame;
   }
-  return { mean: count > 0 ? sum / count : 0, peak };
+  const changeMean = novCount > 0 ? novSum / novCount : 0;
+  const changePeak = peak;
+
+  // Largest feasible K under the min-length + cap constraints.
+  const maxK = Math.max(1, Math.min(maxSegments, Math.floor(nf / minSegFrames)));
+  if (maxK <= 1) return { boundaries: [], novelty, changeMean, changePeak };
+
+  // DP optimal partition for each K: dp[k][j] = min total avg-SSE over [0,j) in k segments,
+  // each ≥ minSegFrames; back[k][j] = the split index achieving it.
+  const INF = Number.POSITIVE_INFINITY;
+  const dp: number[][] = Array.from({ length: maxK + 1 }, () => new Array<number>(nf + 1).fill(INF));
+  const back: number[][] = Array.from({ length: maxK + 1 }, () => new Array<number>(nf + 1).fill(-1));
+  for (let j = minSegFrames; j <= nf; j++) dp[1]![j] = avgSegCost(prefix1, prefix2, 0, j);
+  for (let k = 2; k <= maxK; k++) {
+    const lo = k * minSegFrames;
+    for (let j = lo; j <= nf; j++) {
+      let best = INF;
+      let bestI = -1;
+      const iHi = j - minSegFrames;
+      for (let i = (k - 1) * minSegFrames; i <= iHi; i++) {
+        const prev = dp[k - 1]![i] as number;
+        if (prev === INF) continue;
+        const cost = prev + avgSegCost(prefix1, prefix2, i, j);
+        if (cost < best) {
+          best = cost;
+          bestI = i;
+        }
+      }
+      dp[k]![j] = best;
+      back[k]![j] = bestI;
+    }
+  }
+
+  // Penalized model selection: choose K minimizing totalSSE(K) + penalty·(K−1) per frame.
+  let bestK = 1;
+  let bestScore = (dp[1]![nf] as number) + 0;
+  for (let k = 2; k <= maxK; k++) {
+    const total = dp[k]![nf] as number;
+    if (!Number.isFinite(total)) continue;
+    const score = total + penaltyPerFrame * nf * (k - 1);
+    if (score < bestScore - 1e-12) {
+      bestScore = score;
+      bestK = k;
+    }
+  }
+
+  // Backtrack the boundaries for the selected K.
+  const boundaries: number[] = [];
+  let j = nf;
+  for (let k = bestK; k >= 2; k--) {
+    const i = back[k]![j] as number;
+    if (i <= 0) break;
+    boundaries.push(i);
+    j = i;
+  }
+  boundaries.sort((a, b) => a - b);
+  return { boundaries, novelty, changeMean, changePeak };
 }
 
 /** Downsample a series to ≤ `points` and self-normalize to [0,1] (min→0, max→1). */
@@ -453,11 +591,12 @@ function contour(values: readonly number[], points: number): number[] {
 }
 
 /**
- * FULL within-hum temporal analysis: live-track → change-point chunks → per-chunk
+ * FULL within-hum temporal analysis: live-track → unsupervised chunks → per-chunk
  * production features. Each chunk's features come from re-running `computeFeatures`
  * on the chunk's own samples, so a chunk feature means exactly what a whole-hum
  * feature means. A hum that never decisively shifts yields ONE chunk (the whole hum) —
- * a meaningful "steady throughout" outcome, not a forced split.
+ * a meaningful "steady throughout" outcome, not a forced split. The dense `FrameTrack`
+ * stays local: it is consumed here and never attached to the returned analysis.
  */
 export function analyzeTemporalDynamics(
   input: AudioInput,

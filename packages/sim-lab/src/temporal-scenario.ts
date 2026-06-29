@@ -57,9 +57,33 @@ export function temporalCases(): TemporalCase[] {
     {
       label: "flat / identical chunks",
       chunks: [refHum(), refHum(), refHum()],
-      // NOT-SKEWED: identical chunks may not manufacture a trajectory.
-      expect: (r) => r.shape === "steady" && Math.abs(r.arousalArc) < EPS && Math.abs(r.valenceArc) < EPS,
-      contract: "identical chunks → steady, arc ≈ 0 (no manufactured trajectory)",
+      // NOT-SKEWED: identical chunks may not manufacture a trajectory OR a variation mode.
+      expect: (r) => r.shape === "steady" && Math.abs(r.arousalArc) < EPS && Math.abs(r.valenceArc) < EPS && r.variationMode === "steady",
+      contract: "identical chunks → steady, arc ≈ 0, variation steady (no manufactured trajectory)",
+    },
+    {
+      // v13: chunks that differ MUSICALLY (brightness/melody move; energy + steadiness held) must
+      // read as a musical wander, NOT an inner-state shift — the directive's "differ musically".
+      label: "musical variation (melody + brightness move, feeling held)",
+      chunks: [
+        refHum({ meanRms: 0.08, spectralCentroidHz: 1100, pitchRangeSemitones: 1, musicalityScore: 0.4, residualInstabilityScore: 0.3 }),
+        refHum({ meanRms: 0.08, spectralCentroidHz: 1700, pitchRangeSemitones: 3.5, musicalityScore: 0.6, residualInstabilityScore: 0.3 }),
+        refHum({ meanRms: 0.08, spectralCentroidHz: 2300, pitchRangeSemitones: 6, musicalityScore: 0.8, residualInstabilityScore: 0.3 }),
+      ],
+      expect: (r) => r.variationMode === "musical",
+      contract: "melody/brightness move, energy+steadiness held → variationMode musical",
+    },
+    {
+      // v13: chunks that differ in ENERGY + STEADINESS (melody/brightness held) must read as an
+      // inner-state shift, NOT a musical wander — the directive's "inner-state indicators".
+      label: "inner-state shift (energy + steadiness move, melody held)",
+      chunks: [
+        refHum({ meanRms: 0.03, residualInstabilityScore: 0.2, spectralCentroidHz: 1500, pitchRangeSemitones: 3, musicalityScore: 0.5, activeFrameRatio: 0.55 }),
+        refHum({ meanRms: 0.06, residualInstabilityScore: 0.4, spectralCentroidHz: 1500, pitchRangeSemitones: 3, musicalityScore: 0.5, activeFrameRatio: 0.7 }),
+        refHum({ meanRms: 0.11, residualInstabilityScore: 0.6, spectralCentroidHz: 1500, pitchRangeSemitones: 3, musicalityScore: 0.5, activeFrameRatio: 0.85 }),
+      ],
+      expect: (r) => r.variationMode === "inner_state",
+      contract: "energy/steadiness move, melody held → variationMode inner_state",
     },
     {
       label: "rising arousal (energy + flux + movement climb)",

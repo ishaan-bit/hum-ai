@@ -27,7 +27,7 @@ import {
   type HumHistory,
   type OrchestratedRead,
 } from "@hum-ai/orchestrator";
-import { renderHum } from "./synth";
+import { renderControls, renderHum } from "./synth";
 import { latentToControls, type LatentHumProfile, type SynthControls } from "./latent";
 import { consentLocal, SIM_MODEL_VERSION, simTimestamp } from "./context";
 
@@ -105,6 +105,20 @@ export interface SimResult {
     readonly relapseClass: string | null;
     readonly relapseDrift: number;
   };
+  /**
+   * The WITHIN-HUM trajectory (v13) the production read produced for this hum — chunk count,
+   * the recovered shape + variation mode (musical vs inner-state), and the chunk-to-chunk arcs.
+   * Null when the read abstained or no temporal analysis ran. Lets an inner-state run be scored
+   * against the recovered chunks/trajectory, not just the whole-hum V/A.
+   */
+  readonly temporal: {
+    readonly segmentCount: number;
+    readonly shape: string;
+    readonly variationMode: string;
+    readonly valenceArc: number;
+    readonly arousalArc: number;
+    readonly energyArc: number;
+  } | null;
   readonly warnings: readonly string[];
   readonly timingMs: number;
 }
@@ -223,6 +237,16 @@ export function captureResult(
       relapseClass: read.internal.relapse?.class ?? null,
       relapseDrift: inf.relapseDrift ?? 0,
     },
+    temporal: read.internal.temporal
+      ? {
+          segmentCount: read.internal.temporal.segmentCount,
+          shape: read.internal.temporal.shape,
+          variationMode: read.internal.temporal.variationMode,
+          valenceArc: read.internal.temporal.valenceArc,
+          arousalArc: read.internal.temporal.arousalArc,
+          energyArc: read.internal.temporal.energyArc,
+        }
+      : null,
     warnings: collectWarnings(f, read),
     timingMs,
   };
@@ -242,6 +266,34 @@ export async function runHum(id: string, latent: LatentHumProfile, opts: RunOpti
   const consent = opts.consent ?? consentLocal(now);
 
   // EXACT production entry point — computeFeatures runs INSIDE orchestrateHumAudio.
+  const read = await orchestrateHumAudio({
+    audio,
+    consent,
+    modelVersion: SIM_MODEL_VERSION,
+    now,
+    history: opts.history,
+  });
+  return captureResult(id, latent, audio, read, Date.now() - t0);
+}
+
+/**
+ * Run ONE latent profile through the full pipeline WITH an explicit within-hum CONTOUR override
+ * (v13). The contour (`energyShift` / `pitchShiftSemis` / `shiftCenter` / `shiftSharpness`) is the
+ * within-hum arc an inner state requests — e.g. a depressive FADING + falling-pitch arc, or an
+ * anxious RISING/jittery arc — so a single inner-state hum shapes BOTH the mean latent AND its
+ * trajectory. The contour is applied to the controls AFTER `latentToControls`, exactly the seam the
+ * v12 temporal gate uses. No label is fed into the pipeline (the expectation is scored separately).
+ */
+export async function runHumWithContour(
+  id: string,
+  latent: LatentHumProfile,
+  contour: Partial<SynthControls>,
+  opts: RunOptions = {},
+): Promise<SimResult> {
+  const t0 = Date.now();
+  const audio = renderControls({ ...latentToControls(latent), ...contour });
+  const now = opts.now ?? simTimestamp(0);
+  const consent = opts.consent ?? consentLocal(now);
   const read = await orchestrateHumAudio({
     audio,
     consent,

@@ -1,5 +1,5 @@
 import { isTimbreFeature, type AcousticFeatures } from "@hum-ai/audio-features";
-import { clamp, zDelta, type RobustStats } from "@hum-ai/shared-types";
+import { clamp, rangePosition, zDelta, type RangeStats, type RobustStats } from "@hum-ai/shared-types";
 
 /** Winsor cap on a within-person z-delta so a near-constant (degenerate) feature can't explode. */
 export const TIMBRE_STANDARDIZE_WINSOR_Z = 6;
@@ -172,6 +172,140 @@ export interface FeatureSchemaSnapshot {
   readonly vectorLength: number;
   readonly vectorNames: readonly string[];
   readonly note: string;
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────
+// v13 — WITHIN-HUM + LONGITUDINAL-RANGE representations (the "model adjustment").
+//
+// The directive: chunking / inner-state prediction should reason over WITHIN-HUM relative
+// values, while ABSOLUTE values feed a longitudinal per-user VOCAL-RANGE model; "the variations
+// relative to the individual … are the parameters which should be used … not absolute values."
+//
+// These functions are the representation that realizes it. They are ADDITIVE and SEPARATE from
+// `toFeatureVector` — the absolute / within-person-z-delta vector trained models already depend on
+// is left byte-identical (its standardizer is serialized with every artifact; changing it would
+// silently corrupt promoted priors). The new vectorizers carry NO persisted artifact: the within-hum
+// trajectory model is unsupervised + deterministic, so it can adopt a richer representation freely.
+// ────────────────────────────────────────────────────────────────────────────────────
+
+/** A per-feature LONGITUDINAL vocal-range model (feature → the user's robust reachable span). */
+export type FeatureRange = Record<string, RangeStats>;
+
+/**
+ * LONGITUDINAL-RANGE standardization (v13). Map an IDENTITY-bearing `timbre` feature to where it
+ * sits in the user's OWN reachable range, centered to [-1,1] (low edge → −1, mid → 0, high edge →
+ * +1). This is the absolute-but-personal frame: a value high in THIS person's loudness range reads
+ * "+", regardless of how loud their voice is vs the population. Returns the raw value unchanged when
+ * the feature is not identity-bearing or the range is not yet trustworthy (a caller then falls back
+ * to the population-absolute read). The range complement of `standardizeTimbre` (which uses z-delta
+ * vs the median); use whichever frame a model was fit on.
+ */
+export function rangeStandardize(key: string, value: number, range: FeatureRange | undefined): number {
+  if (!range || !isTimbreFeature(key)) return value;
+  const stats = range[key];
+  if (!stats) return value;
+  const pos = rangePosition(value, stats); // [0,1] or null
+  return pos === null ? value : pos * 2 - 1; // center to [-1,1]
+}
+
+/**
+ * The mood-variable features whose WITHIN-HUM trajectory the inner-state read reasons over. A
+ * curated subset (the carriers of arousal/valence + steadiness), so the trajectory vector is fixed
+ * length and dense. Nullable members contribute zeros when a chunk could not compute them.
+ */
+export const TRAJECTORY_FEATURE_KEYS = [
+  "meanRms",
+  "pitchMeanHz",
+  "pitchRangeSemitones",
+  "spectralCentroidHz",
+  "spectralFlux",
+  "jitter",
+  "shimmerProxy",
+  "amplitudeStability",
+  "residualInstabilityScore",
+  "musicalityScore",
+] as const satisfies readonly (keyof AcousticFeatures)[];
+
+/** Number of columns in a trajectory vector: 1 (chunk count) + 3 summaries per feature. */
+export function trajectoryVectorLength(): number {
+  return 1 + TRAJECTORY_FEATURE_KEYS.length * 3;
+}
+
+/** Ordered names of the trajectory vector columns (chunk count, then arc/range/volatility per feature). */
+export function trajectoryVectorNames(): string[] {
+  const names: string[] = ["chunkCountNorm"];
+  for (const k of TRAJECTORY_FEATURE_KEYS) {
+    names.push(`${k}__arc`, `${k}__range`, `${k}__volatility`);
+  }
+  return names;
+}
+
+/** Mean / population-std of a finite series (std 0 ⇒ a flat series). */
+function meanStd(xs: readonly number[]): { mean: number; std: number } {
+  const n = xs.length;
+  if (n === 0) return { mean: 0, std: 0 };
+  let m = 0;
+  for (const x of xs) m += x;
+  m /= n;
+  let v = 0;
+  for (const x of xs) v += (x - m) * (x - m);
+  return { mean: m, std: Math.sqrt(v / n) };
+}
+
+/**
+ * VECTORIZE the WITHIN-HUM trajectory (v13). Given the ordered per-chunk features of one hum,
+ * emit a fixed-length vector of WITHIN-HUM relative variation: for each trajectory feature, the
+ * chunk values are z-scored ACROSS THIS HUM'S CHUNKS (so a husky vs bright voice cannot manufacture
+ * a trajectory — every column is within-hum by construction) and summarized as:
+ *   - arc        — last-chunk minus first-chunk z (the net direction across the hum);
+ *   - range      — max minus min z (how far the parameter swung within the hum);
+ *   - volatility — mean |chunk-to-chunk z step| (how restlessly it moved).
+ * A leading `chunkCountNorm` encodes fragmentation (the chunk count is itself a signal). A single
+ * chunk, or identical chunks, yields the zero vector — no manufactured trajectory. Pure; emits no
+ * absolute level, so it is inherently trait-decoupled.
+ */
+export function toTrajectoryVector(chunkFeatures: readonly AcousticFeatures[]): number[] {
+  const k = chunkFeatures.length;
+  const chunkCountNorm = clamp((k - 1) / 4, 0, 1); // 1 chunk → 0, ≥5 chunks → 1
+  const out: number[] = [chunkCountNorm];
+  if (k < 2) {
+    for (let i = 0; i < TRAJECTORY_FEATURE_KEYS.length; i++) out.push(0, 0, 0);
+    return out;
+  }
+  for (const key of TRAJECTORY_FEATURE_KEYS) {
+    // Collect the chunk values that are present + finite (nullable features may be absent).
+    const present: { idx: number; v: number }[] = [];
+    chunkFeatures.forEach((f, idx) => {
+      const raw = (f as unknown as Record<string, number | null | undefined>)[key];
+      if (typeof raw === "number" && Number.isFinite(raw)) present.push({ idx, v: raw });
+    });
+    if (present.length < 2) {
+      out.push(0, 0, 0);
+      continue;
+    }
+    const { mean: m, std: s } = meanStd(present.map((p) => p.v));
+    if (s < 1e-9) {
+      out.push(0, 0, 0); // flat across chunks → no trajectory
+      continue;
+    }
+    const z = present.map((p) => (p.v - m) / s);
+    const first = z[0] as number;
+    const last = z[z.length - 1] as number;
+    let lo = Infinity;
+    let hi = -Infinity;
+    let stepAcc = 0;
+    for (let i = 0; i < z.length; i++) {
+      const zi = z[i] as number;
+      if (zi < lo) lo = zi;
+      if (zi > hi) hi = zi;
+      if (i > 0) stepAcc += Math.abs(zi - (z[i - 1] as number));
+    }
+    const arc = last - first;
+    const range = hi - lo;
+    const volatility = stepAcc / (z.length - 1);
+    out.push(arc, range, volatility);
+  }
+  return out;
 }
 
 export function featureSchemaSnapshot(): FeatureSchemaSnapshot {

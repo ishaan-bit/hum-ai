@@ -29,6 +29,7 @@ import {
   runSequence,
 } from "./longitudinal";
 import { runTemporalGate } from "./temporal-scenarios";
+import { evaluateInnerStateGate, runInnerStateBattery, runLongitudinalInnerStateGate } from "./inner-state";
 
 const argv = process.argv.slice(2);
 const mode = argv[0] && !argv[0].startsWith("--") ? argv[0] : "report";
@@ -77,6 +78,24 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (mode === "inner") {
+    const battery = await runInnerStateBattery(mode === "inner" ? 6 : 4);
+    const gate = evaluateInnerStateGate(battery);
+    const long = await runLongitudinalInnerStateGate();
+    console.log("=== v13 INNER-STATE RECOVERY GATE (state → wide hum distribution → recovered) ===\n");
+    for (const row of gate.rows) console.log("  " + row);
+    console.log("");
+    for (const c of gate.checks) console.log(`${c.pass ? "OK " : "XX "} ${c.id.padEnd(34)} ${c.detail}`);
+    console.log("\n=== v13 LONGITUDINAL INNER-STATE GATE (within-user drift recovery) ===\n");
+    for (const row of long.rows) console.log("  " + row);
+    console.log("");
+    for (const c of long.checks) console.log(`${c.pass ? "OK " : "XX "} ${c.id.padEnd(34)} ${c.detail}`);
+    const pass = gate.pass && long.pass;
+    console.error(pass ? `\n[hum-sim] inner-state gate: ✅ PASS` : `\n[hum-sim] inner-state gate: ❌ FAIL`);
+    if (!pass) process.exitCode = 1;
+    return;
+  }
+
   if (mode === "longitudinal") {
     const pin = await runSequence(pinUnpinSequence());
     const damp = await runSequence(personalizationDampSequence());
@@ -112,6 +131,20 @@ async function main(): Promise<void> {
   console.log("");
   for (const c of temporal.checks) console.log(`- ${c.pass ? "✅" : "❌"} \`${c.id}\` — ${c.detail}`);
 
+  // v13 INNER-STATE RECOVERY GATE — start from the inner states, recover them from the read.
+  const innerReps = mode === "fast" ? 4 : 6;
+  const innerBattery = await runInnerStateBattery(innerReps);
+  const innerGate = evaluateInnerStateGate(innerBattery);
+  const innerLong = await runLongitudinalInnerStateGate();
+  console.log("\n## v13 · Inner-state recovery gate (state → wide hum distribution → recovered)\n");
+  for (const row of innerGate.rows) console.log("    " + row);
+  console.log("");
+  for (const c of innerGate.checks) console.log(`- ${c.pass ? "✅" : "❌"} \`${c.id}\` — ${c.detail}`);
+  console.log("\n## v13 · Longitudinal inner-state gate (within-user drift recovery)\n");
+  for (const row of innerLong.rows) console.log("    " + row);
+  console.log("");
+  for (const c of innerLong.checks) console.log(`- ${c.pass ? "✅" : "❌"} \`${c.id}\` — ${c.detail}`);
+
   if (jsonPath) {
     writeFileSync(jsonPath, JSON.stringify({ ...artifact, temporal }, null, 2), "utf8");
     console.error(`\n[hum-sim] wrote artifact → ${jsonPath}`);
@@ -126,13 +159,15 @@ async function main(): Promise<void> {
   }
   const failedCore = artifact.gate.checks.filter((c) => !c.pass);
   const failedTemporal = temporal.checks.filter((c) => !c.pass);
-  if (!artifact.gate.pass || !temporal.pass) {
-    console.error(`\n[hum-sim] RELEASE GATE FAILED — ${failedCore.length + failedTemporal.length} check(s):`);
-    for (const c of [...failedCore, ...failedTemporal]) console.error(`  ❌ ${c.id}: ${c.detail}`);
+  const failedInner = [...innerGate.checks, ...innerLong.checks].filter((c) => !c.pass);
+  const allPass = artifact.gate.pass && temporal.pass && innerGate.pass && innerLong.pass;
+  if (!allPass) {
+    console.error(`\n[hum-sim] RELEASE GATE FAILED — ${failedCore.length + failedTemporal.length + failedInner.length} check(s):`);
+    for (const c of [...failedCore, ...failedTemporal, ...failedInner]) console.error(`  ❌ ${c.id}: ${c.detail}`);
     process.exitCode = 1;
   } else {
     console.error(
-      `\n[hum-sim] release gate: ✅ PASS (${artifact.gate.checks.length} core + ${temporal.checks.length} temporal checks).`,
+      `\n[hum-sim] release gate: ✅ PASS (${artifact.gate.checks.length} core + ${temporal.checks.length} temporal + ${innerGate.checks.length + innerLong.checks.length} inner-state checks).`,
     );
   }
 }

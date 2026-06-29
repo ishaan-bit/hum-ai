@@ -6,6 +6,7 @@ export * from "./context";
 export * from "./profile";
 export * from "./axis-calibration";
 export * from "./dual-baseline";
+export * from "./vocal-range";
 export * from "./signatures";
 export * from "./salience";
 export * from "./deviation";

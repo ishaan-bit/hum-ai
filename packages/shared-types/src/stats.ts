@@ -92,3 +92,67 @@ export function ciShrunkMagnitude(ci: ZDeltaCI, band: number): number {
   if (!overlapsBand) return Math.abs(ci.center);
   return Math.max(0, Math.abs(ci.center) - ci.halfWidth);
 }
+
+/**
+ * Robust per-parameter RANGE statistics — the LONGITUDINAL VOCAL-RANGE model (Stable
+ * Build v13). Where `RobustStats` captures a feature's CENTER + SCALE (median/MAD), this
+ * captures its observed SPAN: how low and how high this parameter goes for THIS user.
+ *
+ * Why range is its own model. A user's vocal range — how quiet↔loud, low↔high, dark↔bright
+ * their voice gets — is an ABSOLUTE property of the speaker that only sharpens as more hums
+ * arrive (the directive's "absolute values … assessing a user's vocal range … refined through
+ * subsequent hums"). The z-delta-vs-median the rest of the engine uses answers "how unusual is
+ * this hum"; the range answers "WHERE in this person's own reachable span does this hum sit"
+ * — the natural reference frame for reading a within-hum parameter without an absolute offset.
+ *
+ * Robust by construction: the span is the p05…p95 inter-percentile range, not raw min/max, so a
+ * single clipped/near-silent hum cannot blow the range open (the same robust-estimator discipline
+ * as `computeRobustStats`). raw `min`/`max` are retained for transparency only.
+ */
+export interface RangeStats {
+  /** Number of samples the range was computed from. */
+  readonly n: number;
+  /** Raw observed minimum (transparency only — not used for normalization). */
+  readonly min: number;
+  /** Raw observed maximum (transparency only). */
+  readonly max: number;
+  /** Robust lower edge of the span (5th percentile). */
+  readonly p05: number;
+  /** Robust upper edge of the span (95th percentile). */
+  readonly p95: number;
+  /** Robust span = p95 − p05 (the user's reachable range for this parameter). */
+  readonly span: number;
+  /** Median — the robust center, for convenience (== `RobustStats.median`). */
+  readonly median: number;
+}
+
+/** Build the robust range stats for one parameter over the user's eligible-hum samples. */
+export function computeRangeStats(values: readonly number[]): RangeStats {
+  const finite = values.filter((v) => Number.isFinite(v));
+  const n = finite.length;
+  if (n === 0) {
+    return { n: 0, min: Number.NaN, max: Number.NaN, p05: Number.NaN, p95: Number.NaN, span: Number.NaN, median: Number.NaN };
+  }
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of finite) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const p05 = percentile(finite, 0.05);
+  const p95 = percentile(finite, 0.95);
+  return { n, min, max, p05, p95, span: Math.max(0, p95 - p05), median: median(finite) };
+}
+
+/**
+ * Where `value` sits within the user's own robust range, mapped to [0,1] (p05→0, p95→1),
+ * clamped. This is RANGE-NORMALIZATION — the absolute-but-personal reference frame: 0.5 means
+ * "mid-range for this person", 0/1 mean "at the low/high edge of what they reach". Returns
+ * `null` when the range is too thin to be meaningful (degenerate span), so a caller falls back
+ * to the population-absolute read rather than a fabricated 0.5. `minSpan` floors the denominator.
+ */
+export function rangePosition(value: number, stats: RangeStats, minSpan = 1e-9): number | null {
+  if (!stats || stats.n <= 0 || !Number.isFinite(stats.span) || stats.span <= minSpan) return null;
+  const t = (value - stats.p05) / stats.span;
+  return t < 0 ? 0 : t > 1 ? 1 : t;
+}

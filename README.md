@@ -106,14 +106,14 @@ The 10 required test areas and where each is covered:
 
 ## Documentation index
 
-- **Stable Build v12 — latest release spec (within-hum temporal trajectory: parameters tracked live, the hum chunked post-hoc at its own change-points, inner state predicted from the chunk-to-chunk variation):** [docs/STABLE_BUILD_V12.md](docs/STABLE_BUILD_V12.md) · [ADR-0014](docs/adr/0014-within-hum-temporal-trajectory.md) · earlier specs: [v11](docs/STABLE_BUILD_V11.md) (trait-decoupling) … [v2](docs/STABLE_BUILD_V2.md)
+- **Stable Build v13 — latest release spec (UNSUPERVISED within-hum chunking over the full feature set, a longitudinal per-user VOCAL-RANGE model fed by absolutes, chunks labelled musical-vs-inner-state, and a hum simulator rebuilt to START FROM the inner states it must infer):** [docs/STABLE_BUILD_V13.md](docs/STABLE_BUILD_V13.md) · [ADR-0015](docs/adr/0015-unsupervised-chunking-longitudinal-vocal-range-inner-state-sim.md) · earlier specs: [v12](docs/STABLE_BUILD_V12.md) (within-hum temporal trajectory) · [v11](docs/STABLE_BUILD_V11.md) (trait-decoupling) … [v2](docs/STABLE_BUILD_V2.md)
 - **Architecture & tech spec (latest):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · **All-layers revamp plan:** [docs/REVAMP_PLAN.md](docs/REVAMP_PLAN.md)
 - Source manifest & provenance: [docs/source/INDEX.md](docs/source/INDEX.md) (source binaries are local-only — see [docs/source/README.md](docs/source/README.md))
 - Architecture: [docs/architecture/](docs/architecture/) (pipeline, fusion, personalization, relapse, [voice-first roadmap](docs/architecture/VOICE_FIRST_ROADMAP.md))
 - Claims ladder & non-claims: [docs/claims/CLAIMS_LADDER.md](docs/claims/CLAIMS_LADDER.md)
 - Validation & evaluation protocol: [docs/validation/](docs/validation/), [research/evaluation/](research/evaluation/README.md)
 - Privacy & data governance: [docs/privacy/DATA_GOVERNANCE.md](docs/privacy/DATA_GOVERNANCE.md), [public-repo privacy checklist](docs/privacy/PUBLIC_REPO_PRIVACY_CHECKLIST.md)
-- Decision records: [docs/adr/](docs/adr/) — naming (0000), spine (0001), audio (0002), personalization/relapse (0003), confidence (0004), datasets-as-priors (0005), **two-head separation (0006)**, **dual baseline (0007)**, **user-facing confidence (0008)**, **voice-first/camera-later (0009)**, **model-led axis read from hum #1 (0010)**, **HiTL native-hum retraining loop (0011)**, **cross-user population corpus loop (0012)**
+- Decision records: [docs/adr/](docs/adr/) — naming (0000), spine (0001), audio (0002), personalization/relapse (0003), confidence (0004), datasets-as-priors (0005), **two-head separation (0006)**, **dual baseline (0007)**, **user-facing confidence (0008)**, **voice-first/camera-later (0009)**, **model-led axis read from hum #1 (0010)**, **HiTL native-hum retraining loop (0011)**, **cross-user population corpus loop (0012)**, **trait-decoupled within-person standardized read (0013)**, **within-hum temporal trajectory (0014)**, **unsupervised chunking + longitudinal vocal-range + inner-state simulator (0015)**
 - DevOps & deployment: [docs/devops/](docs/devops/) (GitHub bootstrap, branch protection, Vercel setup, deployment, environment variables)
 - Research scaffolds & model cards: [research/README.md](research/README.md), [research/model-cards/](research/model-cards/)
 

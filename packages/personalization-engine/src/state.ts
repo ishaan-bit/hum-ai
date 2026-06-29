@@ -84,6 +84,8 @@ export function syncableProfile(state: PersonalizationState): UserModelProfile {
     high_risk_signature_vector: p.high_risk_signature_vector,
     salience_vector: p.salience_vector,
     contextual_centers: p.contextual_centers,
+    // v13: the longitudinal vocal-range model is a free-form feature-keyed map — scan it too.
+    vocal_range_vector: p.vocal_range_vector,
   });
   return p;
 }

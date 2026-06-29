@@ -23,9 +23,16 @@
  * a reflective, NON-diagnostic surfaced layer — it complements the whole-hum read, it
  * does not silently rewrite the V/A backbone. All copy passes `@hum-ai/safety-language`.
  */
-import { clamp, clamp01, normalize } from "@hum-ai/shared-types";
-import type { TemporalAnalysis } from "@hum-ai/audio-features";
+import { clamp, clamp01, mean, normalize, rangePosition, type RangeStats } from "@hum-ai/shared-types";
+import type { AcousticFeatures, TemporalAnalysis } from "@hum-ai/audio-features";
 import { acousticAffectAxes, AROUSAL_RMS_LO, AROUSAL_RMS_HI } from "./axis-read";
+
+/**
+ * A per-feature LONGITUDINAL vocal-range model (feature → the user's robust reachable span),
+ * threaded in from `@hum-ai/personalization-engine`'s `vocal_range_vector`. Typed structurally
+ * here so the orchestrator stays decoupled from the personalization package's class surface.
+ */
+export type FeatureRange = Record<string, RangeStats>;
 
 /** The qualitative within-hum trajectory class predicted from chunk-to-chunk change. */
 export type TemporalShape =
@@ -36,7 +43,23 @@ export type TemporalShape =
   | "fading" // energy waned across chunks (withdrawing)
   | "unsettled"; // moved a lot with no clean direction
 
-/** One chunk's read — its own V/A + energy, plus where it sits in the hum. */
+/**
+ * How a chunk DIFFERS from the one before it (Stable Build v13). The design brief is explicit
+ * that "chunks formed might differ from each other MUSICALLY or they can be INNER-STATE
+ * indicators" — a hum can change because the person hummed a different phrase/note/timbre
+ * (musical) or because their felt state shifted (energy / arousal / steadiness). We separate the
+ * two by which family of WITHIN-HUM differences dominates the transition into this chunk.
+ *   - `opening`  the first chunk (nothing precedes it).
+ *   - `musical`  differs mainly in pitch register/contour / brightness / melodic movement.
+ *   - `state`    differs mainly in energy / arousal / valence / steadiness — an inner-state shift.
+ *   - `steady`   no decisive difference from the previous chunk.
+ */
+export type ChunkKind = "opening" | "musical" | "state" | "steady";
+
+/** Whether the hum's chunks differ mostly musically, as inner-state shifts, both, or not at all. */
+export type VariationMode = "steady" | "musical" | "inner_state" | "mixed";
+
+/** One chunk's read — its own V/A + energy, plus where it sits in the hum and how it differs. */
 export interface SegmentRead {
   readonly index: number;
   readonly startSec: number;
@@ -49,6 +72,14 @@ export interface SegmentRead {
   readonly energy: number;
   /** How much clear, voiced signal this chunk carried, [0,1]. */
   readonly signalStrength: number;
+  /** How this chunk DIFFERS from the previous one (musical vs inner-state vs steady). */
+  readonly kind: ChunkKind;
+  /**
+   * Where this chunk's loudness sits in the user's OWN longitudinal vocal range, [0,1] (low edge →
+   * 0, high edge → 1), or null when the range is not yet trustworthy. The absolute-but-personal
+   * reference the longitudinal layer supplies — refined each hum.
+   */
+  readonly energyInRange: number | null;
 }
 
 /** The full within-hum temporal read — surfaced + persisted. */
@@ -68,12 +99,21 @@ export interface TemporalRead {
   /** Mean chunk-to-chunk movement magnitude in V/A space + fragmentation, [0,~]. */
   readonly volatility: number;
   readonly shape: TemporalShape;
+  /** Whether the chunks differ mostly MUSICALLY, as INNER-STATE shifts, both, or not at all (v13). */
+  readonly variationMode: VariationMode;
   /** Qualitative — never a number. */
   readonly confidence: "clear" | "tentative";
   /** Reflective one-liner (safety-screened by the orchestrator with the rest of copy). */
   readonly headline: string;
   /** Short supporting line (safety-screened). */
   readonly detail: string;
+  /** Reflective line on whether the chunks differed musically vs as inner-state shifts (screened, v13). */
+  readonly variationNote: string;
+  /**
+   * Reflective line placing the hum in the user's OWN longitudinal vocal range when it is trustworthy
+   * (the refined-each-hum longitudinal layer), or "" before the range has formed. Screened (v13).
+   */
+  readonly rangeNote: string;
   /** Self-normalized [0,1] energy contour for the within-hum sparkline. */
   readonly energyContour: readonly number[];
 }
@@ -107,6 +147,83 @@ function slope(values: readonly number[]): number {
     den += dx * dx;
   }
   return den > 1e-9 ? num / den : 0;
+}
+
+/**
+ * Perceptual scales that normalize a chunk-to-chunk DIFFERENCE so the musical and state families
+ * are comparable. These are scales of CHANGE (differences), not absolute levels — a husky vs bright
+ * voice produces the same-scale change across its own chunks, so the musical/state split stays
+ * trait-decoupled. A normalized move of ~1 is a clearly noticeable shift.
+ */
+const STATE_SCALES = { arousal: 0.4, valence: 0.4, energy: 0.3, instability: 0.3 } as const;
+const MUSICAL_SCALES = { pitchSemi: 3, pitchRange: 3, brightnessLog: 0.3, musicality: 0.3 } as const;
+/** A normalized within-hum move below this is "no decisive difference" (the chunk is steady vs its predecessor). */
+const CHUNK_MOVE_T = 0.5;
+/** How much musical movement must exceed state movement before a transition is called "musical". */
+const MUSICAL_DOMINANCE = 1.3;
+
+const semis = (hz: number | null): number | null =>
+  hz !== null && Number.isFinite(hz) && hz > 0 ? 12 * Math.log2(hz) : null;
+const logOr = (x: number | null | undefined): number | null =>
+  typeof x === "number" && Number.isFinite(x) && x > 0 ? Math.log(x) : null;
+const absDelta = (a: number | null, b: number | null, scale: number): number =>
+  a !== null && b !== null ? Math.abs(a - b) / scale : 0;
+
+/**
+ * Classify how chunk `cur` differs from chunk `prev` (the transition INTO `cur`): which family of
+ * within-hum differences dominates. `state` move spans the inner-state carriers (arousal, valence,
+ * loudness, steadiness); `musical` move spans the carriers of what was hummed (pitch register +
+ * melodic movement + brightness + musicality). Both are normalized differences (trait-decoupled).
+ */
+function classifyChunkKind(
+  prev: { read: SegmentRead; f: AcousticFeatures },
+  cur: { read: SegmentRead; f: AcousticFeatures },
+): ChunkKind {
+  const stateMove = Math.max(
+    Math.abs(cur.read.arousal - prev.read.arousal) / STATE_SCALES.arousal,
+    Math.abs(cur.read.valence - prev.read.valence) / STATE_SCALES.valence,
+    Math.abs(cur.read.energy - prev.read.energy) / STATE_SCALES.energy,
+    Math.abs((cur.f.residualInstabilityScore ?? 0) - (prev.f.residualInstabilityScore ?? 0)) / STATE_SCALES.instability,
+  );
+  const musicalMove = Math.max(
+    absDelta(semis(cur.f.pitchMeanHz), semis(prev.f.pitchMeanHz), MUSICAL_SCALES.pitchSemi),
+    absDelta(cur.f.pitchRangeSemitones ?? null, prev.f.pitchRangeSemitones ?? null, MUSICAL_SCALES.pitchRange),
+    absDelta(logOr(cur.f.spectralCentroidHz), logOr(prev.f.spectralCentroidHz), MUSICAL_SCALES.brightnessLog),
+    absDelta(cur.f.musicalityScore ?? null, prev.f.musicalityScore ?? null, MUSICAL_SCALES.musicality),
+  );
+  if (Math.max(stateMove, musicalMove) < CHUNK_MOVE_T) return "steady";
+  if (musicalMove >= stateMove * MUSICAL_DOMINANCE && musicalMove >= CHUNK_MOVE_T) return "musical";
+  if (stateMove >= CHUNK_MOVE_T) return "state";
+  return "steady";
+}
+
+/** Aggregate the per-chunk kinds into the hum's overall variation mode. */
+function variationModeOf(kinds: readonly ChunkKind[]): VariationMode {
+  let musical = 0;
+  let state = 0;
+  for (const k of kinds) {
+    if (k === "musical") musical++;
+    else if (k === "state") state++;
+  }
+  if (musical === 0 && state === 0) return "steady";
+  if (state === 0) return "musical";
+  if (musical === 0) return "inner_state";
+  return "mixed";
+}
+
+/** Reflective, non-diagnostic line for the variation mode (woven with the chunk count). */
+function variationCopy(mode: VariationMode, chunks: number): string {
+  switch (mode) {
+    case "musical":
+      return "Its stretches differed more in melody and tone than in feeling — a musical wander.";
+    case "inner_state":
+      return "Its stretches differed in energy and steadiness — the shifts read as inner-state, not just melody.";
+    case "mixed":
+      return "Its stretches differed both musically and in feeling as it went.";
+    case "steady":
+    default:
+      return chunks <= 1 ? "It held one even stretch throughout." : "Its stretches stayed close to one another.";
+  }
 }
 
 /** Classify the trajectory from the chunk-to-chunk variation summaries. */
@@ -172,25 +289,68 @@ function copyFor(shape: TemporalShape, a: { arousalArc: number; valenceArc: numb
   }
 }
 
+/** Optional inputs to the within-hum read (v13): the user's longitudinal vocal range. */
+export interface TemporalReadOptions {
+  /** The user's per-feature longitudinal vocal-range model (`vocal_range_vector`), if formed. */
+  readonly range?: FeatureRange;
+}
+
+/** Reflective line placing the hum's overall loudness in the user's own range (or "" if not formed). */
+function rangeNoteFor(energyInRange: number | null): string {
+  if (energyInRange === null) return "";
+  if (energyInRange >= 0.72) return "Overall, this sat toward the louder end of your usual range.";
+  if (energyInRange <= 0.28) return "Overall, this sat toward the quieter end of your usual range.";
+  return "Overall, this sat around the middle of your usual range.";
+}
+
 /**
  * Build the within-hum temporal read from a `TemporalAnalysis`. Returns null when the
- * analysis is empty/degenerate (no usable chunks) — the caller simply omits the layer.
+ * analysis is empty/degenerate (no usable chunks) — the caller simply omits the layer. The
+ * optional longitudinal vocal `range` (v13) places each chunk + the whole hum in the user's OWN
+ * reachable span (refined each hum); absent ⇒ the within-hum read stands alone (honest cold start).
  */
-export function computeTemporalRead(ta: TemporalAnalysis | undefined | null): TemporalRead | null {
+export function computeTemporalRead(
+  ta: TemporalAnalysis | undefined | null,
+  opts: TemporalReadOptions = {},
+): TemporalRead | null {
   if (!ta || ta.segments.length === 0) return null;
 
-  const segments: SegmentRead[] = ta.segments.map((s) => {
+  const range = opts.range;
+  const rmsRange = range?.["meanRms"];
+
+  // Pass 1: per-chunk V/A + energy + where its loudness sits in the user's own range.
+  const base = ta.segments.map((s) => {
     const ax = acousticAffectAxes(s.features);
     return {
-      index: s.index,
-      startSec: s.startSec,
-      endSec: s.endSec,
-      valence: ax.valence,
-      arousal: ax.arousal,
-      energy: perceptualEnergy(s.features.meanRms),
-      signalStrength: ax.signalStrength,
+      features: s.features,
+      read: {
+        index: s.index,
+        startSec: s.startSec,
+        endSec: s.endSec,
+        valence: ax.valence,
+        arousal: ax.arousal,
+        energy: perceptualEnergy(s.features.meanRms),
+        signalStrength: ax.signalStrength,
+        kind: "opening" as ChunkKind,
+        energyInRange: rmsRange ? rangePosition(s.features.meanRms, rmsRange) : null,
+      } as SegmentRead,
     };
   });
+
+  // Pass 2: classify how each chunk DIFFERS from the one before it (musical vs inner-state).
+  const segments: SegmentRead[] = base.map((b, i) => {
+    if (i === 0) return b.read;
+    const prev = base[i - 1] as { read: SegmentRead; features: AcousticFeatures };
+    const kind = classifyChunkKind({ read: prev.read, f: prev.features }, { read: b.read, f: b.features });
+    return { ...b.read, kind };
+  });
+
+  const kinds = segments.slice(1).map((s) => s.kind);
+  const variationMode = variationModeOf(kinds);
+  const variationNote = variationCopy(variationMode, ta.segmentCount);
+  // Whole-hum position in the user's range = the mean of the chunk positions (when the range is live).
+  const inRange = segments.map((s) => s.energyInRange).filter((v): v is number => v !== null);
+  const rangeNote = inRange.length > 0 ? rangeNoteFor(mean(inRange)) : "";
 
   const first = segments[0] as SegmentRead;
   const last = segments[segments.length - 1] as SegmentRead;
@@ -228,9 +388,12 @@ export function computeTemporalRead(ta: TemporalAnalysis | undefined | null): Te
     instabilityTrend,
     volatility,
     shape,
+    variationMode,
     confidence,
     headline,
     detail,
+    variationNote,
+    rangeNote,
     energyContour: ta.energyContour,
   };
 }
@@ -238,5 +401,5 @@ export function computeTemporalRead(ta: TemporalAnalysis | undefined | null): Te
 /** Strings a temporal read contributes to the user-facing copy (for safety screening). */
 export function temporalReadStrings(t: TemporalRead | null): string[] {
   if (!t) return [];
-  return [t.headline, t.detail];
+  return [t.headline, t.detail, t.variationNote, t.rangeNote].filter((s) => s.length > 0);
 }

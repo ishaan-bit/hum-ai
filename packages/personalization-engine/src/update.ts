@@ -11,6 +11,7 @@ import {
 import type { InterventionType } from "@hum-ai/affect-model-contracts";
 import type { RelapseSample } from "@hum-ai/relapse-engine";
 import { buildAnchoredBaseline, buildRollingBaseline } from "./dual-baseline";
+import { buildVocalRange } from "./vocal-range";
 import { stagePolicy } from "./ladder";
 import { zDeltasAgainstBaseline, type UserModelProfile } from "./profile";
 import { updateSignatureCentroid } from "./signatures";
@@ -139,6 +140,11 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
   // 2. Rebuild the dual baseline from the windows.
   const rolling = buildRollingBaseline(featureWindows);
   const anchored = buildAnchoredBaseline(featureWindows);
+  // 2b. v13: refine the LONGITUDINAL VOCAL-RANGE model from the SAME windows (absolute
+  //     values). The per-parameter robust span (p05…p95) accumulates the user's reachable
+  //     range and sharpens each hum — the absolute-but-personal reference frame for the
+  //     within-hum/per-chunk read (distinct from the z-delta-vs-median the baselines carry).
+  const vocal_range_vector = buildVocalRange(featureWindows);
 
   // 3. Learn per-modality reliability (EMA toward what fusion trusted this hum).
   const modality_reliability_vector: ModalityReliability = { ...state.profile.modality_reliability_vector };
@@ -240,6 +246,7 @@ export function ingestHum(state: PersonalizationState, obs: HumObservation): Per
     regime,
     adaptation_rate,
     contextual_centers,
+    vocal_range_vector,
     calibration_maturity: policy.calibrationMaturity,
     confidence_cap: policy.confidenceCap,
     last_updated_at: obs.capturedAt,

@@ -4,6 +4,7 @@
   type IsoTimestamp,
   type ModelVersion,
   type ModalityReliability,
+  type RangeStats,
   type RobustStats,
   type UnitInterval,
   type UserId,
@@ -89,6 +90,16 @@ export interface UserModelProfile {
    * (fixed keys). Empty until the first correction.
    */
   readonly axis_calibration?: PersonalAxisCalibration;
+
+  // --- v13 longitudinal vocal-range model (optional ⇒ back-compatible) ---
+  /**
+   * The LONGITUDINAL VOCAL-RANGE model (`vocal-range.ts`) — per-parameter robust span
+   * (p05…p95) over the user's eligible hums, fed by ABSOLUTE feature values and refined each
+   * hum. The absolute-but-personal reference frame for "where in THIS person's reachable range
+   * does a parameter sit" (distinct from the z-delta-vs-median the baselines carry). Derived,
+   * sync-safe (feature-keyed map, scanned by the raw-audio guard). Empty until enough hums.
+   */
+  readonly vocal_range_vector?: Record<string, RangeStats>;
 }
 
 /**
@@ -147,5 +158,6 @@ export function newUserProfile(
     adaptation_rate: 0,
     contextual_centers: newContextualCenters(),
     axis_calibration: newAxisCalibration(),
+    vocal_range_vector: {},
   };
 }

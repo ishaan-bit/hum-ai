@@ -10,7 +10,7 @@ import {
 } from "@hum-ai/shared-types";
 import { analyzeTemporalDynamics, computeFeatures, metricsFromFeatures } from "@hum-ai/audio-features";
 import type { AcousticFeatures, AudioInput, TemporalAnalysis } from "@hum-ai/audio-features";
-import { computeTemporalRead, temporalReadStrings, type TemporalRead } from "./temporal-read";
+import { computeTemporalRead, temporalReadStrings, type FeatureRange, type TemporalRead } from "./temporal-read";
 import { evaluateQuality } from "@hum-ai/quality-gate";
 import type { QualityResult } from "@hum-ai/quality-gate";
 import { HeuristicDomainClassifier, HumDomainAdapter } from "@hum-ai/domain-classifier";
@@ -192,6 +192,13 @@ export interface HumHistory {
    * decoupled from that package). Adds one exploratory, personalised sentence to the daily step.
    */
   readonly personalityLean?: { readonly adjective: string | null; readonly steadiness: number };
+  /**
+   * The user's LONGITUDINAL VOCAL-RANGE model (`@hum-ai/personalization-engine`
+   * `vocal_range_vector`) — per-parameter robust reachable span, refined each hum. Lets the
+   * within-hum trajectory place each chunk in the user's OWN range (the absolute-but-personal
+   * reference frame, v13). Omitted / too thin ⇒ the within-hum read stands alone (honest cold start).
+   */
+  readonly vocalRange?: FeatureRange;
 }
 
 /**
@@ -800,7 +807,7 @@ export async function orchestrateHumRead(input: OrchestratorInput): Promise<Orch
   // predicted from the chunk-to-chunk VARIATION. Surfaced as a reflective, non-diagnostic
   // layer alongside the whole-hum read — it never rewrites the V/A backbone. Omitted when
   // the read abstained (a non-usable hum has no honest trajectory) or no analysis was passed.
-  const temporal = inference.abstained ? null : computeTemporalRead(input.temporal);
+  const temporal = inference.abstained ? null : computeTemporalRead(input.temporal, { range: history.vocalRange });
 
   // Intervention of the Day — built from the SAME sanitized view + qualitative
   // confidence + abstracted trend the rest of the safe layer uses. No clinical
@@ -1004,6 +1011,7 @@ export function humHistoryFromState(state: PersonalizationState, now: IsoTimesta
     interventionPolicy: state.profile.intervention_policy,
     contextualCenters: state.profile.contextual_centers,
     axisCalibration: state.profile.axis_calibration,
+    vocalRange: state.profile.vocal_range_vector,
     recentRiskSeries: state.relapseHistory
       .map((s) => ({ t: Date.parse(s.capturedAt), value: s.riskScore }))
       .filter((p) => Number.isFinite(p.t)),
@@ -1090,6 +1098,8 @@ export interface TemporalSyncSummary {
   readonly temporalMode: string;
   readonly segmentCount: number;
   readonly shape: TemporalRead["shape"];
+  /** v13: whether the chunks differed mostly musically, as inner-state shifts, both, or not at all. */
+  readonly variationMode: TemporalRead["variationMode"];
   readonly valenceArc: number;
   readonly arousalArc: number;
   readonly energyArc: number;
@@ -1101,6 +1111,10 @@ export interface TemporalSyncSummary {
     readonly valence: number;
     readonly arousal: number;
     readonly energy: number;
+    /** v13: how this chunk differed from the previous one (musical vs inner-state vs steady). */
+    readonly kind: TemporalRead["segments"][number]["kind"];
+    /** v13: where this chunk's loudness sat in the user's own range, [0,1], or null if not formed. */
+    readonly energyInRange: number | null;
   }[];
 }
 
@@ -1111,6 +1125,7 @@ export function temporalSyncSummary(t: TemporalRead | null): TemporalSyncSummary
     temporalMode: t.temporalMode,
     segmentCount: t.segmentCount,
     shape: t.shape,
+    variationMode: t.variationMode,
     valenceArc: t.valenceArc,
     arousalArc: t.arousalArc,
     energyArc: t.energyArc,
@@ -1122,6 +1137,8 @@ export function temporalSyncSummary(t: TemporalRead | null): TemporalSyncSummary
       valence: s.valence,
       arousal: s.arousal,
       energy: s.energy,
+      kind: s.kind,
+      energyInRange: s.energyInRange,
     })),
   };
 }
