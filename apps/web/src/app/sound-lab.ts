@@ -46,6 +46,7 @@ import {
   youtubeWatchUrl,
   type YtVideo,
 } from "./sound-lab-youtube";
+import { lookupTrackInfo, lastfmAvailable, formatListeners, type LastfmInfo } from "./sound-lab-lastfm";
 
 export interface SoundLabController {
   /** Feed the latest read (or null on reset). Re-derives the steer and clears any stale match. */
@@ -185,6 +186,7 @@ export function initSoundLab(opts: SoundLabOptions): SoundLabController {
             <a class="btn btn-ghost btn-sm" href="${esc(youtubeWatchUrl(video.videoId))}" target="_blank" rel="noreferrer">Open on YouTube</a>
           </div>
           ${feedbackRow()}
+          <div class="sl-songinfo" data-songinfo aria-live="polite"></div>
         </div>`;
     }
     // result phase but no playable video (no-key, or empty result set).
@@ -199,6 +201,42 @@ export function initSoundLab(opts: SoundLabOptions): SoundLabController {
         </div>
         <div class="sl-actions"><button type="button" class="btn btn-sm" data-action="match">Try another mix</button></div>
       </div>`;
+  }
+
+  // ── Last.fm song info (enrichment; never blocks playback) ───────────────────────────
+  /** Render the escaped "About this song" panel from resolved Last.fm metadata. */
+  function renderSongInfo(info: LastfmInfo): string {
+    const tags = info.tags.length
+      ? `<div class="sl-si-tags">${info.tags.map((t) => `<span class="sl-si-tag">${esc(t)}</span>`).join("")}</div>`
+      : "";
+    const reach = info.listeners !== null
+      ? `<span class="sl-si-reach muted small">${esc(formatListeners(info.listeners))} listeners on Last.fm</span>`
+      : "";
+    const link = info.url
+      ? `<a class="sl-si-link" href="${esc(info.url)}" target="_blank" rel="noreferrer">More on Last.fm ↗</a>`
+      : "";
+    const sep = reach && link ? ` <span class="muted small">·</span> ` : "";
+    const summary = info.summary ? `<p class="sl-si-sum muted small">${esc(info.summary)}</p>` : "";
+    return `
+      <p class="sl-si-head muted small">About this song</p>
+      <p class="sl-si-track"><span class="sl-si-name">${esc(info.name)}</span><span class="muted"> · ${esc(info.artist)}</span></p>
+      ${tags}
+      ${reach || link ? `<p class="sl-si-meta">${reach}${sep}${link}</p>` : ""}
+      ${summary}`;
+  }
+
+  /**
+   * Fetch + inject the Last.fm info for the CURRENT track, in place (so the iframe never reloads).
+   * No-op without a key. Guards against a stale response landing after the user moved to another
+   * track (only injects when `video` is still the one showing).
+   */
+  async function loadSongInfo(video: YtVideo): Promise<void> {
+    if (!body || !lastfmAvailable()) return;
+    const info = await lookupTrackInfo(video.title, video.channelTitle);
+    if (videos[idx]?.videoId !== video.videoId) return; // user moved on — drop the stale result
+    const host = body.querySelector<HTMLElement>("[data-songinfo]");
+    if (!host) return;
+    host.innerHTML = info ? renderSongInfo(info) : "";
   }
 
   function feedbackRow(): string {
@@ -268,15 +306,20 @@ export function initSoundLab(opts: SoundLabOptions): SoundLabController {
     }
     feedback = null; // a new track resets the fit-feedback
     renderBody();
+    const shown = videos[idx];
+    if (phase === "result" && shown) void loadSongInfo(shown); // enrich with Last.fm (non-blocking)
   }
 
   function another(): void {
     if (idx + 1 < videos.length) {
       idx += 1;
       const v = videos[idx];
-      if (v) pushSongHistory(opts.localId, v.videoId);
-      feedback = null;
-      renderBody();
+      if (v) {
+        pushSongHistory(opts.localId, v.videoId);
+        feedback = null;
+        renderBody();
+        void loadSongInfo(v); // enrich the new track (non-blocking)
+      }
     } else {
       void match(); // exhausted the batch — search afresh (history steers away from repeats)
     }

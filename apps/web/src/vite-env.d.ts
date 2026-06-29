@@ -15,6 +15,11 @@ interface ImportMetaEnv {
    * Optional: with no key the Sound Lab degrades to an "Open on YouTube" search link.
    */
   readonly HUM_AI_YOUTUBE_API_KEY?: string;
+  /**
+   * Public Last.fm API key for the Sound Lab's "about this song" panel (read-only metadata).
+   * Optional: with no key the song-info panel is simply omitted.
+   */
+  readonly HUM_AI_LASTFM_API_KEY?: string;
 }
 
 interface ImportMeta {

@@ -1182,6 +1182,25 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 }
 .sl-fb.is-on { color: var(--ink); border-color: color-mix(in srgb, var(--state-accent) 55%, transparent); background: color-mix(in srgb, var(--state-accent) 14%, var(--glass)); }
 .sl-fb-note { min-height: 1.1em; margin: 0.2rem 0 0; }
+/* Last.fm "about this song" enrichment panel (appears under the player once resolved). */
+.sl-songinfo:empty { display: none; }
+.sl-songinfo { margin-top: 0.7rem; padding-top: 0.55rem; border-top: 1px solid var(--line); }
+.sl-si-head { margin: 0 0 0.2rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.sl-si-track { margin: 0 0 0.4rem; }
+.sl-si-name { font-weight: 700; color: var(--ink); }
+.sl-si-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.1rem 0 0.4rem; }
+.sl-si-tag {
+  font-size: 0.74em;
+  padding: 0.06rem 0.5rem;
+  border-radius: 999px;
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--state-accent) 10%, var(--glass));
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+.sl-si-meta { margin: 0.1rem 0 0.35rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.sl-si-link { color: color-mix(in srgb, var(--state-accent) 70%, var(--ink)); text-decoration: none; font-size: 0.85em; }
+.sl-si-link:hover { text-decoration: underline; }
+.sl-si-sum { margin: 0.2rem 0 0; line-height: 1.5; }
 .sl-foot { margin: 0.9rem 0 0.2rem; }
 .sl-empty { padding: 1.4rem 0.2rem; display: flex; flex-direction: column; gap: 0.8rem; align-items: flex-start; }
 .refine-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0; }
