@@ -71,6 +71,120 @@ export function defaultSoundLabPreferences(): SoundLabPreferences {
   return { language: "Surprise me", genre: null, flavors: [] };
 }
 
+// ── DYNAMIC FILTER TAXONOMY (language → genre → flow) ──────────────────────────────
+// Not every taste combination is coherent: a Bollywood track isn't an *English*-language pick,
+// "Lo-fi metal" isn't a real lane. These maps are the single source of truth for which genres a
+// language can carry and which flow/textures a genre can carry, so the UI only ever offers
+// SENSIBLE combinations (nonsensical ones are removed, not just discouraged). Both directions are
+// HARD constraints (a coherence filter); the read's STATE then picks sensible DEFAULTS within
+// what's offered (a soft preference the user can always override) — see {@link DIRECTION_DEFAULTS}.
+
+/**
+ * Which main genres a language can sensibly carry. "Surprise me" leaves the lane fully open (all
+ * genres). Hindi drops the genres that are English-language lanes (Metal/Jazz/Blues); English drops
+ * the India-specific lanes (Bollywood/Devotional). Classical + Folk live in both (largely
+ * instrumental / cross-tradition).
+ */
+export const LANGUAGE_GENRES: Readonly<Record<MusicLanguage, readonly MainMusicGenre[]>> = {
+  Hindi: ["Bollywood", "Indie", "Pop", "Rock", "Classical", "Folk", "Devotional"],
+  English: ["Indie", "Pop", "Rock", "Metal", "Jazz", "Blues", "Classical", "Folk"],
+  "Surprise me": MAIN_GENRES,
+};
+
+/**
+ * Which flow/textures sit coherently on each genre. A texture that doesn't exist as a real lane for
+ * a genre (lo-fi metal, electronic classical, ambient blues) is removed so the user can't assemble a
+ * combination that searches to nothing meaningful.
+ */
+export const GENRE_FLAVORS: Readonly<Record<MainMusicGenre, readonly MusicFlavor[]>> = {
+  Bollywood: ["Acoustic", "Lo-fi", "Electronic"],
+  Indie: ["Acoustic", "Lo-fi", "Electronic", "Ambient"],
+  Pop: ["Acoustic", "Lo-fi", "Electronic"],
+  Rock: ["Acoustic", "Electronic"],
+  Metal: ["Electronic", "Ambient"],
+  Jazz: ["Acoustic", "Lo-fi", "Ambient"],
+  Blues: ["Acoustic", "Lo-fi"],
+  Classical: ["Acoustic", "Ambient", "Lo-fi"],
+  Folk: ["Acoustic", "Lo-fi", "Ambient"],
+  Devotional: ["Acoustic", "Ambient", "Lo-fi"],
+};
+
+/**
+ * The genres + flow each STEER leans toward, most-pertinent first. These are SOFT preferences: the
+ * top genre that survives the language filter becomes the default selection for the read, and the
+ * default flow is the listed textures that survive the genre filter. A `settle` read leans calm
+ * (Classical / Devotional / Folk), a `focused_momentum` read leans driving (Pop / Rock) — but the
+ * user is free to pick any other genre the language allows (these only seed the default).
+ */
+export const DIRECTION_DEFAULTS: Readonly<
+  Record<MusicVaTarget, { readonly genres: readonly MainMusicGenre[]; readonly flavors: readonly MusicFlavor[] }>
+> = {
+  settle: { genres: ["Classical", "Devotional", "Folk", "Jazz", "Indie", "Blues"], flavors: ["Ambient", "Acoustic"] },
+  steady: { genres: ["Indie", "Folk", "Jazz", "Pop", "Bollywood", "Classical"], flavors: ["Lo-fi", "Acoustic"] },
+  gentle_lift: { genres: ["Pop", "Indie", "Folk", "Bollywood", "Blues"], flavors: ["Acoustic"] },
+  maintain: { genres: ["Indie", "Folk", "Pop", "Jazz", "Bollywood"], flavors: ["Acoustic", "Lo-fi"] },
+  focused_momentum: { genres: ["Pop", "Rock", "Bollywood", "Indie", "Metal"], flavors: ["Electronic"] },
+};
+
+/** The genres a language can carry (the HARD coherence filter for the genre chips). */
+export function genresForLanguage(language: MusicLanguage): readonly MainMusicGenre[] {
+  return LANGUAGE_GENRES[language] ?? MAIN_GENRES;
+}
+
+/**
+ * The flow/textures a genre can carry (the HARD coherence filter for the flow chips). With no genre
+ * chosen yet there is nothing to constrain against, so the full set is offered.
+ */
+export function flavorsForGenre(genre: MainMusicGenre | null): readonly MusicFlavor[] {
+  return genre ? GENRE_FLAVORS[genre] ?? MUSIC_FLAVORS : MUSIC_FLAVORS;
+}
+
+/**
+ * The subset of a language's genres the read's STATE leans toward (most-pertinent first) — what the
+ * UI marks as "fits your read". Always a subset of {@link genresForLanguage}; never hides the rest.
+ */
+export function pertinentGenres(va: ValenceArousal, language: MusicLanguage): readonly MainMusicGenre[] {
+  const allowed = new Set(genresForLanguage(language));
+  return DIRECTION_DEFAULTS[soundLabDirection(va)].genres.filter((g) => allowed.has(g));
+}
+
+/** The default genre for a read + language: the most-pertinent steer genre the language allows. */
+export function defaultGenreForState(va: ValenceArousal, language: MusicLanguage): MainMusicGenre | null {
+  const allowed = genresForLanguage(language);
+  const pertinent = pertinentGenres(va, language);
+  return pertinent[0] ?? allowed[0] ?? null;
+}
+
+/** The default flow for a read + genre: the steer's textures that the genre can carry (≤ MAX_FLAVORS). */
+export function defaultFlavorsForState(va: ValenceArousal, genre: MainMusicGenre | null): readonly MusicFlavor[] {
+  const allowed = new Set(flavorsForGenre(genre));
+  return DIRECTION_DEFAULTS[soundLabDirection(va)].flavors.filter((f) => allowed.has(f)).slice(0, MAX_FLAVORS);
+}
+
+/**
+ * The hum-derived DEFAULT taste for a read + language: a coherent {language, genre, flow} the UI can
+ * apply the moment a language is chosen, so the user starts from a sensible state-tied selection
+ * (never a blank slate) and tunes from there. Pure + deterministic.
+ */
+export function defaultPrefsForState(va: ValenceArousal, language: MusicLanguage): SoundLabPreferences {
+  const genre = defaultGenreForState(va, language);
+  return { language, genre, flavors: defaultFlavorsForState(va, genre) };
+}
+
+/**
+ * Clamp a (possibly stale or hand-edited) taste back onto the coherence taxonomy: drop a genre the
+ * language can't carry, and drop any flow the resulting genre can't carry. Used whenever language or
+ * genre changes so an incoherent combination can never persist or reach the search. Pure.
+ */
+export function reconcilePreferences(prefs: SoundLabPreferences): SoundLabPreferences {
+  const genre = prefs.genre && genresForLanguage(prefs.language).includes(prefs.genre) ? prefs.genre : null;
+  // Flow only attaches to a genre: if the genre was dropped, the flow goes with it. De-dupe so a
+  // corrupt blob can't waste a flavor slot on a repeat.
+  const allowedFlavors = new Set(genre ? flavorsForGenre(genre) : []);
+  const flavors = [...new Set(prefs.flavors.filter((f) => allowedFlavors.has(f)))].slice(0, MAX_FLAVORS);
+  return { language: prefs.language, genre, flavors };
+}
+
 // ── read → regulation DIRECTION ──────────────────────────────────────────────────
 // Same V-A thresholds the intervention layer uses (see ./states + ./index) so the Sound
 // Lab steers a read the same way the passive music step would, for ANY read region.
@@ -196,6 +310,11 @@ export interface SoundLabPlanInput {
 export function planSoundLab(input: SoundLabPlanInput): SoundLabPlan {
   const direction = soundLabDirection(input.va);
   const rec = selectMusicForTarget(input.va, direction, { limit: 1 });
+  // Reconcile the taste at the QUERY BOUNDARY: whatever the caller passes (live UI prefs, a stale
+  // persisted blob, a hand-mutated object), an incoherent language×genre or genre×flow can never
+  // reach the search. This is the single chokepoint every caller flows through, so no UI mutator can
+  // leak a nonsensical combination regardless of how its own guards behave.
+  const prefs = reconcilePreferences(input.prefs);
   return {
     direction,
     directionLabel: DIRECTION_LABEL[direction],
@@ -203,7 +322,7 @@ export function planSoundLab(input: SoundLabPlanInput): SoundLabPlan {
     copy: rec.copy,
     basedOn: rec.basedOn,
     descriptors: DIRECTION_TERMS[direction],
-    query: buildSoundQuery(direction, input.prefs, input.extraTerms),
+    query: buildSoundQuery(direction, prefs, input.extraTerms),
     profile: rec.tracks[0] ?? null,
   };
 }

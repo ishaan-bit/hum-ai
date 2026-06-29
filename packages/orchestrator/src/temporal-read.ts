@@ -238,6 +238,10 @@ function classifyShape(a: {
   if (a.segmentCount <= 1) return "steady";
   // Rising activation dominates the arousal axis.
   if (a.arousalArc >= ARC_T && a.arousalArc >= Math.abs(a.valenceArc)) return "winding_up";
+  // Rising micro-instability with arousal NOT falling → building agitation = winding up. The mirror
+  // of the settling clause below (same SETTLE_T magnitude). Without this the "agitation rose"
+  // trajectory this module's docs name had no input — instabilityTrend only drove settling.
+  if (a.instabilityTrend >= SETTLE_T && a.arousalArc > -ARC_T) return "winding_up";
   // Energy waning while not activating → withdrawing/fading.
   if (a.energyArc <= -ARC_T && a.arousalArc <= 0 && a.valenceArc <= ARC_T) return "fading";
   // Arousal or micro-instability easing, mood not crashing → down-regulation.

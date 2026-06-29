@@ -43,8 +43,16 @@ export type AcousticAxisSample = ValenceArousal;
 
 /** Below this many prior hums we cannot know the user's usual — pass the absolute read through. */
 export const REREF_MIN_HISTORY = 3;
-/** At/above this many prior hums the within-user re-reference reaches full strength. */
-export const REREF_FULL_HISTORY = 12;
+/**
+ * At/above this many prior hums the within-user re-reference reaches full strength.
+ * v13.1: tightened 12→8. The re-reference is what cancels the fixed per-person+mic loudness/register
+ * offset; until it ramps in, the displayed read is the raw acoustic backbone, which sits low for a
+ * gentle hummer (see `axis-read` AROUSAL_RMS recalibration). A probe of an established quiet hummer
+ * confirmed the re-reference fully re-centres the read (subdued/usual/lively → −0.47/+0.07/+0.84) —
+ * the only gap was how many hums it took to engage. Reaching full strength by hum 8 (not 12) shortens
+ * the cold-start window where every read still reads subdued, without changing the converged behaviour.
+ */
+export const REREF_FULL_HISTORY = 8;
 /** Cap on the re-reference weight — the absolute acoustic read always keeps a real say. */
 export const REREF_MAX_WEIGHT = 0.85;
 /** Tanh gain on the z-score: how strongly a personal deviation opens up the displayed range. */

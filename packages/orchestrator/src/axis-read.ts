@@ -123,16 +123,35 @@ export const SNR_FIDELITY_HI = 10;
  * PERCEPTUAL (log) LOUDNESS WINDOW for the arousal energy cue. Loudness perception is
  * logarithmic (dB), and the capture chain itself spreads energy geometrically, so a hum's
  * RMS is log-distributed: a *moderate* hum sits an order of magnitude above the noise floor
- * and an order below a shout. Normalizing that LINEARLY (the v8 behaviour, window 0.01–0.14)
- * placed a typical hum (signal RMS ≈ 0.03–0.06) at only ~0.18–0.38 of the cue — so an ordinary
- * hum read as near-silent and the whole arousal axis carried a large NEGATIVE offset (the v8
- * Hum Simulator measured the neutral reference hum at arousal ≈ −0.33, and even the max-energy
- * "energised" archetype never crossed 0). The fix maps loudness in LOG space, so a moderate
- * hum lands near the cue midpoint and the arousal zero-point sits where a neutral hum actually
- * reads. This is a units/scaling correction, not a score-widening — the endpoints are unchanged.
+ * and an order below a shout. Normalizing that LINEARLY (the v8 behaviour) placed a typical
+ * hum at only ~0.18–0.38 of the cue, so the whole arousal axis carried a large NEGATIVE
+ * offset; v9 mapped loudness in LOG space to fix that.
+ *
+ * v13.1 ZERO-POINT RECALIBRATION (the "every read sits low" fix). The v9 window [0.01, 0.14]
+ * has a geometric centre of √(0.01·0.14) ≈ 0.037 — i.e. it assumed a *neutral* hum is ≈0.037
+ * RMS. But the capture path runs with auto-gain DISABLED (a sustained hum is exactly what AGC
+ * fights — see apps/web capture), so REAL gentle hums land lower than that, in the quality
+ * gate's own "soft-usable" band. The Hum Simulator passed only because its synth's neutral hum
+ * is ≈0.034 RMS — louder than people actually hum — so the gap never showed in synthetic audio.
+ * A probe of realistic gentle captures (RMS ≈ 0.02) read arousal ≈ −0.27 *regardless of mood*:
+ * the entire band sat below zero, purely because the capture was quiet (mic gain / how softly
+ * the person hums — NOT mood).
+ *
+ * The window is nudged DOWN to [0.009, 0.125] (centre ≈ 0.0335). This is deliberately a SMALL
+ * recalibration, not a full re-centre onto the soft-usable midpoint (≈0.0265): a probe + the
+ * inner-state recovery gate showed that absolute loudness CANNOT separate "quiet because the
+ * capture is gentle" from "quiet because the person is calm" on a single COLD hum — both are
+ * just a quiet hum. Lifting gentle captures toward neutral lifts genuinely-LOW-arousal hums by
+ * the same amount, and a hard re-centre pushed `calm_regulated` (which must read ≤ −0.1) up to
+ * ≈0 and lost it. So the backbone only takes the modest, gate-safe step (gentle hum ≈ −0.27 →
+ * −0.23; the synth neutral stays ≈0); the heavy lifting of "low for THIS person vs low in
+ * absolute terms" is the within-user re-reference's job (display-read.ts), which is why its ramp
+ * was tightened in the same change. The log-WIDTH (ratio ≈14×) is unchanged — this moves the
+ * zero-point toward where real hums sit, it does not widen the score. Validated by the Hum
+ * Simulator distribution + inner-state gate + the realistic-capture probe.
  */
-export const AROUSAL_RMS_LO = 0.01;
-export const AROUSAL_RMS_HI = 0.14;
+export const AROUSAL_RMS_LO = 0.009;
+export const AROUSAL_RMS_HI = 0.125;
 
 /**
  * Sustained-hum activity centre. The extractor reports `activeFrameRatio` ≈ 0.7–0.97 for a
@@ -254,6 +273,14 @@ export function acousticAffectAxes(f: AcousticFeatures): {
   // cross-voice arousal span past its trait-decoupling bound. Folding that weight into loudness — the single
   // most universal, identity-ROBUST arousal cue — keeps the zero-point fix while holding the cross-voice
   // invariance contract (validated by the Hum Simulator `cross-voice-invariance` gate). Weights still sum to 1.
+  // v13.1: arousal weights are UNCHANGED from v11.1. The "every read sits low" fix was attempted as a
+  // weight REBALANCE (trim absolute loudness, move it onto another cue) but every alternative arousal cue
+  // is either timbre/IDENTITY-correlated (brightness, pitch register → breaks the razor-thin cross-voice
+  // bound) or fidelity-FRAGILE (melodic movement, spectral flux and voiced-activity are all inflated by
+  // recording noise → moving arousal weight onto them made noise MANUFACTURE arousal and broke the
+  // fidelity⊥affect gate). Loudness, though absolute, is the only capture-robust arousal cue, so it KEEPS
+  // its lead weight; the low-pin is addressed by the AROUSAL_RMS zero-point nudge (above) + the faster
+  // within-user re-reference (display-read.ts) instead — NOT by de-weighting the one robust cue. Sums to 1.
   const arousalRaw = clamp01(
     0.48 * energyN + 0.1 * activeN + 0.06 * brightN + 0.06 * pitchN + 0.1 * pitchMoveN + 0.2 * fluxN,
   );

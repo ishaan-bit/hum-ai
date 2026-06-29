@@ -7,10 +7,18 @@ import {
   buildSoundQuery,
   soundLabDirection,
   defaultSoundLabPreferences,
+  genresForLanguage,
+  flavorsForGenre,
+  pertinentGenres,
+  defaultGenreForState,
+  defaultFlavorsForState,
+  defaultPrefsForState,
+  reconcilePreferences,
   DIRECTION_LABEL,
   MAIN_GENRES,
   MUSIC_FLAVORS,
   MUSIC_LANGUAGES,
+  MAX_FLAVORS,
   type MainMusicGenre,
   type MusicVaTarget,
   type SoundLabPreferences,
@@ -119,3 +127,129 @@ test("settle steers calmer than momentum", () => {
 
 const _targets: readonly MusicVaTarget[] = ["settle", "steady", "gentle_lift", "maintain", "focused_momentum"];
 void _targets;
+
+// --- 6. DYNAMIC FILTER TAXONOMY: only coherent language→genre→flow combinations -----
+
+test("genresForLanguage removes nonsensical language×genre combinations", () => {
+  const hindi = genresForLanguage("Hindi");
+  const english = genresForLanguage("English");
+  // Hindi can't carry the English-language lanes; English can't carry the India-specific lanes.
+  for (const g of ["Metal", "Jazz", "Blues"] as const) assert.ok(!hindi.includes(g), `Hindi excludes ${g}`);
+  for (const g of ["Bollywood", "Devotional"] as const) assert.ok(!english.includes(g), `English excludes ${g}`);
+  // Bollywood/Devotional ARE valid Hindi lanes; "Surprise me" leaves everything open.
+  assert.ok(hindi.includes("Bollywood") && hindi.includes("Devotional"));
+  assert.deepEqual([...genresForLanguage("Surprise me")].sort(), [...MAIN_GENRES].sort());
+  // Every language's genre list is a subset of the canonical genres.
+  for (const l of MUSIC_LANGUAGES) for (const g of genresForLanguage(l)) assert.ok(MAIN_GENRES.includes(g));
+});
+
+test("flavorsForGenre removes nonsensical genre×flow combinations", () => {
+  // No lo-fi/acoustic metal; no electronic classical; no ambient/electronic blues.
+  assert.ok(!flavorsForGenre("Metal").includes("Lo-fi") && !flavorsForGenre("Metal").includes("Acoustic"));
+  assert.ok(!flavorsForGenre("Classical").includes("Electronic"));
+  assert.ok(!flavorsForGenre("Blues").includes("Electronic") && !flavorsForGenre("Blues").includes("Ambient"));
+  // Every genre's flow list is a non-empty subset of the canonical flavors.
+  for (const g of MAIN_GENRES) {
+    const fl = flavorsForGenre(g);
+    assert.ok(fl.length > 0, `${g} offers at least one flow`);
+    for (const f of fl) assert.ok(MUSIC_FLAVORS.includes(f), `${g} flow ${f} is canonical`);
+  }
+  // With no genre chosen there's nothing to constrain against → the full set is offered.
+  assert.deepEqual([...flavorsForGenre(null)].sort(), [...MUSIC_FLAVORS].sort());
+});
+
+test("defaultPrefsForState is always a COHERENT, state-tied selection", () => {
+  for (const va of READS) {
+    for (const language of MUSIC_LANGUAGES) {
+      const p = defaultPrefsForState(va, language);
+      assert.equal(p.language, language);
+      assert.ok(p.genre, "a default genre is always chosen");
+      assert.ok(genresForLanguage(language).includes(p.genre as MainMusicGenre), "default genre is language-valid");
+      const allowed = flavorsForGenre(p.genre);
+      for (const f of p.flavors) assert.ok(allowed.includes(f), "default flow is genre-valid");
+      assert.ok(p.flavors.length <= MAX_FLAVORS, "default flow respects the cap");
+      // Determinism.
+      assert.deepEqual(defaultPrefsForState(va, language), p);
+    }
+  }
+});
+
+test("pertinentGenres is a state-driven subset of the language's genres", () => {
+  for (const va of READS) {
+    for (const language of MUSIC_LANGUAGES) {
+      const allowed = genresForLanguage(language);
+      const pert = pertinentGenres(va, language);
+      for (const g of pert) assert.ok(allowed.includes(g), "pertinent ⊆ language-valid");
+      // The default genre is the first pertinent one (state leads the default).
+      if (pert.length) assert.equal(defaultGenreForState(va, language), pert[0]);
+    }
+  }
+  // A calming read leans to a calmer default genre than an energised read (state actually steers).
+  const settle = defaultGenreForState({ valence: -0.5, arousal: 0.6 }, "Surprise me");
+  const momentum = defaultGenreForState({ valence: 0.5, arousal: 0.6 }, "Surprise me");
+  assert.notEqual(settle, momentum, "different states seed different default genres");
+  assert.ok(["Classical", "Devotional", "Folk"].includes(settle as MainMusicGenre), "settle → a calm genre");
+});
+
+test("reconcilePreferences drops incoherent genre/flow, keeps valid taste", () => {
+  // Bollywood isn't an English lane → dropped (and its flow with it).
+  const a = reconcilePreferences({ language: "English", genre: "Bollywood", flavors: ["Electronic"] });
+  assert.equal(a.genre, null);
+  assert.deepEqual(a.flavors, []);
+  // Lo-fi isn't a coherent Metal flow → dropped; the valid genre is kept.
+  const b = reconcilePreferences({ language: "English", genre: "Metal", flavors: ["Lo-fi", "Electronic"] });
+  assert.equal(b.genre, "Metal");
+  assert.deepEqual(b.flavors, ["Electronic"]);
+  // A wholly-valid taste is returned unchanged.
+  const ok: SoundLabPreferences = { language: "Hindi", genre: "Bollywood", flavors: ["Lo-fi"] };
+  assert.deepEqual(reconcilePreferences(ok), ok);
+});
+
+test("defaultFlavorsForState only yields flows the genre can carry", () => {
+  for (const va of READS) {
+    for (const g of [null, ...MAIN_GENRES] as const) {
+      const fl = defaultFlavorsForState(va, g);
+      const allowed = flavorsForGenre(g);
+      for (const f of fl) assert.ok(allowed.includes(f));
+      assert.ok(fl.length <= MAX_FLAVORS);
+    }
+  }
+});
+
+// --- 7. planSoundLab reconciles at the QUERY BOUNDARY (no incoherent combo can leak) ----
+
+test("planSoundLab never lets an incoherent taste reach the query", () => {
+  const va = { valence: -0.5, arousal: 0.6 }; // settle → primary mood "calm"
+  // Bollywood isn't an English lane: it (and its now-orphaned flow) must be dropped from the query.
+  const q1 = planSoundLab({ va, prefs: { language: "English", genre: "Bollywood", flavors: ["Electronic"] } }).query;
+  assert.ok(!/bollywood/i.test(q1), "an English-language Bollywood search never escapes");
+  // Lo-fi isn't a coherent Metal flow: dropped; the valid genre + flow survive.
+  const q2 = planSoundLab({ va, prefs: { language: "English", genre: "Metal", flavors: ["Lo-fi", "Electronic"] } }).query;
+  assert.ok(/metal/i.test(q2) && /electronic/i.test(q2) && !/lofi/i.test(q2), "metal keeps electronic, drops lofi");
+  // A coherent taste is unchanged and the read-derived primary mood still leads.
+  const q3 = planSoundLab({ va, prefs: { language: "Hindi", genre: "Bollywood", flavors: ["Lo-fi"] } }).query;
+  assert.ok(/^calm\b/.test(q3) && /bollywood/.test(q3) && /hindi/.test(q3), "coherent taste + state mood survive");
+});
+
+test("a coherent taste always survives the query alongside the read's mood", () => {
+  // The steer's primary mood must never swallow a genuine taste token (defensive against future
+  // term overlaps). Pop+Electronic is coherent for English across every steer.
+  const targets: readonly MusicVaTarget[] = ["settle", "steady", "gentle_lift", "maintain", "focused_momentum"];
+  const region: Record<MusicVaTarget, { valence: number; arousal: number }> = {
+    settle: { valence: -0.5, arousal: 0.6 },
+    steady: { valence: -0.05, arousal: 0.05 },
+    gentle_lift: { valence: -0.4, arousal: -0.4 },
+    maintain: { valence: 0.5, arousal: -0.4 },
+    focused_momentum: { valence: 0.5, arousal: 0.6 },
+  };
+  for (const t of targets) {
+    const q = planSoundLab({ va: region[t], prefs: { language: "English", genre: "Pop", flavors: ["Electronic"] } }).query;
+    assert.equal(soundLabDirection(region[t]), t);
+    assert.ok(/pop/.test(q) && /electronic/.test(q), `taste survives for ${t}: ${q}`);
+  }
+});
+
+test("reconcilePreferences de-duplicates flavors", () => {
+  const p = reconcilePreferences({ language: "Hindi", genre: "Bollywood", flavors: ["Lo-fi", "Lo-fi"] });
+  assert.deepEqual(p.flavors, ["Lo-fi"], "a repeated flow collapses to one slot");
+});

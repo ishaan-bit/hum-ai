@@ -54,6 +54,22 @@ test("rolling drift away from a stable anchor produces a non-zero divergence", (
   assert.ok((div.perFeature.pitchCenterHz ?? 0) > 0, "drift is upward (positive)");
 });
 
+test("baseline divergence IGNORES a fidelity-only shift (a mic/room change is not within-user drift)", () => {
+  // A long stable history then a recent window where ONLY a fidelity feature (SNR) drifts hard while
+  // a state feature (pitch) holds. The fidelity drift must not appear in perFeature or move magnitude.
+  const histSnr = series(180, (i) => 8 + (i % 2 === 0 ? 0.2 : -0.2));
+  const recentSnr = series(ROLLING_WINDOW, () => 2); // capture got much noisier recently
+  const pitch = series(180 + ROLLING_WINDOW, () => 180); // mood/voice unchanged
+  const dual = buildDualBaseline(
+    { signalToNoiseProxy: [...histSnr, ...recentSnr], pitchMeanHz: pitch },
+    { anchorWindow: 300 },
+  );
+  const div = baselineDivergence(dual);
+  assert.equal(div.anchored, true);
+  assert.equal(div.perFeature.signalToNoiseProxy, undefined, "fidelity drift is excluded from divergence");
+  assert.equal(div.magnitude, 0, "a fidelity-only shift produces no within-user drift");
+});
+
 test("anchored EMA update nudges the center slowly, not all the way", () => {
   const samples = { pitchCenterHz: series(ANCHOR_MIN_HUMS, () => 100) };
   const anchored = buildAnchoredBaseline(samples);

@@ -284,12 +284,29 @@ function renderWithinHum(read: OrchestratedRead): void {
   const total = Math.max(0.001, (t.segments[t.segments.length - 1]?.endSec ?? 12) - (t.segments[0]?.startSec ?? 0));
   const start0 = t.segments[0]?.startSec ?? 0;
 
+  // Compact seconds label (whole when round, else one decimal): "0", "4.2", "12".
+  const fmtSec = (s: number): string => {
+    const r = Math.round(s * 10) / 10;
+    return Number.isInteger(r) ? `${r}` : r.toFixed(1);
+  };
+  const spanLabel = (s: { startSec: number; endSec: number }): string => `${fmtSec(s.startSec)}–${fmtSec(s.endSec)}s`;
+
   // Colour strip: one flex band per chunk, width ∝ its duration.
   const segs = t.segments
     .map((s) => {
       const dur = Math.max(0.001, s.endSec - s.startSec);
       const col = vaColor(s.valence, s.arousal);
-      return `<span class="wh-seg" style="flex:${dur.toFixed(3)};background:${col}" title="${esc(chunkWord(s.valence, s.arousal))}"></span>`;
+      return `<span class="wh-seg" style="flex:${dur.toFixed(3)};background:${col}" title="${esc(`${spanLabel(s)} · ${chunkWord(s.valence, s.arousal)}`)}"></span>`;
+    })
+    .join("");
+
+  // Region axis: the time span each chunk occupies in the ~12 s, aligned under the strip/curve so
+  // you can SEE where each chunk happens. Dashed cell borders fall on the change-point boundaries.
+  const regions = t.segments
+    .map((s) => {
+      const dur = Math.max(0.001, s.endSec - s.startSec);
+      const col = vaColor(s.valence, s.arousal);
+      return `<span class="wh-region" style="flex:${dur.toFixed(3)}"><span class="wh-region-dot" style="background:${col}"></span><span class="wh-region-time">${esc(spanLabel(s))}</span></span>`;
     })
     .join("");
 
@@ -314,7 +331,7 @@ function renderWithinHum(read: OrchestratedRead): void {
     .map((s) => {
       const tag = CHUNK_KIND_TAG[s.kind] ?? "";
       const tagHtml = tag ? ` <span class="wh-kind wh-kind-${esc(s.kind)}">${copy(tag)}</span>` : "";
-      return `<li><span class="wh-dot" style="background:${vaColor(s.valence, s.arousal)}"></span>${copy(chunkWord(s.valence, s.arousal))}${tagHtml}</li>`;
+      return `<li><span class="wh-dot" style="background:${vaColor(s.valence, s.arousal)}"></span><span class="wh-leg-time muted small">${esc(spanLabel(s))}</span> ${copy(chunkWord(s.valence, s.arousal))}${tagHtml}</li>`;
     })
     .join("");
 
@@ -336,6 +353,7 @@ function renderWithinHum(read: OrchestratedRead): void {
       <div class="wh-segs">${segs}</div>
       ${spark}
     </div>
+    <div class="wh-regions" aria-hidden="true">${regions}</div>
     <ul class="wh-legend">${chips}</ul>
     <p class="wh-detail muted small">${copy(t.detail)} ${copy(chunkNote)} ${tentative}</p>
     ${variationLine}
@@ -345,16 +363,25 @@ function renderWithinHum(read: OrchestratedRead): void {
 
 const clampUnit = (x: number): number => (x < -1 ? -1 : x > 1 ? 1 : x);
 
-/** The named zone of the valence–arousal circumplex (friendly, non-clinical). */
+/**
+ * The named zone of the valence–arousal circumplex (friendly, non-clinical). Uses the SAME ±0.2
+ * dead-band as the orchestrator headline/inner-state line (`axisHeadline`/`innerStateLine`, T=0.2)
+ * so the mood-field zone is a strict coarsening of the headline and can never contradict it on the
+ * same screen (the old ±0.12 / quadrant-at-0 split read a barely-positive hum as "Energised" while
+ * the headline called it "Steady"). Nine bands → friendly one-word zones aligned to the headline.
+ */
 function zoneFor(valence: number, arousal: number): string {
-  if (valence > -0.12 && valence < 0.12 && arousal > -0.12 && arousal < 0.12) return "Balanced";
-  return arousal >= 0
-    ? valence >= 0
-      ? "Energised"
-      : "Tense"
-    : valence >= 0
-      ? "Calm"
-      : "Low";
+  const T = 0.2;
+  const hiA = arousal > T, loA = arousal < -T, hiV = valence > T, loV = valence < -T;
+  if (hiA && hiV) return "Energised";
+  if (hiA && loV) return "Tense";
+  if (loA && hiV) return "Calm";
+  if (loA && loV) return "Low";
+  if (hiA) return "Restless";
+  if (loA) return "Quiet";
+  if (hiV) return "Content";
+  if (loV) return "Flat";
+  return "Balanced";
 }
 
 const moodWord = (v: number): string => (v >= 0.12 ? "bright" : v <= -0.12 ? "low" : "even");

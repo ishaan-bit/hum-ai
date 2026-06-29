@@ -17,6 +17,12 @@
 import type { OrchestratedRead } from "@hum-ai/orchestrator";
 import {
   planSoundLab,
+  genresForLanguage,
+  flavorsForGenre,
+  pertinentGenres,
+  defaultPrefsForState,
+  defaultFlavorsForState,
+  reconcilePreferences,
   MAIN_GENRES,
   MUSIC_FLAVORS,
   MUSIC_LANGUAGES,
@@ -82,6 +88,9 @@ export function initSoundLab(opts: SoundLabOptions): SoundLabController {
   let idx = 0;
   let lastQuery = "";
   let errorKind = "";
+  // True once the user has touched ANY taste control this session. Lets the per-hum default seeding
+  // tell "never chosen" from "deliberately cleared" so it never reinstates a genre the user removed.
+  let tasteTouched = prefs.genre !== null;
 
   // ── read helpers ────────────────────────────────────────────────────────────────
   const isAbstained = (): boolean => read === null || read.userFacing.abstained;
@@ -119,32 +128,47 @@ export function initSoundLab(opts: SoundLabOptions): SoundLabController {
     options: readonly T[],
     isOn: (o: T) => boolean,
     isDisabled: (o: T) => boolean = () => false,
+    isFit: (o: T) => boolean = () => false,
   ): string {
     const chips = options
       .map((o) => {
         const on = isOn(o);
         const dis = isDisabled(o);
-        return `<button type="button" class="sl-chip${on ? " is-on" : ""}" data-${attr}="${esc(o)}" aria-pressed="${on}"${dis ? " disabled aria-disabled=\"true\"" : ""}>${esc(o)}</button>`;
+        const fit = isFit(o);
+        return `<button type="button" class="sl-chip${on ? " is-on" : ""}${fit ? " is-fit" : ""}" data-${attr}="${esc(o)}" aria-pressed="${on}"${fit ? ' title="Fits your read"' : ""}${dis ? " disabled aria-disabled=\"true\"" : ""}>${esc(o)}</button>`;
       })
       .join("");
     return `<div class="sl-pref"><p class="sl-pref-label">${esc(label)}</p><div class="sl-chips" role="group" aria-label="${esc(label)}">${chips}</div></div>`;
   }
 
+  /**
+   * The taste controls, DYNAMICALLY scoped so only coherent combinations are offered:
+   *  - genres are limited to what the chosen LANGUAGE can carry; the ones the read leans toward are
+   *    marked "fits your read" (a soft default, not a fence — the user can pick any of them);
+   *  - flow/textures are limited to what the chosen GENRE can carry, and only shown once a genre is
+   *    picked (there's nothing coherent to constrain against before then).
+   */
   function preferencePanel(): string {
+    const genres = genresForLanguage(prefs.language);
+    const fit = new Set(pertinentGenres(va(), prefs.language));
+    const flavors = flavorsForGenre(prefs.genre);
     const flavorAtLimit = prefs.flavors.length >= MAX_FLAVORS;
+    const flowGroup = prefs.genre
+      ? `${chipGroup<MusicFlavor>("Flow", "flavor", flavors, (f) => prefs.flavors.includes(f), (f) => flavorAtLimit && !prefs.flavors.includes(f))}
+         <p class="sl-pref-hint muted small">${flavorAtLimit ? "Two textures max — tap one off to swap." : "Add up to two textures, if you like."}</p>`
+      : `<div class="sl-pref"><p class="sl-pref-label">Flow</p><div class="sl-chips"><span class="muted small">Pick a genre to choose a flow.</span></div></div>`;
     return `
       <div class="sl-prefs">
         ${chipGroup<MusicLanguage>("Language", "lang", MUSIC_LANGUAGES, (l) => prefs.language === l)}
-        ${chipGroup<MainMusicGenre>("Main genre", "genre", MAIN_GENRES, (g) => prefs.genre === g)}
-        ${chipGroup<MusicFlavor>("Flavor", "flavor", MUSIC_FLAVORS, (f) => prefs.flavors.includes(f), (f) => flavorAtLimit && !prefs.flavors.includes(f))}
-        <p class="sl-pref-hint muted small">${flavorAtLimit ? "Two flavors max — tap one off to swap." : "Add up to two textures, if you like."}</p>
+        ${chipGroup<MainMusicGenre>("Main genre", "genre", genres, (g) => prefs.genre === g, () => false, (g) => fit.has(g))}
+        ${flowGroup}
       </div>`;
   }
 
   function vibeChips(plan: SoundLabPlan): string {
     if (!plan.descriptors.length) return "";
     const chips = plan.descriptors.map((d) => `<span class="sl-vibe">${esc(d)}</span>`).join("");
-    return `<div class="sl-vibes"><span class="muted small">Vibe</span> ${chips}</div>`;
+    return `<div class="sl-vibes"><span class="muted small">Tuned to</span> ${chips}</div>`;
   }
 
   // ── result region ──────────────────────────────────────────────────────────────────
@@ -340,18 +364,43 @@ export function initSoundLab(opts: SoundLabOptions): SoundLabController {
   }
 
   function setLanguage(l: MusicLanguage): void {
-    prefs = { ...prefs, language: l };
+    if (!(MUSIC_LANGUAGES as readonly string[]).includes(l)) return; // never trust the argument
+    // A null genre because the user DELIBERATELY cleared it (taste already touched) must STAY cleared:
+    // re-seeding a default here would reinstate a genre they removed — and since the active language
+    // chip is still clickable, even re-tapping the current language would resurrect it. Capture this
+    // before marking the taste touched (mirrors the per-hum seeding guard's `tasteTouched` invariant).
+    const deliberatelyCleared = prefs.genre === null && tasteTouched;
+    tasteTouched = true;
+    // Keep an explicit genre the new language can still carry (clamp its flow); keep a deliberately
+    // cleared genre cleared; otherwise (first-run, untouched) seed the hum-derived DEFAULT so the user
+    // lands on a coherent, state-tied start rather than a blank slate.
+    prefs =
+      (prefs.genre && genresForLanguage(l).includes(prefs.genre)) || deliberatelyCleared
+        ? reconcilePreferences({ ...prefs, language: l })
+        : defaultPrefsForState(va(), l);
     saveSoundLabPrefs(opts.localId, prefs);
     resetResult();
   }
   function setGenre(g: MainMusicGenre): void {
-    prefs = { ...prefs, genre: prefs.genre === g ? null : g };
+    // A genre must be carryable by the current language (mirrors toggleFlavor's flow guard) — a
+    // crafted/stale event for an off-taxonomy genre is ignored.
+    if (g !== prefs.genre && !genresForLanguage(prefs.language).includes(g)) return;
+    tasteTouched = true;
+    if (prefs.genre === g) {
+      // Toggling the genre off clears the (now genre-less) flow too.
+      prefs = { ...prefs, genre: null, flavors: [] };
+    } else {
+      // Picking a genre seeds the read's default flow for it (coherent + state-tied); user can retune.
+      prefs = { ...prefs, genre: g, flavors: defaultFlavorsForState(va(), g) };
+    }
     saveSoundLabPrefs(opts.localId, prefs);
     resetResult();
   }
   function toggleFlavor(f: MusicFlavor): void {
+    if (!flavorsForGenre(prefs.genre).includes(f)) return; // not a coherent flow for this genre
     const has = prefs.flavors.includes(f);
     if (!has && prefs.flavors.length >= MAX_FLAVORS) return;
+    tasteTouched = true;
     const flavors = has ? prefs.flavors.filter((x) => x !== f) : [...prefs.flavors, f];
     prefs = { ...prefs, flavors };
     saveSoundLabPrefs(opts.localId, prefs);
@@ -395,6 +444,14 @@ export function initSoundLab(opts: SoundLabOptions): SoundLabController {
         idx = 0;
         feedback = null;
         phase = read ? "ready" : "empty";
+        // Seed a hum-derived DEFAULT selection on the first usable read while the taste is still
+        // genuinely untouched. Gives a sensible, state-tied genre + flow to start from rather than a
+        // blank slate; `tasteTouched` ensures a deliberately-cleared genre is never reinstated, and
+        // an explicit (non-null) choice is never overwritten.
+        if (read && !read.userFacing.abstained && prefs.genre === null && !tasteTouched) {
+          prefs = defaultPrefsForState(va(), prefs.language);
+          saveSoundLabPrefs(opts.localId, prefs);
+        }
       }
       render();
     },

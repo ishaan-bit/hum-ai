@@ -6,6 +6,7 @@
  */
 import {
   defaultSoundLabPreferences,
+  reconcilePreferences,
   MAIN_GENRES,
   MUSIC_FLAVORS,
   MUSIC_LANGUAGES,
@@ -35,7 +36,9 @@ function sanitizePrefs(raw: unknown): SoundLabPreferences {
   const flavors = Array.isArray(r.flavors)
     ? (r.flavors.filter((f): f is MusicFlavor => MUSIC_FLAVORS.includes(f as never)).slice(0, 2))
     : [];
-  return { language, genre, flavors };
+  // Reconcile against the coherence taxonomy: a persisted genre the language can't carry, or a flow
+  // the genre can't carry (e.g. taxonomy tightened since it was saved), is dropped — never surfaced.
+  return reconcilePreferences({ language, genre, flavors });
 }
 
 export function loadSoundLabPrefs(id: string): SoundLabPreferences {

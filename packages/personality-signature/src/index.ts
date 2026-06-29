@@ -220,7 +220,6 @@ export const OCEAN_WINDOWED_FEATURES: ReadonlyArray<{
   { key: "extraversion.activeFrameRatio", feature: "activeFrameRatio", lo: 0.4, hi: 0.95, invert: false },
   { key: "extraversion.spectralCentroidHz", feature: "spectralCentroidHz", lo: 600, hi: 1400, invert: false, identity: true },
   { key: "agreeableness.spectralCentroidHz", feature: "spectralCentroidHz", lo: 700, hi: 1600, invert: true, identity: true },
-  { key: "agreeableness.breathinessProxy", feature: "breathinessProxy", lo: 0.1, hi: 0.7, invert: true },
   { key: "emotional_stability.jitter", feature: "jitter", lo: 0.005, hi: 0.05, invert: true },
   { key: "emotional_stability.shimmerProxy", feature: "shimmerProxy", lo: 0.05, hi: 0.5, invert: true },
   { key: "emotional_stability.residualPitchInstability", feature: "residualPitchInstability", lo: 0.05, hi: 0.6, invert: true },
@@ -336,11 +335,13 @@ const TRAITS: readonly TraitDef[] = [
     lowBlurb: "Your hums have a plain, direct edge — clear and to the point.",
     highBlurb: "Your hums carry a soft, warm tone — rounded and easy on the ear.",
     midBlurb: "Your hums land between plain and warm — clear, with a gentle edge.",
+    // breathinessProxy (= spectralFlatness, a FIDELITY artefact) was dropped: a breathy mic swung
+    // agreeableness past its lean threshold (capture quality ≠ a warm temperament). smoothnessScore
+    // + the inverse-brightness cue carry warmth and are both research-grounded.
     compute: (w, nrm) =>
       blend([
         [safe(w, "smoothnessScore"), 1.0],
         [winInv(safe(w, "spectralCentroidHz"), "agreeableness.spectralCentroidHz", 700, 1600, nrm), 0.7],
-        [winInv(safe(w, "breathinessProxy"), "agreeableness.breathinessProxy", 0.1, 0.7, nrm), 0.4],
       ]),
   },
   {

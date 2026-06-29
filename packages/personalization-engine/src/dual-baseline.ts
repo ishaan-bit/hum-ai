@@ -1,5 +1,9 @@
 import { computeRobustStats, mean, zDelta, type RobustStats } from "@hum-ai/shared-types";
+import { FIDELITY_FEATURE_KEYS } from "@hum-ai/audio-features";
 import type { BaselineVector } from "./profile";
+
+/** Mic/room artefacts — a change in them is not within-user drift (see audio-features taxonomy). */
+const FIDELITY_FEATURES = new Set<string>(FIDELITY_FEATURE_KEYS);
 
 /**
  * DUAL BASELINE (ADR-0007).
@@ -161,6 +165,7 @@ export function baselineDivergence(dual: DualBaseline): BaselineDivergence {
   }
   const perFeature: Record<string, number> = {};
   for (const [feature, anchorStats] of Object.entries(dual.anchored.vector)) {
+    if (FIDELITY_FEATURES.has(feature)) continue; // a mic/room shift is not within-user drift
     const rolling: RobustStats | undefined = dual.rolling.vector[feature];
     if (rolling && rolling.n > 0 && anchorStats.n > 0) {
       perFeature[feature] = zDelta(rolling.median, anchorStats);

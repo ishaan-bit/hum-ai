@@ -46,6 +46,21 @@ test("robust baseline ignores outliers (median/MAD) and z-delta is signed", () =
   assert.ok(Math.abs(z.pitchCenterHz!) < 1e-3);
 });
 
+test("z-deltas EXCLUDE fidelity features (capture quality is not a within-person deviation)", () => {
+  // A baseline + current capture where a fidelity feature (SNR) and a state feature (pitch) both
+  // deviate. The fidelity deviation must NOT appear as a z-delta — it can't re-reference affect,
+  // seed a risk signature, or read as drift.
+  const baseline = buildBaselineVector({
+    signalToNoiseProxy: Array.from({ length: 24 }, () => 8),
+    clarityScore: Array.from({ length: 24 }, () => 0.9),
+    pitchMeanHz: Array.from({ length: 24 }, () => 180),
+  });
+  const z = zDeltasAgainstBaseline({ signalToNoiseProxy: 2, clarityScore: 0.3, pitchMeanHz: 200 }, baseline);
+  assert.equal(z.signalToNoiseProxy, undefined, "SNR (fidelity) yields no z-delta");
+  assert.equal(z.clarityScore, undefined, "clarity (fidelity) yields no z-delta");
+  assert.ok(z.pitchMeanHz !== undefined, "pitch (state) still yields a z-delta");
+});
+
 test("a new user profile starts at the population-prior cap", () => {
   const p = newUserProfile(asUserId("u1"), asIsoTimestamp("2026-06-18T00:00:00.000Z"), asModelVersion("v1"));
   assert.equal(p.confidence_cap, 0.72);

@@ -92,14 +92,18 @@ export function innerStateLine(
   if (hiV) return "Right now you're warm and steady — comfortable, nothing pushing at the edges.";
   if (loV) return "Right now you read as a little flat and downbeat — even-toned, but the warmth's dialled down.";
 
-  // Near the centre, a subtle lean from the secondary 6-way prior sharpens the read
-  // (it is never named as a label — ADR-0005 keeps it tentative, not a verdict).
-  if (affectHint === "anxiety_like_tension")
+  // Near the centre, a subtle lean from the secondary prior sharpens the read (it is never named
+  // as a label — ADR-0005 keeps it tentative, not a verdict). `affectHint` is `dominantBroadState`,
+  // which is drawn ONLY from the sanitized BROAD_AFFECT_STATE_HEADS — every `riskMarker` head
+  // (anxiety/sadness/fatigue) is stripped out before the argmax (two-head.ts), so those can NEVER
+  // be the hint. Earlier branches keyed on them were dead code and the centre always fell through to
+  // the generic line. These branches lean on the BENIGN heads that can actually reach the centre.
+  if (affectHint === "anger_frustration")
     return "Right now you're mostly even, with a thread of tension running underneath.";
-  if (affectHint === "sadness_low_mood")
-    return "Right now you're fairly even, sitting a touch on the quiet, low side today.";
-  if (affectHint === "fatigue_low_recovery")
-    return "Right now you're steady, but it sounds like there isn't much left in reserve.";
+  if (affectHint === "mixed_state")
+    return "Right now you're fairly even, with a few currents that haven't settled into one.";
+  if (affectHint === "calm_regulated")
+    return "Right now you're steady and settled — an easy, regulated evenness.";
   return "Right now you read as steady and even — balanced, nothing pulling hard either way.";
 }
 

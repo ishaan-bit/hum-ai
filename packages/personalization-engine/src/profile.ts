@@ -11,8 +11,12 @@
 } from "@hum-ai/shared-types";
 import type { DomainClass } from "@hum-ai/shared-types";
 import type { InterventionType } from "@hum-ai/affect-model-contracts";
+import { FIDELITY_FEATURE_KEYS } from "@hum-ai/audio-features";
 import { ROLLING_WINDOW } from "./dual-baseline";
 import { stagePolicy } from "./ladder";
+
+/** Mic/room artefacts — never a within-person deviation (see audio-features feature-taxonomy). */
+const FIDELITY_FEATURES = new Set<string>(FIDELITY_FEATURE_KEYS);
 import { newRegimeState, type RegimeState } from "./changepoint";
 import type { InterventionPolicy } from "./bandit";
 import { newContextualCenters, type ContextualCenters } from "./context";
@@ -118,13 +122,21 @@ export function buildBaselineVector(
   return out;
 }
 
-/** z-deltas of the current capture's features against the personal baseline. */
+/**
+ * z-deltas of the current capture's features against the personal baseline. FIDELITY features
+ * (SNR, noise floor, clarity, flatness, breathiness) are EXCLUDED: a mic/room change is not a
+ * within-person deviation, so it must never re-reference the affect read, seed a learned risk
+ * signature, or appear as drift evidence (audio-features feature-taxonomy: "kept out of
+ * within-person standardization"). Closes the capture-quality leak into both the affect
+ * personalization and the longitudinal/medical layer.
+ */
 export function zDeltasAgainstBaseline(
   current: Record<string, number>,
   baseline: BaselineVector,
 ): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [feature, value] of Object.entries(current)) {
+    if (FIDELITY_FEATURES.has(feature)) continue;
     const stats = baseline[feature];
     if (stats && stats.n > 0) out[feature] = zDelta(value, stats);
   }

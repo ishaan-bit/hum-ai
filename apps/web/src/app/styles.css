@@ -642,12 +642,38 @@ body {
   stroke-dasharray: 2 2;
   vector-effect: non-scaling-stroke;
 }
+/* region axis: where each chunk sits in the ~12 s, aligned under the strip/curve */
+.wh-regions { display: flex; width: 100%; margin: 0.3rem 0 0; }
+.wh-region {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  min-width: 0;
+  padding: 0.12rem 0.25rem;
+  font-size: 0.66rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 1px dashed var(--glass-line);
+}
+.wh-region:first-child { border-left: none; }
+.wh-region-dot {
+  flex: none;
+  width: 0.46rem;
+  height: 0.46rem;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+}
+.wh-region-time { overflow: hidden; text-overflow: ellipsis; }
+.wh-leg-time { font-variant-numeric: tabular-nums; }
 .wh-legend {
   list-style: none;
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem 0.8rem;
-  margin: 0.6rem 0 0.4rem;
+  margin: 0.5rem 0 0.4rem;
   padding: 0;
   font-size: 0.8rem;
   color: var(--ink-mute);
@@ -1122,6 +1148,12 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
   background: color-mix(in srgb, var(--state-accent) 18%, var(--glass));
 }
 .sl-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+/* "fits your read": a soft state-pertinent default, marked with a leading dot (not a fence). */
+.sl-chip.is-fit:not(.is-on) { border-color: color-mix(in srgb, var(--state-accent) 35%, transparent); }
+.sl-chip.is-fit::before {
+  content: ""; display: inline-block; width: 0.38rem; height: 0.38rem; margin-right: 0.34rem;
+  border-radius: 50%; background: var(--state-accent); vertical-align: middle; opacity: 0.85;
+}
 .sl-pref-hint { margin: 0.3rem 0 0; }
 
 /* read-only "vibe" descriptors */

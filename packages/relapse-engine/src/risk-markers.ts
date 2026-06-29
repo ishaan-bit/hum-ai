@@ -44,8 +44,6 @@ export type RiskMarkerLevel = "insufficient_data" | "settled" | "watch" | "eleva
 
 /** Minimum within-user hums before any acoustic marker can be judged. */
 export const MIN_SERIES_FOR_MARKERS = 5;
-/** The recent window used for sustained-ness (matches the diary's "recent stretch"). */
-export const RECENT_MARKER_WINDOW = 6;
 /** Consecutive leaning hums that escalate a marker to "elevated" (mirrors the relapse rule). */
 export const SUSTAINED_ELEVATE_HUMS = 3;
 /** A visible floor on the within-user spread so a tight series never makes everything "extreme". */
@@ -125,7 +123,10 @@ function sustainedCount(series: readonly RiskSeriesPoint[], lean: (p: RiskSeries
 
 /** Map a sustained count + early-onset + magnitude to a coarse, user-safe level. */
 function levelFrom(sustained: number, earlyOnset: boolean, intensity: number): RiskMarkerLevel {
-  if (sustained >= SUSTAINED_ELEVATE_HUMS || (earlyOnset && intensity >= 0.6)) return "elevated";
+  // A lone deviant hum must NOT reach the top level: the early-onset escalation now also requires the
+  // lean to have held for ≥2 hums, so a single outlier tops out at "watch" — consistent with the
+  // relapse rule's own MIN_CONSECUTIVE_DRIFT_HUMS and this file's "sustained" framing.
+  if (sustained >= SUSTAINED_ELEVATE_HUMS || (earlyOnset && intensity >= 0.6 && sustained >= 2)) return "elevated";
   if (sustained >= 1 || earlyOnset || intensity >= 0.5) return "watch";
   return "settled";
 }
