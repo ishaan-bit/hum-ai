@@ -45,18 +45,23 @@
              one soft prompt. Progress lives in the orb's timer ring, not a recorder bar. -->
         <section class="window window-hum" data-step="hum" aria-label="Hum">
           <div class="hum-copy">
-            <p class="eyebrow">A daily ritual</p>
-            <h1 class="hum-title">Take a breath,<br />then hum.</h1>
+            <p class="eyebrow">Your daily hum</p>
+            <h1 class="hum-title">Hum, and watch<br />your world <em>bloom</em>.</h1>
             <p id="idle-copy" class="lede">
-              Hum any tune for 12 seconds. I’ll listen here on your device.
+              Twelve seconds, read right here on your device. The whole screen tunes to your inner state, and the aura is yours to keep.
             </p>
           </div>
 
           <div class="hum-action">
-            <button id="btn-record" data-capture class="hum-btn" aria-label="Hum, and I’ll listen for about twelve seconds">
-              <span class="hum-btn-ring" aria-hidden="true"></span>
-              <span class="hum-btn-label">Hum</span>
-            </button>
+            <div class="hum-stage">
+              <span class="hum-sonar" aria-hidden="true"></span>
+              <span class="hum-sonar" aria-hidden="true"></span>
+              <span class="hum-sonar" aria-hidden="true"></span>
+              <button id="btn-record" data-capture class="hum-btn" aria-label="Hum, and I’ll listen for about twelve seconds">
+                <span class="hum-btn-ring" aria-hidden="true"></span>
+                <span class="hum-btn-label">Hum</span>
+              </button>
+            </div>
             <p id="capture-status" class="capture-status" role="status" aria-live="polite" aria-atomic="true">When you’re ready.</p>
             <div id="capture-progress" class="capture-progress" hidden><span></span></div>
           </div>
@@ -189,7 +194,7 @@
             <button id="btn-noisy" data-capture class="btn btn-sm">Simulate noisy</button>
             <button id="btn-silence" data-capture class="btn btn-sm">Simulate silence</button>
             <button id="btn-week" data-capture class="btn btn-sm btn-ghost">Simulate a week (×7)</button>
-            <button id="btn-demo-seed" data-capture class="btn btn-sm btn-ghost" hidden>▶ Preview trend over time (demo ×22)</button>
+            <button id="btn-demo-seed" data-capture class="btn btn-sm btn-ghost" hidden>▶ Preview trend over time (demo)</button>
             <button id="btn-reset" class="btn btn-sm btn-ghost">Reset baseline</button>
           </div>
         </details>

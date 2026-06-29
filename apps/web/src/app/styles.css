@@ -267,9 +267,12 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   opacity: 0;
-  transform: translateY(14px) scale(0.992);
+  /* CINEMATIC: the outgoing window drifts back + racks out of focus while the incoming one rises
+     and resolves — the orb + atmosphere persist beneath, so it reads as moving through one world. */
+  transform: translateY(22px) scale(0.978);
+  filter: blur(8px);
   pointer-events: none;
-  transition: opacity 0.45s var(--ease), transform 0.55s var(--ease-bloom);
+  transition: opacity 0.5s var(--ease), transform 0.62s var(--ease-bloom), filter 0.5s var(--ease);
 }
 #stage[data-step="hum"] .window-hum,
 #stage[data-step="state"] .window-state,
@@ -277,6 +280,7 @@ body {
 #stage[data-step="diary"] .window-diary {
   opacity: 1;
   transform: none;
+  filter: blur(0);
   pointer-events: auto;
 }
 
@@ -305,6 +309,21 @@ body {
   margin: 0 0 0.7rem;
   text-wrap: balance;
 }
+/* the hook word ("bloom") glows in the live state colour — a small promise that the screen
+   becomes your mood. Fallback colour first; gradient text only where -webkit-background-clip works. */
+.hum-title em {
+  font-style: italic;
+  color: var(--state-accent-2);
+  filter: drop-shadow(0 0 20px var(--state-glow));
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .hum-title em {
+    background: linear-gradient(96deg, var(--state-accent), var(--state-accent-2) 80%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+}
 .lede {
   color: var(--ink-soft);
   font-size: clamp(0.95rem, 3.5vw, 1.05rem);
@@ -318,6 +337,34 @@ body {
   gap: 0.9rem;
   margin-bottom: 0.4rem;
 }
+/* the magnetic invite: the button sits at the centre of a slow "sonar" of mood-coloured rings
+   that breathe outward, so the landing reads as something alive that wants to be hummed into. */
+.hum-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+}
+.hum-sonar {
+  position: absolute;
+  width: clamp(112px, 30vw, 152px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--state-accent) 40%, transparent);
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0;
+  /* the period shortens with arousal, so a more activated world pings a touch faster */
+  animation: hum-sonar calc(5.6s - var(--state-energy) * 1.7s) var(--ease-bloom) infinite;
+  will-change: transform, opacity;
+}
+.hum-sonar:nth-child(2) { animation-delay: calc((5.6s - var(--state-energy) * 1.7s) / 3); }
+.hum-sonar:nth-child(3) { animation-delay: calc((5.6s - var(--state-energy) * 1.7s) / 3 * 2); }
+@keyframes hum-sonar {
+  0%   { transform: scale(0.9); opacity: 0; }
+  14%  { opacity: 0.5; }
+  100% { transform: scale(2.05); opacity: 0; }
+}
 .hum-btn {
   position: relative;
   width: clamp(112px, 30vw, 152px);
@@ -329,20 +376,29 @@ body {
   font: 700 1.15rem/1 system-ui, sans-serif;
   letter-spacing: 0.02em;
   background:
-    radial-gradient(circle at 38% 32%, rgba(255, 255, 255, 0.35), transparent 55%),
+    radial-gradient(circle at 38% 32%, rgba(255, 255, 255, 0.4), transparent 55%),
     radial-gradient(circle at 50% 60%, var(--state-accent), color-mix(in srgb, var(--state-accent) 40%, #11141b));
-  box-shadow: 0 10px 40px -8px color-mix(in srgb, var(--state-accent) 60%, transparent),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  box-shadow: 0 14px 50px -8px color-mix(in srgb, var(--state-accent) 70%, transparent),
+    0 0 30px -2px var(--state-glow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  /* a gentle "alive" breathe on the landing (period eases with arousal); the press scale wins via
+     the transition below, and the ritual stills it (see THE LISTENING). */
+  animation: hum-btn-breathe calc(5s - var(--state-energy) * 1.6s) var(--ease) infinite;
   transition: transform 0.2s var(--ease), box-shadow 0.3s var(--ease);
+}
+@keyframes hum-btn-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 14px 50px -8px color-mix(in srgb, var(--state-accent) 70%, transparent), 0 0 30px -2px var(--state-glow), inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+  50%      { transform: scale(1.035); box-shadow: 0 18px 60px -8px color-mix(in srgb, var(--state-accent) 82%, transparent), 0 0 44px 0 var(--state-glow), inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
 }
 .hum-btn:active {
   transform: scale(0.96);
+  animation: none;
 }
 .hum-btn-ring {
   position: absolute;
   inset: -8px;
   border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, var(--state-accent) 42%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--state-accent) 46%, transparent);
   animation: pulse-ring calc(4.8s - var(--state-energy) * 1.8s) var(--ease) infinite;
 }
 @keyframes pulse-ring {
@@ -602,6 +658,20 @@ body {
 }
 .wh-detail { margin: 0.2rem 0 0; line-height: 1.5; }
 .wh-tent { font-style: italic; }
+/* v13 — per-chunk musical-vs-inner-state tag + the variation / longitudinal-range notes. */
+.wh-kind {
+  font-size: 0.72em;
+  letter-spacing: 0.02em;
+  padding: 0.02rem 0.36rem;
+  border-radius: 999px;
+  opacity: 0.85;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+}
+.wh-kind-musical { color: hsl(265 60% 80%); }
+.wh-kind-state { color: hsl(28 70% 76%); }
+.wh-variation { margin: 0.25rem 0 0; line-height: 1.5; }
+.wh-range { margin: 0.1rem 0 0; line-height: 1.5; font-style: italic; }
 
 /* ── emotive read card: ambient mood bloom behind the content ────────────── */
 /* A soft radial bleed from the current mood colour (--state-accent, set by    */
@@ -1373,8 +1443,11 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 
 /* ── reduced motion / accessibility ───────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  .window { transition: opacity 0.25s ease; transform: none; }
+  .window { transition: opacity 0.25s ease; transform: none; filter: none; }
+  .today.is-entering > *, .diary.is-entering > * { animation: none; }
   .hum-btn-ring { animation: none; }
+  .hum-sonar { animation: none; opacity: 0; }
+  .hum-btn { animation: none; }
   .atmosphere { transition: background 0.25s ease; }
   .atmosphere::before { animation: none; }
   .meter-fill { transition: none; }
@@ -1425,6 +1498,24 @@ h3 { font-size: 0.98rem; margin: 0 0 0.6rem; color: var(--ink); }
 .reveal.unfurl > *:nth-child(4) { animation-delay: 0.32s; }
 .reveal.unfurl > *:nth-child(5) { animation-delay: 0.42s; }
 .reveal.unfurl > *:nth-child(n+6) { animation-delay: 0.5s; }
+
+/* WINDOW ENTRANCE — Today + Diary have no "reveal" moment of their own, so when you arrive at
+   them (swipe / dots / Next) their content rises in a gentle cinematic cascade. State keeps its
+   richer `.unfurl` (with the tuning sweep), so this is scoped to .today / .diary only — no fight.
+   Re-triggered by toggling `.is-entering` on each visit (see playWindowEntrance in main.ts). */
+.today.is-entering > *,
+.diary.is-entering > * {
+  animation: win-rise 0.62s var(--ease-bloom) both;
+}
+@keyframes win-rise {
+  from { opacity: 0; transform: translateY(16px); filter: blur(2px); }
+  60%  { filter: blur(0); }
+  to   { opacity: 1; transform: none; }
+}
+.today.is-entering > *:nth-child(1), .diary.is-entering > *:nth-child(1) { animation-delay: 0.02s; }
+.today.is-entering > *:nth-child(2), .diary.is-entering > *:nth-child(2) { animation-delay: 0.1s; }
+.today.is-entering > *:nth-child(3), .diary.is-entering > *:nth-child(3) { animation-delay: 0.18s; }
+.today.is-entering > *:nth-child(n+4), .diary.is-entering > *:nth-child(n+4) { animation-delay: 0.26s; }
 
 /* A one-shot diagonal "tuning" light sweeps across the read as it resolves (cinematic). */
 .reveal.unfurl::before {
@@ -1956,6 +2047,20 @@ h3 .ic,
   0%, 100% { filter: brightness(1); }
   50%       { filter: brightness(1.22) saturate(1.15); }
 }
+/* a soft "you are here" pulse ring on the newest bead, echoing the diary's today-star */
+.petal-latest::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 14px;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+  animation: petal-ring 2.6s var(--ease) 0.8s infinite;
+}
+@keyframes petal-ring {
+  0% { transform: scale(0.92); opacity: 0.7; }
+  70%, 100% { transform: scale(1.5); opacity: 0; }
+}
 
 .ribbon-legend {
   display: flex;
@@ -2189,10 +2294,78 @@ h3 .ic,
   .headline, .read-eyebrow, .note { animation: none; }
   .mood-petal { animation: none; }
   .petal-latest { animation: none; }
+  .petal-latest::after { animation: none; display: none; }
   .sky-thread { animation: none; stroke-dashoffset: 0; }
   .star-glow, .star-core { animation: none; opacity: 1; transform: none; }
   .star-ring { display: none; }
   .diag-tile { animation: none; }
+}
+
+/* ============================================================================
+   OVERHAUL — extra cinematic motion. Today's suggestion resolves in a calm beat,
+   the pick-one moves read as choosable, deeper content rises as it scrolls into
+   view, and the "where you are now" marker lands with a soft pop. All of it is
+   reduced-motion guarded, and the scroll-driven reveal is progressive enhancement.
+   ============================================================================ */
+
+/* Today's suggestion: the key blocks resolve in a calm cascade as the card renders */
+.intervention-card .iod-head { animation: note-in 0.5s var(--ease-bloom) 0.02s both; }
+.intervention-card .iod-move-head { animation: note-in 0.5s var(--ease-bloom) 0.14s both; }
+.intervention-card .iod-instruction { animation: note-in 0.5s var(--ease-bloom) 0.22s both; }
+
+/* the pick-one micro-moves: stagger in, and lift on hover so they read as choosable */
+.iod-move { transition: transform 0.18s var(--ease), border-color 0.2s var(--ease), background 0.2s var(--ease); }
+.iod-moves .iod-move { animation: move-in 0.5s var(--ease-bloom) both; }
+.iod-moves .iod-move:nth-child(1) { animation-delay: 0.3s; }
+.iod-moves .iod-move:nth-child(2) { animation-delay: 0.4s; }
+.iod-moves .iod-move:nth-child(n + 3) { animation-delay: 0.48s; }
+@keyframes move-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+@media (hover: hover) and (pointer: fine) {
+  .iod-move:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--state-accent) 45%, var(--glass-line));
+    background: color-mix(in srgb, var(--state-accent) 13%, rgba(255, 255, 255, 0.03));
+  }
+}
+
+/* the "where you are now" marker lands with a soft pop; the usual-range band eases open */
+.now-mark { animation: now-pop 0.6s var(--ease-bloom) 0.15s both; }
+@keyframes now-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+  70% { transform: translate(-50%, -50%) scale(1.15); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.now-usual { animation: now-band 0.55s var(--ease-bloom) both; transform-origin: left center; }
+@keyframes now-band { from { opacity: 0; transform: scaleX(0.18); } to { opacity: 1; transform: scaleX(1); } }
+
+/* SCROLL-DRIVEN REVEAL — deeper list content fades + rises as it scrolls into view inside the
+   Today / Diary panels. Progressive enhancement: engines without scroll-timelines show everything
+   (the @supports gate fails closed), and reduced motion opts out entirely. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .diary-moment,
+    .risk-layer,
+    .diary-screening,
+    .iod-research,
+    .music-rec {
+      animation: scroll-reveal both;
+      animation-timeline: view();
+      animation-range: entry 4% cover 16%;
+    }
+    @keyframes scroll-reveal {
+      from { opacity: 0.2; transform: translateY(16px); }
+      to   { opacity: 1; transform: none; }
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intervention-card .iod-head,
+  .intervention-card .iod-move-head,
+  .intervention-card .iod-instruction,
+  .iod-moves .iod-move,
+  .now-mark,
+  .now-usual { animation: none; }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2362,8 +2535,14 @@ body[data-hum-phase="settling"] .capture-status { color: var(--state-accent-2); 
    back so the live canvas (level, voicing, timer ring) reads cleanly through it */
 .hum-btn-label { transition: opacity 0.5s var(--ease); }
 body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-btn-label { opacity: 0; }
-body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-btn-ring {
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-btn-ring,
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-sonar {
   opacity: 0;
+  animation: none;
+}
+/* during the ritual the orb is the sole live visualizer — still the button's own breathe so it
+   doesn't compete with the canvas (the press/settle states are unaffected) */
+body:is([data-hum-phase="listening"], [data-hum-phase="faint"], [data-hum-phase="settling"]) .hum-btn {
   animation: none;
 }
 

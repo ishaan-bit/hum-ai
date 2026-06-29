@@ -256,8 +256,16 @@ const SHAPE_BADGE: Record<string, string> = {
   unsettled: "Restless",
 };
 
+/** v13 — how a chunk differed from the one before it (musical vs inner-state). Empty for opening/steady. */
+const CHUNK_KIND_TAG: Record<string, string> = {
+  opening: "",
+  steady: "",
+  musical: "melody",
+  state: "shift",
+};
+
 /**
- * THE WITHIN-HUM TRAJECTORY CARD (v12). Renders how the hum moved across its
+ * THE WITHIN-HUM TRAJECTORY CARD (v12, extended v13). Renders how the hum moved across its
  * change-point chunks: a colour strip (one band per chunk, coloured by that chunk's own
  * valence/arousal), the live energy contour drawn over it with the chunk boundaries
  * marked, the predicted trajectory shape, and the reflective phrase. Purely a
@@ -303,7 +311,11 @@ function renderWithinHum(read: OrchestratedRead): void {
       : "";
 
   const chips = t.segments
-    .map((s) => `<li><span class="wh-dot" style="background:${vaColor(s.valence, s.arousal)}"></span>${copy(chunkWord(s.valence, s.arousal))}</li>`)
+    .map((s) => {
+      const tag = CHUNK_KIND_TAG[s.kind] ?? "";
+      const tagHtml = tag ? ` <span class="wh-kind wh-kind-${esc(s.kind)}">${copy(tag)}</span>` : "";
+      return `<li><span class="wh-dot" style="background:${vaColor(s.valence, s.arousal)}"></span>${copy(chunkWord(s.valence, s.arousal))}${tagHtml}</li>`;
+    })
     .join("");
 
   const badge = SHAPE_BADGE[t.shape] ?? "Steady";
@@ -312,6 +324,10 @@ function renderWithinHum(read: OrchestratedRead): void {
     t.segmentCount <= 1
       ? "Read as one continuous stretch."
       : `Read across ${t.segmentCount} stretches.`;
+  // v13: the musical-vs-inner-state note + the longitudinal-range note are screened strings on the
+  // temporal read; surface them only when they carry content (rangeNote is "" until the range forms).
+  const variationLine = t.variationNote ? `<p class="wh-variation muted small">${copy(t.variationNote)}</p>` : "";
+  const rangeLine = t.rangeNote ? `<p class="wh-range muted small">${copy(t.rangeNote)}</p>` : "";
 
   host.innerHTML = `
     <h3>${icon("pulse")} Across this hum <span class="muted small">(how it moved)</span></h3>
@@ -322,6 +338,8 @@ function renderWithinHum(read: OrchestratedRead): void {
     </div>
     <ul class="wh-legend">${chips}</ul>
     <p class="wh-detail muted small">${copy(t.detail)} ${copy(chunkNote)} ${tentative}</p>
+    ${variationLine}
+    ${rangeLine}
   `;
 }
 
@@ -1678,7 +1696,10 @@ function nowPositionBar(latest: DiaryPoint, band: NormalBand | null): string {
  * Tappable: clicking a bead opens that moment's detail panel.
  */
 function moodRibbon(points: readonly DiaryPoint[], focusAt: string | null, now: number): string {
-  const recent = points.slice(-32);
+  // Show EVERY recorded hum (the ring is already bounded to RELAPSE_HISTORY_LIMIT), so the number
+  // of beads always equals the diary's "N hums" badge. The beads wrap onto multiple rows; the badge
+  // and the visible record can never disagree (the old slice(-32) showed fewer beads than the count).
+  const recent = points;
   if (recent.length === 0) return '';
   const lastAt = recent[recent.length - 1]!.at;
   const focusKey = focusAt ?? lastAt;

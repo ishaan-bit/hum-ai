@@ -389,9 +389,10 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
   }
 
   function drawMotes(c: CanvasRenderingContext2D, cx: number, cy: number, r: number, dt: number): void {
-    // Spawn while voicing — the orb "drinks the hum".
-    if (voiced > 0.35) {
-      const want = Math.round(voiced * (w < 560 ? 1.4 : 2.4));
+    // Spawn while voicing — the orb "drinks the hum". A livelier stream so the live read feels
+    // vibrant and responsive (still capped by the pool + the <560px phone budget).
+    if (voiced > 0.3) {
+      const want = Math.round(voiced * (w < 560 ? 2.1 : 3.3));
       for (let i = 0; i < want; i++) spawnMote(cx, cy);
     }
     c.save();
@@ -405,10 +406,10 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
       m.y += m.vy * f;
       const d = Math.hypot(cx - m.x, cy - m.y);
       if (d < r * 0.5) {
-        // Absorbed — a tiny flash, then recycle.
-        c.fillStyle = hsl(cur, 50, 0.5);
+        // Absorbed — a brighter spark that flares as the orb drinks it, then recycle.
+        c.fillStyle = hsl(cur, 58, 0.62);
         c.beginPath();
-        c.arc(m.x, m.y, 2.4, 0, TAU);
+        c.arc(m.x, m.y, 3, 0, TAU);
         c.fill();
         m.active = false;
         continue;
@@ -418,12 +419,17 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
         m.active = false;
         continue;
       }
-      c.strokeStyle = hsl(cur, 46, 0.32 * m.life);
-      c.lineWidth = 1.4;
+      // A bright head leads each streaming mote, with its tail trailing toward the core.
+      c.strokeStyle = hsl(cur, 50, 0.42 * m.life);
+      c.lineWidth = 1.6;
       c.beginPath();
       c.moveTo(m.px, m.py);
       c.lineTo(m.x, m.y);
       c.stroke();
+      c.fillStyle = hsl(cur, 58, 0.5 * m.life);
+      c.beginPath();
+      c.arc(m.x, m.y, 1.3, 0, TAU);
+      c.fill();
     }
     c.restore();
   }
@@ -432,13 +438,26 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
     if (voiced < 0.25) return;
     const y = cy + (pN - 0.5) * r * 1.4;
     const span = r * 2.5;
-    const g = c.createLinearGradient(cx - span / 2, y, cx + span / 2, y);
-    g.addColorStop(0, hsl(cur, 40, 0));
-    g.addColorStop(0.5, hsl(cur, 52, 0.5 * voiced));
-    g.addColorStop(1, hsl(cur, 40, 0));
     c.save();
     c.globalCompositeOperation = "lighter";
-    c.strokeStyle = g;
+    // A soft wide underglow + a crisp bright core line, so the held note reads as a luminous,
+    // floating tone rather than a thin wire — more alive without adding per-frame blur cost.
+    const wide = c.createLinearGradient(cx - span / 2, y, cx + span / 2, y);
+    wide.addColorStop(0, hsl(cur, 30, 0));
+    wide.addColorStop(0.5, hsl(cur, 44, 0.22 * voiced));
+    wide.addColorStop(1, hsl(cur, 30, 0));
+    c.strokeStyle = wide;
+    c.lineWidth = 7;
+    c.lineCap = "round";
+    c.beginPath();
+    c.moveTo(cx - span / 2, y);
+    c.lineTo(cx + span / 2, y);
+    c.stroke();
+    const core = c.createLinearGradient(cx - span / 2, y, cx + span / 2, y);
+    core.addColorStop(0, hsl(cur, 40, 0));
+    core.addColorStop(0.5, hsl(cur, 58, 0.62 * voiced));
+    core.addColorStop(1, hsl(cur, 40, 0));
+    c.strokeStyle = core;
     c.lineWidth = 2;
     c.beginPath();
     c.moveTo(cx - span / 2, y);

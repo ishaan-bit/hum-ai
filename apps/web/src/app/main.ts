@@ -208,6 +208,11 @@ const session: Session = {
 /** Recent-reads buffer cap — a "last week or so" window for the history-aware intervention. */
 const RECENT_READS_MAX = 8;
 
+/** How many daily hums the diary-preview demo seeds. The button label is set from this same
+ *  constant (see {@link wireControls}) so the label, the seeding status, and the resulting diary
+ *  count can never disagree. */
+const DEMO_SEED_COUNT = 24;
+
 /**
  * The tentative within-user personality signature, computed from the longitudinal baseline
  * (the personal feature windows) — exploratory, non-clinical (see @hum-ai/personality-signature).
@@ -286,7 +291,12 @@ function setupExperience(): void {
   // Boot the world in its honest, idle neutral state — listening, not pretending.
   applyStateVisual(NEUTRAL_VISUAL);
 
-  stage = createStage({ onStep: (step) => anchorOrbForStep(step) });
+  stage = createStage({
+    onStep: (step) => {
+      anchorOrbForStep(step);
+      playWindowEntrance(step); // replay the content cascade only on a genuine window change
+    },
+  });
 
   const onResize = (): void => {
     orb?.resize();
@@ -295,6 +305,22 @@ function setupExperience(): void {
   };
   window.addEventListener("resize", onResize);
   window.addEventListener("orientationchange", () => setTimeout(onResize, 200));
+}
+
+/**
+ * Replay the cinematic content cascade when arriving at Today / Diary (they have no "reveal"
+ * moment of their own, unlike State's `.unfurl`). Toggling `.is-entering` with a forced reflow
+ * makes the rise-in animation fire on EVERY visit, not just first paint. Pure CSS does the rest.
+ */
+function playWindowEntrance(step: Step): void {
+  if (typeof document === "undefined") return;
+  const sel = step === "today" ? ".today" : step === "diary" ? ".diary" : null;
+  if (!sel) return;
+  const el = document.querySelector(sel) as HTMLElement | null;
+  if (!el) return;
+  el.classList.remove("is-entering");
+  void el.offsetWidth; // reflow so the cascade replays on every arrival
+  el.classList.add("is-entering");
 }
 
 /** Re-anchor the orb as the active window changes (it is the shared element that travels). */
@@ -989,7 +1015,9 @@ async function runDemoSeed(): Promise<void> {
     reflectConsentInputs();
   }
   try {
-    const total = 24;
+    // ONE canonical count for the whole seed so the button label, the progress status, and the
+    // resulting diary badge all agree (the old "×22" label seeded 24 — three different numbers).
+    const total = DEMO_SEED_COUNT;
     // ONE hum per day, walking back from today, each drawn from the realistic mood palette so the
     // seeded diary spans real days (correct IST timestamps) AND real moods — not 22 identical
     // "restless" hums all stamped the same minute (the "Mon 7:13 pm" + flat-line + pinned-read bug).
@@ -1039,8 +1067,11 @@ function wireControls(): void {
   // The longitudinal seeder lives in the tray's sandbox ("Simulate & reset"), so an evaluator
   // can SEE the diagnostic/longitudinal layer engage (one-time vs sustained, trend) without
   // 20 real daily hums. It's clearly labelled a demo and Reset clears it.
-  document.getElementById("btn-demo-seed")?.removeAttribute("hidden");
-  document.getElementById("btn-demo-seed")?.addEventListener("click", () => void runDemoSeed());
+  const demoSeed = document.getElementById("btn-demo-seed");
+  demoSeed?.removeAttribute("hidden");
+  // Label is set from the one DEMO_SEED_COUNT constant so it can never drift from what's seeded.
+  if (demoSeed) demoSeed.textContent = `▶ Preview trend over time (demo ×${DEMO_SEED_COUNT})`;
+  demoSeed?.addEventListener("click", () => void runDemoSeed());
 
   // ── Diary interactions (delegated; the card's innerHTML is replaced on every render) ──────────
   const diaryCard = document.getElementById("longitudinal-card");
