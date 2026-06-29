@@ -58,11 +58,21 @@ v13 **adds** the representation the within-hum/longitudinal layer reasons over: 
 `toTrajectoryVector` (a fixed-length **vectorization** of the chunk-to-chunk variation — per feature:
 arc, swing range, volatility — z-scored across the hum's chunks, so identical chunks yield zero).
 
-## 4. Chunks differ musically or as inner-state shifts
+## 4. Chunks differ musically or as inner-state shifts — and **musicality is excluded from diagnostics**
 
 Each transition is classified by which family of within-hum **differences** dominates — **musical**
 (pitch/brightness/melody) vs **inner-state** (energy/arousal/valence/steadiness) — surfaced per chunk
 (`kind`) and aggregated (`variationMode`), with the vocal range placing each chunk in the user's span.
+
+Crucially, **a musical difference between chunks does NOT contribute to the diagnostic read.** If one
+chunk differs from another only because the person hummed a different melody / note / timbre, that is a
+musical wander, not a change of state — so the diagnostic trajectory (the valence/arousal/energy arcs and
+the volatility that drive the inner-state shape) accumulates **only the non-musical, inner-state
+transitions**. A purely melodic hum therefore reads **steady**, never "brightening" or "winding up"; the
+net arc is the sum of the state-bearing steps, not a raw first→last that would re-admit the melodic jump.
+(`residualInstabilityScore` trend stays over all chunks — micro-instability is a state cue, never musical.)
+Validated by the orchestrator + sim-lab "musicality ⊥ diagnostics" tests.
+
 Strictly **additive**; all copy is safety-screened and persisted as derived scalars.
 
 ## 5. The simulator starts from the inner states

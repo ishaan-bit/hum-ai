@@ -73,6 +73,10 @@ test("MUSICAL variation: melody + brightness move, feeling held → variationMod
   assert.ok(r);
   assert.equal(r!.variationMode, "musical");
   assert.ok(r!.segments.some((s) => s.kind === "musical"), "at least one chunk reads as a musical difference");
+  // The diagnostic contract: a MUSICAL difference must NOT move the inner-state read.
+  assert.ok(Math.abs(r!.valenceArc) < 0.05, `musical wander leaves valence arc ≈ 0 (got ${r!.valenceArc.toFixed(3)})`);
+  assert.ok(Math.abs(r!.arousalArc) < 0.05, `musical wander leaves arousal arc ≈ 0 (got ${r!.arousalArc.toFixed(3)})`);
+  assert.equal(r!.shape, "steady", "a melodic-only wander reads steady, not a mood shift");
 });
 
 test("INNER-STATE shift: energy + steadiness move, melody held → variationMode inner_state", () => {

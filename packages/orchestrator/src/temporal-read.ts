@@ -352,22 +352,32 @@ export function computeTemporalRead(
   const inRange = segments.map((s) => s.energyInRange).filter((v): v is number => v !== null);
   const rangeNote = inRange.length > 0 ? rangeNoteFor(mean(inRange)) : "";
 
-  const first = segments[0] as SegmentRead;
-  const last = segments[segments.length - 1] as SegmentRead;
-  const valenceArc = last.valence - first.valence;
-  const arousalArc = last.arousal - first.arousal;
-  const energyArc = last.energy - first.energy;
-  const instabilityTrend = slope(ta.segments.map((s) => s.features.residualInstabilityScore));
-
-  // Volatility = mean chunk-to-chunk Euclidean step in V/A + a small fragmentation term.
+  // DIAGNOSTIC arcs + volatility accumulate ONLY the NON-musical chunk-to-chunk steps. The brief is
+  // explicit: if one chunk differs from another MUSICALLY (a different melody / note / timbre), that
+  // difference must NOT contribute to the diagnostic read — only INNER-STATE differences (energy /
+  // arousal / valence / steadiness) do. So a hum that merely wanders melodically reads as STEADY, not
+  // as a mood shift, and the net arc is the sum of the state-bearing steps (NOT raw first→last, which
+  // would re-admit a musical jump). A purely-musical hum yields arcs ≈ 0 → "steady". `instabilityTrend`
+  // stays over all chunks (micro-instability is a state cue, never a musical one).
+  let valenceArc = 0;
+  let arousalArc = 0;
+  let energyArc = 0;
   let stepAcc = 0;
+  let stateTransitions = 0;
   for (let i = 1; i < segments.length; i++) {
-    const dv = (segments[i] as SegmentRead).valence - (segments[i - 1] as SegmentRead).valence;
-    const da = (segments[i] as SegmentRead).arousal - (segments[i - 1] as SegmentRead).arousal;
+    const cur = segments[i] as SegmentRead;
+    if (cur.kind === "musical") continue; // musical wander ⊥ diagnostics
+    const prv = segments[i - 1] as SegmentRead;
+    const dv = cur.valence - prv.valence;
+    const da = cur.arousal - prv.arousal;
+    valenceArc += dv;
+    arousalArc += da;
+    energyArc += cur.energy - prv.energy;
     stepAcc += Math.hypot(dv, da);
+    stateTransitions++;
   }
-  const transitions = Math.max(1, segments.length - 1);
-  const volatility = stepAcc / transitions + 0.06 * Math.max(0, segments.length - 2);
+  const instabilityTrend = slope(ta.segments.map((s) => s.features.residualInstabilityScore));
+  const volatility = (stateTransitions > 0 ? stepAcc / stateTransitions : 0) + 0.06 * Math.max(0, stateTransitions - 1);
 
   const summary = { segmentCount: ta.segmentCount, valenceArc, arousalArc, energyArc, instabilityTrend, volatility };
   const shape = classifyShape(summary);

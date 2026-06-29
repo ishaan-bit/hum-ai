@@ -70,8 +70,10 @@ export function temporalCases(): TemporalCase[] {
         refHum({ meanRms: 0.08, spectralCentroidHz: 1700, pitchRangeSemitones: 3.5, musicalityScore: 0.6, residualInstabilityScore: 0.3 }),
         refHum({ meanRms: 0.08, spectralCentroidHz: 2300, pitchRangeSemitones: 6, musicalityScore: 0.8, residualInstabilityScore: 0.3 }),
       ],
-      expect: (r) => r.variationMode === "musical",
-      contract: "melody/brightness move, energy+steadiness held → variationMode musical",
+      // The diagnostic contract: a MUSICAL difference must NOT move the inner-state read —
+      // melody/brightness wander reads "musical" + steady, with V/A arcs ≈ 0 (not "brightening").
+      expect: (r) => r.variationMode === "musical" && r.shape === "steady" && Math.abs(r.valenceArc) < 0.05 && Math.abs(r.arousalArc) < 0.05,
+      contract: "melody/brightness move, energy+steadiness held → musical + steady, arcs ≈ 0 (musicality ⊥ diagnostics)",
     },
     {
       // v13: chunks that differ in ENERGY + STEADINESS (melody/brightness held) must read as an
