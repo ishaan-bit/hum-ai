@@ -42,7 +42,7 @@ npm run qa:all     # typecheck + tests + safety/privacy gates (run before every 
 npm run check      # typecheck + tests only
 npm test           # node --import tsx --test "packages/**/test/**/*.test.ts"
 npm run typecheck  # tsc --noEmit -p tsconfig.json
-npm run qa         # clinical-leak / camera-deps / confidence-copy / forbidden-files gates
+npm run qa         # clinical-leak / camera-deps / confidence-copy / forbidden-files / screening-in-read-path gates
 ```
 
 - TypeScript, ESM, strict mode (`noUncheckedIndexedAccess`, `verbatimModuleSyntax`).
@@ -58,8 +58,9 @@ npm run qa         # clinical-leak / camera-deps / confidence-copy / forbidden-f
 4. For an architectural decision, add an ADR under `docs/adr/` (next number, follow
    the existing format and cite sources by their `id`).
 5. Run `npm run qa:all` (typecheck + tests + the clinical-leak / camera-deps /
-   confidence-copy / forbidden-files gates CI enforces). Run the privacy scan if you
-   touched ignore rules, configs, or anything near `docs/source/`.
+   confidence-copy / forbidden-files / screening-in-read-path gates CI enforces). The web
+   app is typechecked separately (`npm run typecheck:web`, included in `npm run check`). Run
+   the privacy scan if you touched ignore rules, configs, or anything near `docs/source/`.
 6. Open a PR. CI (`ci.yml` + `privacy-check.yml`) must be green.
 
 ## Commit messages

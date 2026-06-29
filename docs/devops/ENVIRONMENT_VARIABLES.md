@@ -18,15 +18,25 @@ not in the repo.
 | `HUM_AI_ALLOW_RESEARCH_AUDIO_UPLOAD` | app | no | `false` | Gate: raw-audio research upload (explicit opt-in) |
 | `HUM_AI_ALLOW_CLINICAL_RISK_SURFACING` | app | no | `false` | Gate: surface clinical-risk markers (ADR-0006 consent) |
 | `HUM_AI_FIREBASE_API_KEY` | app (client) | no¹ | — | Firebase public client key |
+| `HUM_AI_FIREBASE_AUTH_DOMAIN` | app (client) | no¹ | — | Firebase auth domain |
 | `HUM_AI_FIREBASE_PROJECT_ID` | app (client) | no | — | Firebase project id |
+| `HUM_AI_FIREBASE_STORAGE_BUCKET` | app (client) | no¹ | — | Firebase storage bucket |
+| `HUM_AI_FIREBASE_MESSAGING_SENDER_ID` | app (client) | no¹ | — | Firebase messaging sender id |
 | `HUM_AI_FIREBASE_APP_ID` | app (client) | no | — | Firebase app id |
 | `HUM_AI_FIREBASE_SERVICE_ACCOUNT_PATH` | server/local | **YES** | — | Path to a LOCAL service-account JSON (never in repo) |
+| `HUM_AI_YOUTUBE_API_KEY` | app (client) | no³ | — | *(optional)* Sound Lab in-app YouTube player (YouTube Data API v3). Unset → "Open on YouTube" link |
+| `HUM_AI_LASTFM_API_KEY` | app (client) | no³ | — | *(optional)* Sound Lab "about this song" panel (Last.fm, read-only). Unset → panel omitted |
+| `HUM_AI_STUDY_ID` | app (client) | no | `hum-pilot-001` | *(optional)* research-study id for the gated study UI |
 | `HUM_AI_MODEL_VERSION` | all | no | `foundation-0.0.0` | Model version tag |
 | `HUM_AI_MODEL_WEIGHTS_PATH` | server/local | **YES²** | — | Path to LOCAL model weights (never committed) |
 
 ¹ Firebase client keys are public identifiers, not secrets, but still belong in env
 config, not source. ² The path is not secret; the **weights it points to** must never
-enter the repo.
+enter the repo. ³ The Sound Lab keys are **public, read-only, and HTTP-referrer-restricted**
+in the provider console — safe to inline in the static bundle. Both are **optional**; the
+tab works without them (degrades gracefully). Build-time inlined like the other client vars,
+so a **prebuilt** deploy reads them from the local `.env` (the Vercel dashboard value applies
+to *remote* builds).
 
 ## Privacy posture defaults
 

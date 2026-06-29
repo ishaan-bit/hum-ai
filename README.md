@@ -55,15 +55,21 @@ npm workspaces; one concern per package. All packages are `@hum-ai/*`.
 | `fusion-engine` | `LogisticRegressionMetaLearner`, `ConfidenceModelV1`, `combineCaps`, `FusionEngine.fuse`, `expertWeight`, `modalityReliability`. |
 | `personalization-engine` | `PERSONALIZATION_STAGES`/`stagePolicy`, `UserModelProfile`, `buildBaselineVector`, `zDeltasAgainstBaseline`, `newUserProfile`. |
 | `relapse-engine` | `RelapseSample`, `RELAPSE_CLASSES`, `classifyComparison`, `assessRelapse` → `RelapseVerdict`. |
-| `intervention-engine` | `selectIntervention`, `InterventionContext` → `InterventionSuggestion`. |
-| `safety-language` | `FORBIDDEN_PHRASES`, `validateUserFacingText`, `assertSafeUserFacingText`, `INTERNAL_TO_USER_FACING`, `userFacingLabel`. |
+| `intervention-engine` | The regulation-support layer (SUPPORT, never treatment): `selectIntervention`/`selectInterventionFromView` (V-A → `InterventionSuggestion`), the **Intervention of the Day** (`selectInterventionOfDay` over a curated, safety-screened `INTERVENTION_TEMPLATES` library + `deriveRegulationState`), V-A music recommendation (`selectMusicForTarget`, de Witte-grounded), and the **Sound Lab plan** (`planSoundLab`/`soundLabDirection`: read V-A steer + genre/language/flavor taste → a music search). |
+| `safety-language` | `FORBIDDEN_PHRASES`, `validateUserFacingText`, `assertSafeUserFacingText`, `EvidenceLevel`/`userFacingConfidence`, `isConfidenceCopySafe`, `INTERNAL_TO_USER_FACING`, `userFacingLabel`. |
 | `orchestrator` | End-to-end read path: `orchestrateHumRead`/`orchestrateHumAudio` — two-head split + consent gate, dual baseline, qualitative confidence, raw-audio/clinical-leak guards on the sync payload. Plus the **HiTL feedback seam** (`buildFeedbackRequest` active-learning, `applyFeedback`) and personal axis-calibration in the read. |
 | `native-corpus` | The **human-in-the-loop retraining loop** ([ADR-0011](docs/adr/0011-hitl-native-hum-retraining-loop.md)): the on-device `NativeCorpus` of `{derived features, benign self-report}` rows, read-calibration/ECE tracking, active-learning readiness, a **browser-runnable** retrain→gate→promote (reuses signal-lab's `trainLogReg`), and the in-domain hum-native `AffectAxisPrior` wrapper. Pure TS; no raw audio ever stored. |
-| `qa-gates` | The `npm run qa` gates: `no-clinical-leak`, `no-camera-deps`, `no-raw-confidence-copy`, `forbidden-files`. |
+| `population-corpus` | The **cross-user population loop** ([ADR-0012](docs/adr/0012-cross-user-population-corpus-loop.md)): consented, derived-only, group-by-contributor pooling into a community baseline + OCEAN norms + a 3-tier per-axis prior selection (own model > population > far-domain). Live write default-OFF behind a distinct consent. |
+| `personality-signature` | Exploratory **within-user Big Five (OCEAN)** signature estimated from the personal baseline (non-clinical; foregrounds Openness + Conscientiousness). |
+| `clinical-corpus` | The sanctioned **clinical channel** store helpers (derived-only `ClinicalHumExample` pairing for the gated research study); browser-safe. Not the screening model. |
+| `screening-model` | The **investigational** depression/anxiety screening head — research-use-only and **blinded during the pilot**: the QA gate forbids it from the consumer read/render path ([ADR-0006](docs/adr/0006-two-head-affect-and-clinical-risk-separation.md)). |
+| `qa-gates` | The `npm run qa` gates: `no-clinical-leak`, `no-camera-deps`, `no-raw-confidence-copy`, `forbidden-files`, `no-screening-in-read-path`. |
+| `sim-lab` | Pure read-path **sensitivity/scenario harness** (`npm run sim`) — sweeps the axis/OCEAN read for skew/zone-pinning before any calibration change. |
+| `hum-sim` | The **Hum Simulator** (`npm run hum-sim`): synth waveform → the exact production pipeline → read, to find where the read collapses (closes the audio→feature seam sim-lab can't). |
 | `dataset-harness` | Local-only dataset manifest/validate CLI (`data:manifest`, `data:validate`); no audio ever written into the repo. |
 | `naming-check` | Enforces the Hum AI / `@hum-ai` naming constitution (ADR-0000). |
 
-Plus **`apps/`** — **`web`** is a real **local-first Vite SPA** that runs the full spine **client-side** (capture → Stage ① acceptance gate → axis read → personalization → longitudinal), persists to localStorage / Firebase, and is **deployed to Vercel production** (`vercel.json` `build:web` → `apps/web/dist`; `firebase.json` + `firestore.rules` deployed to `humai-core-prod`); `mobile`/`ops` remain placeholder shells. Plus **`research/`** (Python dataset/training/evaluation/model-card work; see the models line below for what is trained vs. shipped).
+Plus **`apps/`** — **`web`** is a real **local-first Vite SPA** that runs the full spine **client-side** (capture → Stage ① acceptance gate → axis read → personalization → longitudinal), persists to localStorage / Firebase, and is **deployed to Vercel production** (public: **hum-ai-beige.vercel.app**; `vercel.json` `build:web` → `apps/web/dist`; `firebase.json` + `firestore.rules` deployed to `humai-core-prod`). The UI is a persistent **AURA orb** beneath a **five-window flow — Hum · State · Today · Diary · Sound Lab**: capture, the V-A read (+ within-hum trajectory, diagnostics, Big Five, HiTL mood-field), the Intervention of the Day, the longitudinal diary, and the **Sound Lab** (turns the read's steer + the user's genre/language/flavor taste into a real, embeddable YouTube track played in-app, with an optional Last.fm "about this song" panel — both key-gated and degrade gracefully). See [apps/web/README.md](apps/web/README.md). `mobile`/`ops` remain placeholder shells. Plus **`research/`** (Python dataset/training/evaluation/model-card work; see the models line below for what is trained vs. shipped).
 
 ## Quickstart
 
@@ -72,10 +78,13 @@ Requires **Node ≥ 22.6** (uses the built-in test runner with `--import`).
 ```bash
 npm install        # workspaces, dev-deps only (tsx, typescript, @types/node)
 npm test           # node --import tsx --test "packages/**/test/**/*.test.ts"
-npm run typecheck  # tsc --noEmit -p tsconfig.json
-npm run check      # typecheck + test
-npm run qa         # QA gates: clinical-leak, camera-deps, confidence-copy, forbidden-files
+npm run typecheck  # tsc --noEmit -p tsconfig.json  (engine packages, DOM-free)
+npm run check      # typecheck (engines) + typecheck:web (apps/web, DOM) + test
+npm run qa         # QA gates: clinical-leak, camera-deps, confidence-copy, forbidden-files, screening-in-read-path
+npm run sim        # read-path sensitivity/scenario harness (sim-lab)
+npm run hum-sim    # Hum Simulator: synth waveform → exact production pipeline → read
 npm run demo:voice # drives synthetic hums through the full pipeline (no mic, no camera)
+npm run dev:web    # the web SPA (Vite dev server); build:web → apps/web/dist
 ```
 
 Tests run **TypeScript directly** via `tsx` + the **Node built-in test runner** (`node:test`/`node:assert`) — there is **no third-party test framework dependency**.
@@ -122,5 +131,5 @@ The 10 required test areas and where each is covered:
 1. Replace heuristic experts with trained SER/embedding models; register every dataset in `dataset-registry` before use [ser_mental_health_review].
 2. **In progress — the native-hum loop ships ([ADR-0011](docs/adr/0011-hitl-native-hum-retraining-loop.md)), and the cross-user pooling pathway exists, gated ([ADR-0012](docs/adr/0012-cross-user-population-corpus-loop.md)).** A human-in-the-loop grows the `native_hum` corpus on-device and retrains a hum-native axis model that beats the acoustic backbone before it steers the read. The `@hum-ai/population-corpus` package implements the consented, derived-only, group-by-contributor-CV pooling into a community baseline + OCEAN norms, selected per-axis above the far-domain prior — but live cross-user write is **default-OFF** behind a distinct `population_corpus_contribution` consent, pending the contributing-UI toggle + IRB. Next: ship that toggle under governance, raise the promotion gate toward the rigorous 0.80 / p<.01 / ECE bar as `n` grows, and fit/calibrate the `LogisticRegressionMetaLearner` on the accumulated hum data.
 3. Stand up within-user DVDSA-style longitudinal evaluation for the relapse engine [longitudinal_voice_treatment_response_source].
-4. Ground intervention suggestions in the music-stress evidence base as **support, not diagnosis** [intervention_support_source].
+4. **Done — intervention suggestions are grounded in the music-stress evidence base as support, not diagnosis** [intervention_support_source]: the Intervention of the Day's V-A music step and the user-directed **Sound Lab** (read steer + taste → an embeddable, playable track) both reuse the de-Witte-grounded "may help you unwind" register and clear `@hum-ai/safety-language`. Next: broaden the steer→catalog mapping and learn taste from feedback.
 5. **Done — the browser capture surface ships.** `apps/web` is a deployed local-first SPA: `getUserMedia({ audio })` (no camera) feeds the full client-side spine — Stage ① acceptance gate → axis read → personalization → longitudinal — with the classical JSON priors served from `apps/web/public/models/` (ADR-0006/0007/0008/0009/0010). Next: port the mel-CNN to a browser-runnable form (mel filterbank + conv1d) or stand up a hum-native dataset so a genuinely model-led read can be served, not just refined.

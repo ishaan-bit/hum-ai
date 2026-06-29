@@ -27,12 +27,18 @@ In scope:
   guards (`assertSafeUserFacingText`, `assertNoClinicalLeak`).
 - Secret/credential exposure in the repo or build (`.env`, Firebase service-account
   JSON, Vercel tokens).
-- Standard web/app vulnerabilities once the app surfaces are built.
+- Standard web/app vulnerabilities in the deployed local-first web client (`apps/web`),
+  including the Sound Lab's outbound third-party calls (YouTube Data API, Last.fm).
 
 Out of scope (by design, current pass):
 
 - The experts are heuristic stubs; "model inaccuracy" is not a security issue.
 - No camera/visual path exists yet (voice-first; see ADR-0009).
+- **Public client identifiers are intentionally embedded in the static bundle** and are
+  *not* a credential leak: the Firebase **web** config and the optional, **referrer-restricted,
+  read-only** Sound Lab keys (`HUM_AI_YOUTUBE_API_KEY`, `HUM_AI_LASTFM_API_KEY`) are public by
+  design. Server secrets (service-account JSON, Vercel/admin tokens) are never bundled and *are*
+  in scope above.
 
 ## What this project will never do
 
